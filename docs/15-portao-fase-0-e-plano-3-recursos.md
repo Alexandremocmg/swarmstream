@@ -157,7 +157,8 @@ Itens numerados conforme a lista "Lista para fechar a Fase 0". Cada pessoa entre
 - ~~Criar o repositório no GitHub e passar o endereço ao R2.~~ Feito: <https://github.com/Alexandremocmg/swarmstream> (privado, vazio).
 - ~~Definir o e-mail de segurança e o titular do copyright.~~ Feito: `autokabem@gmail.com` e "Alexandre Aparecido Rodrigues Peres".
 - ~~Decidir quando o repositório passa de privado para público.~~ Decidido em 2026-10-17: **permanece privado até o fechamento da Fase 0**. A publicação depois disso é uma nova decisão (recomendado antes: consulta jurídica rápida e revisão do primeiro commit).
-- **Pendente:** informar o usuário do GitHub do R2 (a mensagem chegou cortada em "O usuário do GitHub do R2 é:"). Com ele, adiciono o acesso de escrita; o mesmo vale depois para o R1 e o R3.
+- **Adiado a pedido do dono do produto:** acesso de escrita do R2 (e depois R1 e R3) ao repositório. Quando informar o usuário do GitHub de cada um, o acesso é adicionado. Enquanto isso o trabalho segue sem colaboradores.
+- **Feito em 2026-10-17 (item 1 da lista de fechamento, parte local):** `git init`, `.gitignore` ampliado (exclui `REA-Estudo/`, builds, dependências do spike e assets), `.gitattributes` (LF) e primeiro commit local assinado (`-s`) com 252 arquivos e ~1,8 MB. **Ainda não foi enviado ao GitHub (nenhum `git push`).** Aguarda autorização do dono do produto.
 - Aprovar os ADRs depois da revisão do R1 (item 6).
 - Escolher quem fará o teste de 1 hora do item 4 (alguém que não participou da montagem do ambiente).
 
