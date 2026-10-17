@@ -72,7 +72,7 @@ Com blocos médios de 128 KiB, um jogo de 150 GB gera cerca de 54 MB de manifest
 
 | # | Item | Quem (ver abaixo) | Pronto quando |
 | --- | --- | --- | --- |
-| 1 | `git init`, `.gitignore` para `REA-Estudo/`, `build*/`, `.venv`, `.godot-version` mantido; `.gitattributes` (fim de linha); primeiro commit com `LICENSE`, `NOTICE`, `SECURITY.md` | Pleno | Árvore limpa; nada de JDK, Ghidra ou node_modules no commit |
+| 1 | `git init`, `.gitignore` para `REA-Estudo/`, `build*/`, `.venv`, `.godot-version` mantido; `.gitattributes` (fim de linha); primeiro commit com `LICENSE`, `NOTICE`, `SECURITY.md` **(feito localmente; falta o push)** | Pleno | Árvore limpa; nada de JDK, Ghidra ou node_modules no commit |
 | 2 | Repositório no GitHub (criado), `CODEOWNERS` com usuários reais, e e-mail de segurança no `SECURITY.md` (feito) | Dono do produto + Pleno | `CODEOWNERS` sem apelidos de função |
 | 3 | CI rodando em Windows e Linux, **incluindo um PR de teste que quebra e fica vermelho** | Pleno | Captura do PR vermelho e do PR verde |
 | 4 | Guia de ambiente (F0-13) e **teste do critério de 1 hora** com alguém que não participou da montagem | Júnior + um revisor externo ao guia | Cronômetro registrado em `docs/medicoes/` |
