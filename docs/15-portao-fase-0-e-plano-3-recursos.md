@@ -72,7 +72,7 @@ Com blocos médios de 128 KiB, um jogo de 150 GB gera cerca de 54 MB de manifest
 
 | # | Item | Quem (ver abaixo) | Pronto quando |
 | --- | --- | --- | --- |
-| 1 | `git init`, `.gitignore` para `REA-Estudo/`, `build*/`, `.venv`, `.godot-version` mantido; `.gitattributes` (fim de linha); primeiro commit com `LICENSE`, `NOTICE`, `SECURITY.md` **(feito localmente; falta o push)** | Pleno | Árvore limpa; nada de JDK, Ghidra ou node_modules no commit |
+| 1 | `git init`, `.gitignore` para `REA-Estudo/`, `build*/`, `.venv`, `.godot-version` mantido; `.gitattributes` (fim de linha); primeiro commit com `LICENSE`, `NOTICE`, `SECURITY.md` **(feito e enviado)** | Pleno | Árvore limpa; nada de JDK, Ghidra ou node_modules no commit |
 | 2 | Repositório no GitHub (criado), `CODEOWNERS` com usuários reais, e e-mail de segurança no `SECURITY.md` (feito) | Dono do produto + Pleno | `CODEOWNERS` sem apelidos de função |
 | 3 | CI rodando em Windows e Linux, **incluindo um PR de teste que quebra e fica vermelho** | Pleno | Captura do PR vermelho e do PR verde |
 | 4 | Guia de ambiente (F0-13) e **teste do critério de 1 hora** com alguém que não participou da montagem | Júnior + um revisor externo ao guia | Cronômetro registrado em `docs/medicoes/` |
@@ -158,7 +158,8 @@ Itens numerados conforme a lista "Lista para fechar a Fase 0". Cada pessoa entre
 - ~~Definir o e-mail de segurança e o titular do copyright.~~ Feito: `autokabem@gmail.com` e "Alexandre Aparecido Rodrigues Peres".
 - ~~Decidir quando o repositório passa de privado para público.~~ Decidido em 2026-10-17: **permanece privado até o fechamento da Fase 0**. A publicação depois disso é uma nova decisão (recomendado antes: consulta jurídica rápida e revisão do primeiro commit).
 - **Adiado a pedido do dono do produto:** acesso de escrita do R2 (e depois R1 e R3) ao repositório. Quando informar o usuário do GitHub de cada um, o acesso é adicionado. Enquanto isso o trabalho segue sem colaboradores.
-- **Feito em 2026-10-17 (item 1 da lista de fechamento, parte local):** `git init`, `.gitignore` ampliado (exclui `REA-Estudo/`, builds, dependências do spike e assets), `.gitattributes` (LF) e primeiro commit local assinado (`-s`) com 252 arquivos e ~1,8 MB. **Ainda não foi enviado ao GitHub (nenhum `git push`).** Aguarda autorização do dono do produto.
+- **Feito em 2026-10-17 (item 1 da lista de fechamento, parte local):** `git init`, `.gitignore` ampliado (exclui `REA-Estudo/`, builds, dependências do spike e assets), `.gitattributes` (LF) e primeiro commit local assinado (`-s`) com 252 arquivos e ~1,8 MB. **Enviado ao GitHub em 2026-10-17 (branch `main`, repositório privado).**
+- **Primeira execução do CI (2026-10-17):** `lint` e `ci` terminaram em sucesso: build e teste em Ubuntu e Windows, e ASan+UBSan em Ubuntu. Isso prova que o CI funciona no verde. **Falta provar o vermelho** (PR de teste que quebra) e o MSVC/Linux fora do MinGW local já está coberto pelos runners do GitHub.
 - Aprovar os ADRs depois da revisão do R1 (item 6).
 - Escolher quem fará o teste de 1 hora do item 4 (alguém que não participou da montagem do ambiente).
 
