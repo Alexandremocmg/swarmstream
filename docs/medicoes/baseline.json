@@ -1,0 +1,104 @@
+{
+  "renderers": [
+    "NVIDIA GeForce GTX 1050 Ti"
+  ],
+  "cold_runs": [
+    {
+      "avg_fps": 537.735267231502,
+      "excess_ms_over_33": 587.137,
+      "frames": 96834,
+      "frames_over_33ms": 5,
+      "frames_over_33ms_steady": 4,
+      "load_ms": 21454.202,
+      "p99_frame_ms": 3.519,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 311.817
+    },
+    {
+      "avg_fps": 511.734050501301,
+      "excess_ms_over_33": 564.625,
+      "frames": 92121,
+      "frames_over_33ms": 4,
+      "frames_over_33ms_steady": 3,
+      "load_ms": 21518.176,
+      "p99_frame_ms": 4.192,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 310.56
+    }
+  ],
+  "route_seconds": 180.0,
+  "route_log_identical": true,
+  "runs": [
+    {
+      "avg_fps": 533.822849632285,
+      "excess_ms_over_33": 601.428,
+      "frames": 96147,
+      "frames_over_33ms": 4,
+      "frames_over_33ms_steady": 3,
+      "load_ms": 22220.457,
+      "p99_frame_ms": 3.457,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 354.052
+    },
+    {
+      "avg_fps": 537.602061389956,
+      "excess_ms_over_33": 423.236,
+      "frames": 96734,
+      "frames_over_33ms": 4,
+      "frames_over_33ms_steady": 3,
+      "load_ms": 21943.669,
+      "p99_frame_ms": 3.443,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 254.678
+    },
+    {
+      "avg_fps": 546.605299033618,
+      "excess_ms_over_33": 502.739,
+      "frames": 98407,
+      "frames_over_33ms": 3,
+      "frames_over_33ms_steady": 3,
+      "load_ms": 21959.274,
+      "p99_frame_ms": 3.342,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 346.192
+    },
+    {
+      "avg_fps": 527.45498466132,
+      "excess_ms_over_33": 443.844,
+      "frames": 94921,
+      "frames_over_33ms": 4,
+      "frames_over_33ms_steady": 3,
+      "load_ms": 20610.084,
+      "p99_frame_ms": 4.013,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 279.275
+    },
+    {
+      "avg_fps": 501.600160831381,
+      "excess_ms_over_33": 362.165,
+      "frames": 90223,
+      "frames_over_33ms": 4,
+      "frames_over_33ms_steady": 3,
+      "load_ms": 21010.814,
+      "p99_frame_ms": 4.741,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 180.0,
+      "worst_frame_ms": 179.685
+    }
+  ],
+  "spread_percent": {
+    "load_ms": 7.473124006989212,
+    "avg_fps": 8.500885343175979,
+    "frames_over_33ms": 26.315789473684212,
+    "frames_over_33ms_steady": 0.0,
+    "excess_ms_over_33": 51.26891436231578,
+    "p99_frame_ms": 36.82354179827331,
+    "worst_frame_ms": 61.66250083104531
+  }
+}

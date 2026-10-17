@@ -1,0 +1,53 @@
+name: lint
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python lint tools
+        run: python -m pip install black ruff mypy
+      - name: Python formatting and lint
+        run: |
+          python -m black --config sw-netlab/pyproject.toml --check sw-netlab sw-godot/tools/download_assets.py
+          python -m ruff check --config sw-netlab/pyproject.toml sw-netlab sw-godot/tools/download_assets.py
+          python -m mypy --strict sw-netlab
+          python -m mypy --config-file sw-netlab/pyproject.toml --strict --follow-imports=silent sw-godot/tools/download_assets.py
+      - name: Install clang analysis tools
+        run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy cmake g++
+      - name: C++ format
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            git fetch origin main
+            base="origin/main"
+          fi
+          mapfile -t files < <(git diff --name-only "$base...$GITHUB_SHA" -- '*.cpp' '*.c' '*.h' '*.hpp')
+          if ((${#files[@]})); then
+            clang-format --dry-run --Werror "${files[@]}"
+          else
+            echo "No changed C/C++ files to format."
+          fi
+      - name: C++ static analysis
+        run: |
+          cmake -S . -B build/lint -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=OFF
+          clang-tidy -p build/lint sw-core/src/api_stub.cpp sw-core/src/memory_cache_store.cpp sw-core/src/memory_content_source.cpp

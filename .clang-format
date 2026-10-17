@@ -1,0 +1,25 @@
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: Never
+  AfterFunction: true
+  AfterNamespace: false
+  AfterStruct: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+BreakTemplateDeclarations: Yes
+SortIncludes: CaseSensitive
+PointerAlignment: Left
+DerivePointerAlignment: true
+NamespaceIndentation: None
+AccessModifierOffset: -4
+SpaceAfterCStyleCast: false
+IncludeBlocks: Regroup

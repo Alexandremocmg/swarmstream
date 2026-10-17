@@ -1,0 +1,8 @@
+godot-cpp/
+tools/
+build/
+build.log
+project/.godot/
+project/bin/*.dll
+project/bin/*.lib
+project/bin/*.a

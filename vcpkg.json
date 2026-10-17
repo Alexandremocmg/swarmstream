@@ -1,0 +1,6 @@
+{
+    "name": "swarmstream",
+    "version-string": "0.1.0",
+    "description": "Plataforma híbrida de distribuição e streaming de assets de jogos (monorepo)",
+    "dependencies": []
+}

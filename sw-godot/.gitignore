@@ -1,0 +1,4 @@
+.godot/
+project/assets/regions/*/
+project/user://
+*.tmp

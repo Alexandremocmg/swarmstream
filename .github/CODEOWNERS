@@ -1,0 +1,7 @@
+# F0 owner map from docs/10-equipe-e-niveis.md; replace role handles with GitHub usernames.
+/sw-core/              @senior-engine
+/sw-godot/             @senior-engine
+/sw-netlab/            @pleno-qa
+/docs/adr/             @arquiteto
+/.clang-format         @pleno1
+/.clang-tidy           @pleno1

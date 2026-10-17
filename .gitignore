@@ -1,0 +1,44 @@
+.godot/
+**/.godot/
+sw-godot/project/assets/regions/*/
+sw-godot/project/assets/regions/
+sw-godot/project/userdata/
+sw-netlab/__pycache__/
+sw-netlab/fixtures/*
+!sw-netlab/fixtures/README.md
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.tmp
+*.pck
+*.exe
+
+# --- adicionado no fechamento da Fase 0 (item 1) ---
+# material de estudo e ferramentas locais (JDK, Ghidra, node_modules): nunca versionar
+REA-Estudo/
+.freebuff/
+node_modules/
+**/__pycache__/
+# saídas de build
+build/
+build-*/
+out/
+*.log
+*.obj
+*.o
+*.a
+*.dll
+*.so
+*.dylib
+*.pdb
+# spike do Godot: só o código-fonte entra; dependências e binários não
+spike-fileaccess/godot-cpp/
+spike-fileaccess/build/
+spike-fileaccess/bin/
+spike-fileaccess/out/
+spike-fileaccess/build.log
+# medições locais de ferramentas
+sw-godot/assets.xlsx.inspect.ndjson

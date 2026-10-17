@@ -1,0 +1,104 @@
+{
+  "license": "CC0 1.0 Universal",
+  "source": "https://api.polyhaven.com/assets?type=textures",
+  "schema_version": 1,
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "assets": [
+    {
+      "id": "rock_path",
+      "name": "Rock Path",
+      "files_hash": "b4af52db9875272af92ec9915ca03e3bfcce0b30",
+      "region": "Pedreira"
+    },
+    {
+      "id": "rock_01",
+      "name": "Rock 01",
+      "files_hash": "4b1a673750efae534c749458f29458296f27fa78",
+      "region": "Pedreira"
+    },
+    {
+      "id": "cobblestone_03",
+      "name": "Cobblestone 03",
+      "files_hash": "e792e3fc8796341f183821ee88cb5973886b71de",
+      "region": "Pedreira"
+    },
+    {
+      "id": "gravel_road",
+      "name": "Gravel Road",
+      "files_hash": "2469981773c3ad687ef7e5d78e20354d5a5fa180",
+      "region": "Pedreira"
+    },
+    {
+      "id": "aerial_asphalt_01",
+      "name": "Aerial Asphalt 01",
+      "files_hash": "cdf3c8f091b3589407bdf0697a2deb2c6b40650d",
+      "region": "Distrito"
+    },
+    {
+      "id": "asphalt_01",
+      "name": "Asphalt 01",
+      "files_hash": "61bdb4dc064585ce3e749a4dcaf13216575ae794",
+      "region": "Distrito"
+    },
+    {
+      "id": "brick_floor",
+      "name": "Brick Floor",
+      "files_hash": "4e67c1567a9667e73d10fdbbbe6613e4879ecfbc",
+      "region": "Distrito"
+    },
+    {
+      "id": "concrete_moss",
+      "name": "Concrete Moss",
+      "files_hash": "06e150cbaace0460740cf8a174c2133fddb509f8",
+      "region": "Distrito"
+    },
+    {
+      "id": "aerial_beach_01",
+      "name": "Aerial Beach 01",
+      "files_hash": "b25ab01641da8f9b025dabf1f057e0ab8d2124de",
+      "region": "Costa"
+    },
+    {
+      "id": "coast_sand_01",
+      "name": "Coast Sand 01",
+      "files_hash": "79f1efcc1f7dedcc546d529a09e1a09cfeb0b9b8",
+      "region": "Costa"
+    },
+    {
+      "id": "aerial_rocks_01",
+      "name": "Aerial Rocks 01",
+      "files_hash": "ea281839fd9f0d5d67f3cc675bddbac76ef26b27",
+      "region": "Costa"
+    },
+    {
+      "id": "rock_wall_08",
+      "name": "Rock Wall 08",
+      "files_hash": "4896fd050be3cb15beb283cf9d7bce33732e56e4",
+      "region": "Costa"
+    },
+    {
+      "id": "forest_leaves_04",
+      "name": "Forest Leaves 04",
+      "files_hash": "0a489c440765f05a7630001e299873f20775ea35",
+      "region": "Floresta"
+    },
+    {
+      "id": "tree_bark_03",
+      "name": "Tree Bark 03",
+      "files_hash": "8fcb8cfa68b0965fe8914b1ffa5b90e922d4d239",
+      "region": "Floresta"
+    },
+    {
+      "id": "grass_ground",
+      "name": "Grass Ground",
+      "files_hash": "0835c92f7cacee85b306c2a35d2c006be11ea3c2",
+      "region": "Floresta"
+    },
+    {
+      "id": "mossy_brick",
+      "name": "Mossy Brick",
+      "files_hash": "ced3be61506ad9502d1ab3e80a8b1a61d30d2a1d",
+      "region": "Floresta"
+    }
+  ]
+}

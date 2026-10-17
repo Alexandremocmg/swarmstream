@@ -1,0 +1,50 @@
+Swarmstream
+Copyright 2026 Alexandre Aparecido Rodrigues Peres
+
+This product includes software developed by Alexandre Aparecido Rodrigues Peres,
+licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Unless stated otherwise below, every file in this repository is licensed
+under the Apache License, Version 2.0.
+
+-------------------------------------------------------------------------
+Third-party material included in this repository
+-------------------------------------------------------------------------
+
+The following files are NOT licensed under Apache-2.0. They keep their
+original licenses; full texts are in .claude/skills/_licencas/ and the
+origin (repository and commit) of each one is in .claude/skills/FONTES.md.
+
+  .claude/skills/  (Claude Code skills used by the team; documentation only,
+                    not compiled into or distributed with any binary)
+
+    - obra/superpowers ............................ MIT
+        Copyright (c) 2025 Jesse Vincent
+    - jame581/GodotPrompter ....................... MIT
+        Copyright (c) 2026 GodotPrompter Contributors
+    - jeffallan/claude-skills ..................... MIT
+        Copyright (c) 2025 (no holder name in the original license file)
+    - mohitmishra786/low-level-dev-skills ......... MIT
+        Copyright (c) 2026 chessMan
+    - alirezarezvani/claude-skills ................ MIT
+        Copyright (c) 2025 Alireza Rezvani
+    - intense-visions/harness-engineering ......... MIT
+        Copyright (c) 2026 Intense Visions, Inc.
+        (modified: name/description header added to db-acid-in-practice/SKILL.md)
+    - trailofbits/skills .......................... CC BY-SA 4.0
+        Attribution: Trail of Bits, https://github.com/trailofbits/skills
+        Skills: modern-cpp, property-based-testing, harness-writing, libfuzzer.
+        ShareAlike: changes to these four folders must stay under
+        CC BY-SA 4.0. Nothing from them may be copied into Apache-2.0 files.
+
+-------------------------------------------------------------------------
+Third-party libraries
+-------------------------------------------------------------------------
+
+No third-party library source code is included in this repository yet.
+Dependencies are fetched by vcpkg at build time. Binary distributions must
+carry the notices of the libraries they link; the expected set is listed in
+docs/adr/0008-licenca-open-source.md.
+
+Rule: the pull request that vendors third-party code, or that adds a
+dependency shipped inside a binary distribution, updates this file.

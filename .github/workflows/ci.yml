@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build+test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (vcpkg toolchain)
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            windows-*) VCPKG_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake' ;;
+            *)         VCPKG_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ;;
+          esac
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_FILE"
+
+      - name: Build
+        run: cmake --build build --config Debug --parallel
+
+      - name: Test
+        shell: bash
+        run: ctest --test-dir build --build-config Debug --output-on-failure
+
+  sanitizers:
+    name: ASan+UBSan (ubuntu-latest)
+    runs-on: ubuntu-latest
+    env:
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (ASan + UBSan)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test under sanitizers
+        run: ctest --test-dir build --output-on-failure

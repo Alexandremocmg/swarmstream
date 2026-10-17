@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Resource" path="res://claimed/only_in_swarm_scene.txt" id="1"]
+
+[node name="N" type="Node"]
+metadata/blob = ExtResource("1")

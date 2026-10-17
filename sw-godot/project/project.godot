@@ -1,0 +1,22 @@
+; SPDX-License-Identifier: Apache-2.0
+; Copyright 2026 Alexandre Aparecido Rodrigues Peres
+config_version=5
+
+[application]
+config/name="Swarmstream Streaming Benchmark"
+run/main_scene="res://scenes/benchmark.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/size/resizable=true
+
+[physics]
+common/physics_ticks_per_second=60
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+environment/defaults/default_clear_color=Color(0.025, 0.035, 0.055, 1)

@@ -1,0 +1,6 @@
+; Projeto do spike F0 (FileAccess no Godot 4 via GDExtension)
+config_version=5
+
+[application]
+config/name="swarm-spike"
+config/features=PackedStringArray("4.7")
