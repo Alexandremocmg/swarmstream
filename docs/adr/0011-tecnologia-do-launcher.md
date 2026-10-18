@@ -1,6 +1,8 @@
 # ADR-0011: Launcher em Tauri 2, com o `sw-core` ligado pela API C
 
-**Status:** Proposta · **Data:** 2026-10-17 · **Autor:** arquiteto/tech lead · **Revisor:** sênior de engine/streaming (prazo: 2026-10-23)
+**Status:** Aceita (2026-10-17: revisão R1, leitura independente, aprovação do dono do produto) · **Data:** 2026-10-17 · **Autor:** R1 (líder técnico)
+
+**Revisão (regra de 3 pessoas, [15](../15-portao-fase-0-e-plano-3-recursos.md#regra-de-revisão-com-3-pessoas)):** R1 revisou · leitura e comentários: revisor independente · aprovação: dono do produto (2026-10-17). Registro: [revisão F0](../revisoes/F0-revisao-adrs-0010-0016.md)
 
 ## Contexto
 O `sw-launcher` é o programa do jogador: instalação (modos compacto, completo e personalizado), configuração de upload, consentimento P2P e seed em segundo plano. Pelo [ADR-0009](0009-abertura-de-backend-e-launcher.md) ele é **aberto ou gratuito**, porque controla o upload de quem joga e a confiança é parte do produto (risco R4).
@@ -28,7 +30,7 @@ O launcher só é construído na Fase 4. A decisão sai agora para que nenhuma e
 - Launcher em **Tauri 2.x** (versão fixada no `Cargo.lock`): UI em HTML/TypeScript, processo em Rust.
 - O processo Rust **liga o `sw-core` como biblioteca dinâmica** pela API de `swarmstream.h`. Nenhuma lógica de cache, rede ou verificação no Rust; ele só chama a API e mostra o estado.
 - Atualizações do launcher usam o atualizador assinado do Tauri; a chave de assinatura fica fora do repositório.
-- **Regra de posse do cache (vale para o launcher e para o jogo):** só **um processo por vez** é dono de uma pasta de cache, e a posse é garantida por um *lock* de arquivo na pasta. `sw_init` devolve `SW_E_CACHE_LOCKED` se outro processo já é dono. Quando o jogo abre, o launcher solta o cache e o jogo assume o seed (com a QoS do jogo); quando o jogo fecha, o launcher retoma. O protocolo de passagem entre os dois é tarefa da Fase 4.
+- **Regra de posse do cache (vale para o launcher e para o jogo):** só **um processo por vez** é dono de uma pasta de cache, e a posse é garantida por um *lock* do sistema operacional sobre um arquivo da pasta (`LockFileEx` no Windows, `fcntl`/`flock` no Linux), que o SO solta sozinho se o processo morrer. Arquivo de PID não serve. `sw_init` devolve `SW_E_CACHE_LOCKED` se outro processo já é dono. Quando o jogo abre, o launcher solta o cache e o jogo assume o seed (com a QoS do jogo); quando o jogo fecha, o launcher retoma. O protocolo de passagem entre os dois é tarefa da Fase 4; até lá, quem recebe `SW_E_CACHE_LOCKED` tenta de novo com espera curta e mostra o motivo ao jogador, sem falhar calado.
 
 ## Consequências
 - (+) Launcher leve, aberto, com atualização assinada pronta, e telas acessíveis a plenos e juniores.

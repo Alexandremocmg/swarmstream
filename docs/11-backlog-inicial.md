@@ -33,7 +33,7 @@ Modelo de issue: [templates/tarefa-template.md](templates/tarefa-template.md).
 | F1-01 | Chunker FastCDC com tamanhos mín/médio/máx configuráveis | S | M | F0-08 | Mudar 1 byte num arquivo de 1 GB altera ≤ 3 blocos |
 | F1-02 | Testes do chunker (arquivos vazios, pequenos, enormes, aleatórios) | J | P | F1-01 | `boa-primeira-tarefa`; cobertura dos casos de borda |
 | F1-03 | Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo | P | M | F1-01 | Taxa e tempo por tipo no relatório da CLI |
-| F1-04 | Geração do manifesto v0 (sem assinatura) | P | M | F1-01 | Manifesto lido de volta é idêntico; tamanho medido |
+| F1-04 | Geração do manifesto v0, assinado com a chave de teste ([ADR-0012](adr/0012-serializacao-do-manifesto.md)) | P | M | F1-01 | Manifesto lido de volta é idêntico; adulterado é recusado; tamanho do arquivo e memória residente medidos |
 | F1-05 | Classificação core/grupo/opcional por regras de pasta | P | M | F1-04 | Mapa de teste exportado com core < 15% |
 | F1-06 | Ordenação de blocos em peças por localidade (por pasta/região) | S | M | F1-04 | Rota usa menos peças que com ordem alfabética |
 | F1-07 | Mips/LODs baixos sempre no core | P | M | F1-05 | Toda textura tem mip ≤ 256 px local |
@@ -55,7 +55,7 @@ Modelo de issue: [templates/tarefa-template.md](templates/tarefa-template.md).
 ### T3 — Engine (Godot)
 | ID | Tarefa | Nível | Tam. | Depende de | Critério de aceite |
 | --- | --- | --- | --- | --- | --- |
-| F1-20 | GDExtension com `FileAccess` customizado sobre o `sw-core` (com mock) | S | G | F0-06 | Mapa de teste carrega pelo VFS |
+| F1-20 | GDExtension com `ResourceFormatLoader` na frente sobre o `sw-core` (com mock), conforme o [ADR-0016](adr/0016-ponto-de-intercepcao-godot.md) | S | G | F0-06 | **Portão primeiro:** textura BCn 4K com mips, malha com 2 LODs e áudio OGG materializados a partir de bytes do mock, sem `FileAccess`, com troca no lugar. Depois: mapa de teste carrega pelo loader; `_load` nunca espera a rede (medido) |
 | F1-21 | Política de falta para textura (mip menor + troca ao chegar) | S | M | F1-20 | Sem travar o frame numa falta de textura |
 | F1-22 | Política de falta para malha (LOD menor / esconder) | P | M | F1-20 | Idem para malhas |
 | F1-23 | Nó `SwarmHintArea3D` chamando `sw_hint_group` | P | P | F1-20 | Entrar na área dispara prefetch do grupo |

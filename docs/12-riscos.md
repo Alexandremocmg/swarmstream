@@ -18,4 +18,6 @@
 | R14 | Fator ônibus = 1: com 3 recursos, um único sênior concentra cache, agendador e Godot | Alta | Alto | Contratos e mocks para trabalhar sem ele; decisões em ADR; revisão cruzada de código crítico | F1 em diante |
 | R15 | A bancada não mede o que se pretende (carga limitada por decodificação de JPEG, não por disco; stutter com amostra de 3 quadros) | Alta | Alto | Texturas em formato GPU comprimido; limites absolutos de stutter; validar a bancada com uma mudança conhecida antes de confiar nos números | F1 (Portão 1) |
 
+| R16 | O loader na frente (ADR-0016) não cobre `FileAccess`/`ConfigFile`, ou não consegue materializar algum tipo pesado a partir de bytes | Média | Alto | Leituras diretas ficam no `core`; portão de materialização no início do F1-20; `.pck` por grupo como reserva; protótipo C para medir o teto | F1 |
+
 Revisar esta tabela no fim de cada fase.

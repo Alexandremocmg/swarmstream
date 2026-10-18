@@ -57,7 +57,7 @@ As trilhas só se tocam pelos **contratos** de [02-arquitetura.md](02-arquitetur
 
 | Atividade | Trilha | Nível |
 | --- | --- | --- |
-| `sw-pack` v1: chunking FastCDC, compressão Zstd/LZ4 por bloco, manifesto (sem assinatura ainda) | T1 | S (P implementa partes) |
+| `sw-pack` v1: chunking FastCDC, compressão Zstd/LZ4 por bloco, manifesto assinado com chave de teste (ADR-0012) | T1 | S (P implementa partes) |
 | Classificação `core` / grupo / opcional a partir de pastas do projeto Godot | T1 | P |
 | Gerar mips/LODs baixos no `core` | T1/T3 | P |
 | Cache em disco: slots, índice, journal, recuperação após queda | T2 | S |
@@ -67,7 +67,7 @@ As trilhas só se tocam pelos **contratos** de [02-arquitetura.md](02-arquitetur
 | VFS: caminho + offset → blocos | T2 | P |
 | Fonte "CDN" HTTP Range implementando `IContentSource` | T4 | P |
 | Agendador por prazo v1 (uma fonte só, mas já com fila por prazo) | T4 | S |
-| GDExtension: `FileAccess` customizado lendo pelo `sw-core` | T3 | S |
+| GDExtension: `ResourceFormatLoader` na frente lendo pelo `sw-core` (ADR-0016) | T3 | S |
 | Política de falta no Godot: textura com mip menor, malha com LOD menor | T3 | S/P |
 | Prefetch v1: `sw_hint_group` em áreas do mapa (`SwarmHintArea3D`) | T3 | P |
 | Gravação de traces de leitura durante a rota | T3/T6 | J/P |
