@@ -7,11 +7,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import statistics
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 PROJECT = Path(__file__).resolve().parents[1] / "project"
 PROJECT_NAME = "Swarmstream Streaming Benchmark"
@@ -47,8 +50,8 @@ LIMIT_MARGINS = {
 }
 # Carga: acima da média do baseline por no máximo max(10%, 500 ms), nas mesmas condições
 # (quente com quente), conferida pela MEDIANA de pelo menos 3 rodadas (a carga varia ~20%
-# entre rodadas; uma rodada sozinha não decide). O piso de 500 ms existe porque a carga com texturas GPU leva ~2 s e
-# 10% de 2 s (200 ms) é menor que o ruído medido.
+# entre rodadas; uma rodada sozinha não decide). O piso de 500 ms existe porque a carga com
+# texturas GPU leva ~2 s e 10% de 2 s (200 ms) é menor que o ruído medido.
 LOAD_TOLERANCE = 1.10
 LOAD_TOLERANCE_MIN_MS = 500.0
 
@@ -112,19 +115,49 @@ def derive_limits(runs: list[dict[str, float]]) -> dict[str, float]:
 
 
 LOAD_MIN_RUNS = 3
+REQUIRED_CHECK_METRICS = (*LIMIT_MARGINS, "load_ms")
 
 
-def check_against_limits(reports: list[dict[str, float]], limits: dict[str, float]) -> list[str]:
-    """Stutter: cada rodada contra o limite. Carga: a mediana das rodadas."""
+def validate_check_metrics(metrics: object, label: str) -> list[str]:
+    """Reject missing or invalid measurements before comparing any limits."""
+    if not isinstance(metrics, dict):
+        return [f"{label}: esperado objeto JSON com as metricas obrigatorias"]
     failures = []
+    for name in REQUIRED_CHECK_METRICS:
+        if name not in metrics:
+            failures.append(f"{label}: metrica obrigatoria ausente: {name}")
+            continue
+        value = metrics[name]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or (isinstance(value, float) and not math.isfinite(value))
+            or value < 0
+        ):
+            failures.append(f"{label}: {name}: esperado numero finito nao negativo")
+    return failures
+
+
+def check_against_limits(
+    reports: Sequence[Mapping[str, Any]], limits: Mapping[str, Any]
+) -> list[str]:
+    """Stutter: cada rodada contra o limite. Carga: a mediana das rodadas."""
+    failures = validate_check_metrics(limits, "limites")
+    if not reports:
+        failures.append("nenhuma rodada informada")
+    for index, report in enumerate(reports, start=1):
+        failures.extend(validate_check_metrics(report, f"rodada {index}"))
+    if failures:
+        return failures
+
     for index, report in enumerate(reports, start=1):
         failures += [
             f"rodada {index}: {name}: {report[name]:.2f} > limite {limit:.2f}"
             for name, limit in limits.items()
-            if name != "load_ms" and name in report and report[name] > limit
+            if name in LIMIT_MARGINS and report[name] > limit
         ]
-    loads = [r["load_ms"] for r in reports if "load_ms" in r]
-    if "load_ms" in limits and loads:
+    loads = [r["load_ms"] for r in reports]
+    if loads:
         if len(loads) < LOAD_MIN_RUNS:
             failures.append(
                 f"load_ms: {len(loads)} rodada(s); a carga exige pelo menos {LOAD_MIN_RUNS}"
@@ -184,7 +217,8 @@ def main() -> int:
     parser.add_argument(
         "--after-boot",
         action="store_true",
-        help="a PRIMEIRA execução é a carga fria (logo após reiniciar o Windows, sem aquecimento); depois --runs quentes",
+        help="a PRIMEIRA execução é a carga fria (logo após reiniciar o Windows, sem aquecimento);"
+        " depois --runs quentes",
     )
     args = parser.parse_args()
 
