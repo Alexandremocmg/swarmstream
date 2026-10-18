@@ -2,8 +2,8 @@
 
 **Critério:** pessoa nova compila e roda os testes em **< 1 h** seguindo só a seção "Ambiente de desenvolvimento" do [CONTRIBUTING](../../CONTRIBUTING.md).
 
-## Estado: NÃO EXECUTADO com pessoa externa
-Falta a parte que prova o critério: alguém que **não montou o ambiente** seguindo só o guia, com cronômetro. O pré-teste abaixo foi feito pelo autor do guia e **não vale** como resultado do critério.
+## Estado: EXECUTADO em Ubuntu, 29 min (meta < 60). Windows ainda não testado por pessoa externa
+O teste do critério foi feito em 2026-10-18 por uma pessoa que não montou o ambiente, no caminho **Ubuntu**, e passou com folga. O caminho **Windows** (MSVC, `winget`) continua sem teste de pessoa externa: só o CI exercita o MSVC. O pré-teste do autor, mais abaixo, **não vale** como resultado do critério.
 
 ## Protocolo (quem aplica o teste)
 1. Máquina: Windows 11 ou Ubuntu 22.04 **sem** CMake, compilador, vcpkg, Godot ou Python do projeto instalados (VM limpa ou usuário novo). Anote SO, CPU, RAM, disco e velocidade da rede.
@@ -15,20 +15,21 @@ Falta a parte que prova o critério: alguém que **não montou o ambiente** segu
 ## Registro (preencher)
 | Campo | Valor |
 | --- | --- |
-| Data | |
-| Participante (função, experiência com C++/CMake) | |
-| Observador | |
-| Máquina / SO / rede | |
-| Início → `ctest` verde | |
-| **Tempo total até compilar e testar** | ___ min (meta < 60) |
-| Resultado | ☐ passou (< 60 min, sem ajuda) · ☐ passou com ajuda · ☐ falhou |
+| Data | 2026-10-18 |
+| Participante (função, experiência com C++/CMake) | Não informado |
+| Observador | Não informado |
+| Máquina / SO / rede | Ubuntu (versão e hardware não informados). Máquina sem `git`, o que indica instalação limpa |
+| Início → `ctest` verde | Do primeiro contato com o guia até o `ctest` imprimir `100% tests passed` |
+| **Tempo total até compilar e testar** | **29 min** (meta < 60) |
+| Resultado | **Passou (< 60 min).** Ajuda do observador: não informada; tratar como sem ajuda até confirmação |
 
 | Passo do guia | Tempo | Falhou/confundiu? | O que aconteceu | Correção no guia |
 | --- | --- | --- | --- | --- |
-| 1 Clonar | | | | |
-| 2 Compilador, CMake, Ninja | | | | |
-| 3 vcpkg (opcional) | | | | |
-| 4 Compilar e testar | | | | |
+| 0 Ler o guia e preparar | 6 min | não | — | — |
+| 1 Clonar | 5 min | **sim** | O `git` não estava instalado; o guia mandava clonar antes de instalar qualquer coisa | Pré-requisito do `git` adicionado ao passo 1 (CONTRIBUTING) |
+| 2 Compilador, CMake, Ninja | 8 min | não | `apt-get` de `build-essential`, CMake e Ninja | — |
+| 3 vcpkg (opcional) | não feito | — | Opcional até a F1 | — |
+| 4 Compilar e testar | 10 min | não | `cmake`, build e `ctest` com 100% | — |
 | 5 Python e lint | | | | |
 | 6 Godot (opcional) | | | | |
 | 7 Vetores | | | | |
@@ -50,3 +51,18 @@ Executado pelo autor, em máquina que já tinha tudo instalado, então **nenhum 
 3. **Passo 7 em Python 3.11/3.12 falhava com traceback** (sem decodificador Zstd). Agora o verificador diz o que fazer (`pip install zstandard`, Python 3.14+ ou `--skip-zstd`). **Corrigido no passo 7 do CONTRIBUTING** (Python 3.14+ ou `zstandard`).
 4. **Passo 7 exige `openssl` no PATH**, que no Windows não existe por padrão (Git for Windows traz em `usr\bin`). O verificador avisa e o passo 7 do guia agora menciona.
 5. **`verify_vectors.py` leva ~2 min**; o passo 7 agora avisa.
+
+## Resultado do teste do critério (2026-10-18)
+| Passo | Tempo |
+| --- | --- |
+| 0 Ler o guia e preparar | 6 min |
+| 1 Clonar (instalando o git antes) | 5 min |
+| 2 `apt-get` de compilador, CMake e Ninja | 8 min |
+| 4 Configurar, compilar e `ctest` | 10 min |
+| **Total até o `ctest` verde** | **29 min** (soma conferida: 6 + 5 + 8 + 10) |
+
+**Conclusão:** o critério "pessoa nova compila e roda os testes em menos de 1 hora" foi cumprido no Ubuntu, com 31 min de folga. O único buraco encontrado foi o `git` ausente antes do clone (corrigido).
+
+**Lacunas do registro (a preencher quando possível):** versão do Ubuntu e hardware; função e experiência do participante; quem observou; se houve ajuda do observador; passos 5 a 7 (Python, lint, vetores) e o Godot, que ficam fora da meta.
+
+**Lacuna de cobertura:** o caminho Windows (Visual Studio Build Tools, `winget install Kitware.CMake Ninja-build.Ninja`, terminal "x64 Native Tools") **não foi testado por pessoa externa**. Como a maior parte de quem desenvolve jogos usa Windows, vale repetir o teste no Windows Sandbox durante a Fase 1. Não bloqueia a Fase 0, porque o critério aceita Windows 11 **ou** Ubuntu.

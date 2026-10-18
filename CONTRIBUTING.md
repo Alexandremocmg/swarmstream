@@ -23,6 +23,7 @@ Meta: pessoa nova compila e roda os testes em **menos de 1 hora** seguindo só e
 Docker **não** é necessário hoje: o `sw-netlab` roda com Python puro.
 
 ### 1. Clonar
+**Pré-requisito: o `git` precisa estar instalado antes deste passo** (o teste de 1 hora mostrou que máquina nova não o tem). Ubuntu: `sudo apt-get update && sudo apt-get install -y git`. Windows: `winget install Git.Git` (abra um terminal novo depois).
 ```bash
 git clone <URL do repositório> swarmstream
 cd swarmstream
