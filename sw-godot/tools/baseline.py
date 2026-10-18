@@ -33,15 +33,21 @@ METRICS = (
 TRUST_METRICS = ("load_ms", "avg_fps")
 
 # Limites absolutos de stutter (substituem "± 5% do baseline", que não se sustenta
-# com 0–3 quadros lentos).
-# Margens propostas pelo R2; quem aprova é o responsável técnico (docs/15).
+# com 0–3 quadros lentos). Aprovados pelo R1 em 2026-10-18 (docs/medicoes/baseline.md §3).
+# Cada limite = pior valor do baseline + margem:
+#  - > 33 ms: +1. O baseline teve 1 quadro lento em 5 rodadas de 60 s (taxa ~0,2 por
+#    rodada). Por Poisson, a chance de uma rodada sem regressão passar de 2 é ~0,1%.
+#  - > 100 ms: +0. Nenhum no baseline; um congelamento de 100 ms é o defeito que o
+#    produto promete não ter. Se aparecer, investigar a causa, não repetir até passar.
+#  - p99: +2 ms (orçamento de CPU que o sw-core pode tomar; 12% de um quadro a 60 FPS).
 LIMIT_MARGINS = {
-    "frames_over_33ms_steady": 3.0,  # quadros lentos a mais que o pior do baseline
-    "frames_over_100ms": 1.0,
-    "p99_frame_ms": 2.0,  # milissegundos a mais que o pior p99 do baseline
+    "frames_over_33ms_steady": 1.0,
+    "frames_over_100ms": 0.0,
+    "p99_frame_ms": 2.0,
 }
 # Carga: acima da média do baseline por no máximo max(10%, 500 ms), nas mesmas condições
-# (quente com quente). O piso de 500 ms existe porque a carga com texturas GPU leva ~2 s e
+# (quente com quente), conferida pela MEDIANA de pelo menos 3 rodadas (a carga varia ~20%
+# entre rodadas; uma rodada sozinha não decide). O piso de 500 ms existe porque a carga com texturas GPU leva ~2 s e
 # 10% de 2 s (200 ms) é menor que o ruído medido.
 LOAD_TOLERANCE = 1.10
 LOAD_TOLERANCE_MIN_MS = 500.0
@@ -105,12 +111,29 @@ def derive_limits(runs: list[dict[str, float]]) -> dict[str, float]:
     return limits
 
 
-def check_against_limits(report: dict[str, float], limits: dict[str, float]) -> list[str]:
-    return [
-        f"{name}: {report[name]:.2f} > limite {limit:.2f}"
-        for name, limit in limits.items()
-        if name in report and report[name] > limit
-    ]
+LOAD_MIN_RUNS = 3
+
+
+def check_against_limits(reports: list[dict[str, float]], limits: dict[str, float]) -> list[str]:
+    """Stutter: cada rodada contra o limite. Carga: a mediana das rodadas."""
+    failures = []
+    for index, report in enumerate(reports, start=1):
+        failures += [
+            f"rodada {index}: {name}: {report[name]:.2f} > limite {limit:.2f}"
+            for name, limit in limits.items()
+            if name != "load_ms" and name in report and report[name] > limit
+        ]
+    loads = [r["load_ms"] for r in reports if "load_ms" in r]
+    if "load_ms" in limits and loads:
+        if len(loads) < LOAD_MIN_RUNS:
+            failures.append(
+                f"load_ms: {len(loads)} rodada(s); a carga exige pelo menos {LOAD_MIN_RUNS}"
+            )
+        elif statistics.median(loads) > limits["load_ms"]:
+            failures.append(
+                f"load_ms: mediana {statistics.median(loads):.2f} > limite {limits['load_ms']:.2f}"
+            )
+    return failures
 
 
 def spread_percent(values: list[float]) -> float:
@@ -151,7 +174,11 @@ def main() -> int:
         "--limits-out", type=Path, help="grava os limites absolutos derivados das rodadas quentes"
     )
     parser.add_argument(
-        "--check", type=Path, help="measure.json a conferir contra --limits (não roda o Godot)"
+        "--check",
+        type=Path,
+        nargs="+",
+        help="measure.json de uma ou mais rodadas, conferidos contra --limits (não roda o Godot);"
+        " a carga exige pelo menos 3",
     )
     parser.add_argument("--limits", type=Path)
     parser.add_argument(
@@ -165,7 +192,7 @@ def main() -> int:
         if not args.limits:
             parser.error("--check needs --limits")
         failures = check_against_limits(
-            json.loads(args.check.read_text(encoding="utf-8")),
+            [json.loads(path.read_text(encoding="utf-8")) for path in args.check],
             json.loads(args.limits.read_text(encoding="utf-8")),
         )
         print(os.linesep.join(failures) if failures else "within limits")

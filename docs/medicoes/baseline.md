@@ -15,8 +15,8 @@ Dados brutos: [baseline-gpu.json](baseline-gpu.json) (quente, método novo), [ba
     # 2. baseline quente: 1 aquecimento descartado + 5 rodadas de 60 s; grava os limites
     python sw-godot/tools/baseline.py --godot <godot_console.exe> --tex gpu --route-seconds 60 --runs 5 \
         --out docs/medicoes/baseline-gpu.json --limits-out docs/medicoes/baseline-limits.json
-    # 3. conferir uma rodada contra os limites (sai com código 1 se violar)
-    python sw-godot/tools/baseline.py --godot x --check measure.json --limits docs/medicoes/baseline-limits.json
+    # 3. conferir rodadas contra os limites (sai com código 1 se violar); a carga exige 3 rodadas
+    python sw-godot/tools/baseline.py --godot x --check r1.json r2.json r3.json --limits docs/medicoes/baseline-limits.json
 
 `--tex jpg` repete o método antigo. A carga é medida em três partes: `texture_read_ms` (só ler os bytes do disco), `texture_load_ms` (ler + interpretar + enviar à GPU) e `load_ms` (cena inteira).
 
@@ -43,20 +43,26 @@ A carga caiu mais de 10×. Isso confirma a hipótese do parecer: **no método an
 
 **Veredito do rigor:** pela regra antiga (variação < 10% na carga e no FPS) a carga **não é confiável** neste método: a variação absoluta é de 0,52 s, mas sobre uma base de 2,5 s ela pesa 20%. O FPS está confiável (4,5%). Em vez de relaxar o limite em silêncio, a comparação da carga passa a usar tolerância absoluta (seção 3). A carga também mostrou tendência de subir nas rodadas 3–4 e voltar: ruído do sistema, não explicado.
 
-## 3. Limites absolutos propostos (substituem "stutter ± 5%")
+## 3. Limites absolutos (substituem "stutter ± 5%"): critério do Portão 1
 
-Calculados por `baseline.py` a partir das rodadas quentes e gravados em [baseline-limits.json](baseline-limits.json). **Proposta do R2; a aprovação é do responsável técnico (R1).**
+Calculados por `baseline.py` a partir das rodadas quentes e gravados em [baseline-limits.json](baseline-limits.json). Propostos pelo R2; **aprovados com ajustes pelo R1 em 2026-10-18**.
 
-| Métrica | Limite | Regra |
-| --- | --- | --- |
-| Quadros > 33 ms após 3 s | ≤ **4** | pior do baseline (1) + 3 |
-| Quadros > 100 ms | ≤ **1** | pior do baseline (0) + 1 |
-| p99 do tempo de quadro | ≤ **6,24 ms** | pior p99 do baseline (4,24) + 2 ms |
-| Carga (`load_ms`), quente com quente | ≤ **3059 ms** | média (2559) + max(10%, 500 ms) |
+| Métrica | Proposta R2 | **Aprovado** | Regra aprovada |
+| --- | --- | --- | --- |
+| Quadros > 33 ms após 3 s, **por rodada** de 60 s | ≤ 4 | ≤ **2** | pior do baseline (1) + 1. Derivado: 1 quadro lento em 300 s de baseline (taxa ≈ 0,2 por rodada); por Poisson, uma rodada sem regressão passa de 2 em ~0,1% das vezes. ≤ 4 deixaria passar 3 travadas por minuto a mais que o SSD |
+| Quadros > 100 ms, por rodada | ≤ 1 | **0** | pior do baseline (0) + 0. Um congelamento de 100 ms é o defeito que o produto promete não ter. Se aparecer, investigar a causa (evento `frame_stutter`), não repetir a rodada até passar |
+| p99 do tempo de quadro, por rodada | ≤ 6,24 ms | ≤ **6,24 ms** | pior p99 do baseline (4,24) + 2 ms: o que o `sw-core` pode tomar de CPU (12% de um quadro a 60 FPS) |
+| Carga (`load_ms`), quente com quente | ≤ 3059 ms | ≤ **3059 ms**, pela **mediana de 3 rodadas** | média (2559) + max(10%, 500 ms). Uma rodada sozinha não decide: a carga varia 20% entre rodadas (seção 2) |
+
+Regras de uso (R1):
+- **Validade:** os limites valem para esta máquina e configuração (GTX 1050 Ti, NVMe, Godot 4.7.2, GL Compatibility, vsync desligado, rota de 60 s). Mudou hardware, driver, versão do Godot ou a rota: refazer o baseline antes de comparar.
+- **O que eles provam:** que o `sw-core` com cache local cheio não piora o jogo frente ao SSD direto. Eles **não** medem o streaming: para isso o Portão 1 usa a taxa de falta e a espera p99 de [08](../08-metricas-e-testes.md) no perfil `cabo_50`.
+- Sem piso de FPS: a 500 FPS ele não mede streaming, e o p99 já cobre perda de CPU.
+- `texture_read_ms` fica registrado em toda rodada, sem limite: é o número de I/O que acompanha a decisão da seção 4.
 
 Por que absolutos: com 0–1 quadros lentos por rodada, "± 5%" não tem significado (um quadro a mais é +100%). Os limites acima só acusam regressões reais de stutter, e um quadro de 100 ms já viola o limite de 1.
 
-Pendências de método dos limites: (a) as margens (+3, +1, +2 ms, 500 ms) são escolhas do R2, não derivadas de dados; (b) só 5 rodadas de uma máquina; (c) o FPS médio não entra nos limites (500 FPS não mede streaming); se o R1 quiser um piso de FPS, deve ser absoluto.
+Pendências de método que continuam: (a) as margens de p99 (+2 ms) e de carga (500 ms) seguem escolhas de projeto, não derivadas de dados; as de quadros lentos agora são; (b) só 5 rodadas de uma máquina: o baseline deve ser refeito com 10 rodadas antes do Portão 1, e os limites recalculados pela mesma regra.
 
 ## 4. Carga a frio
 

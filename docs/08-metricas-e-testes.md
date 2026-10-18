@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | **Taxa de falta** | Leituras do jogo que não estavam locais / total de leituras | < 1% jogando; 0% em lógica/colisão |
 | **Espera do jogo** p50/p95/p99 | Tempo que o jogo esperou numa falta | p99 < 300 ms com rede de 50 Mbps |
-| **Quadros com stutter** | Quadros > 33 ms atribuídos a I/O | Igual ao baseline com SSD local (± 5%) |
+| **Quadros com stutter** | Quadros > 33 ms atribuídos a I/O | Limites absolutos sobre o baseline com SSD local ([medicoes/baseline.md §3](medicoes/baseline.md)): > 33 ms ≤ 2 e > 100 ms = 0 por rodada de 60 s, p99 ≤ baseline + 2 ms |
 | **Pop-in** | Tempo com mip/LOD rebaixado na tela | Medir; meta definida na Fase 1 |
 | **% de bytes de peers** | Bytes de peers / bytes totais baixados | 60–80% em regime (proposta original) — **a provar** na Fase 3 |
 | **Tempo até jogar** | Do clique em instalar até o primeiro controle | < 10 min com 100 Mbps para jogo de 150 GB |

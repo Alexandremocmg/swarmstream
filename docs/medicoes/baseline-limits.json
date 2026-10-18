@@ -1,6 +1,6 @@
 {
-  "frames_over_33ms_steady": 4.0,
-  "frames_over_100ms": 1.0,
+  "frames_over_33ms_steady": 2.0,
+  "frames_over_100ms": 0.0,
   "p99_frame_ms": 6.238,
   "load_ms": 3059.0544
 }
