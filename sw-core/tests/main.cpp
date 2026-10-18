@@ -3,11 +3,34 @@
 
 #include <iostream>
 
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#include <cstdlib>
+#include <windows.h>
+#endif
+
 void run_content_source_tests();
 void run_cache_store_tests();
 void run_pipeline_integration_tests();
 
-int main() {
+// Em Debug, o `assert` do MSVC abre uma caixa de diálogo e espera alguém clicar:
+// no CI o teste ficaria pendurado em vez de falhar. Mandamos a mensagem para o
+// stderr e abortamos com código de erro.
+static void make_assert_fail_instead_of_hang()
+{
+#ifdef _MSC_VER
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    for (int type : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT}) {
+        _CrtSetReportMode(type, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(type, _CRTDBG_FILE_STDERR);
+    }
+#endif
+}
+
+int main()
+{
+    make_assert_fail_instead_of_hang();
     std::cout << "========================================\n";
     std::cout << " Running Swarmstream sw-core Unit & Integration Tests\n";
     std::cout << "========================================\n\n";

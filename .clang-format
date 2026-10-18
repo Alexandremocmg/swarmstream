@@ -15,7 +15,7 @@ BraceWrapping:
 AllowShortFunctionsOnASingleLine: All
 AllowShortIfStatementsOnASingleLine: WithoutElse
 AllowShortCaseLabelsOnASingleLine: true
-BreakTemplateDeclarations: Yes
+AlwaysBreakTemplateDeclarations: Yes
 SortIncludes: CaseSensitive
 PointerAlignment: Left
 DerivePointerAlignment: true

@@ -48,6 +48,8 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
 
     add_test(NAME sw-core-tests COMMAND sw-core-tests)
+    # Teste pendurado deve falhar, não travar o CI.
+    set_tests_properties(sw-core-tests PROPERTIES TIMEOUT 120)
 
     # Contrato swarmstream.h v0 (ADR-0014): layout (sizeof/offsetof) e stub.
     # Teste que quebra aqui = mudança de contrato, que exige ADR.
@@ -66,4 +68,5 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         target_compile_options(sw-core-api-v0-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME sw-core-api-v0 COMMAND sw-core-api-v0-tests)
+    set_tests_properties(sw-core-api-v0 PROPERTIES TIMEOUT 120)
 endif()
