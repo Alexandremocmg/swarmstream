@@ -91,3 +91,21 @@ Folga: os prazos são estimativa. Se uma tarefa passar de 5 dias, o R1 quebra em
 
 ## O que continua pendente da Fase 0 (herdado)
 Ver a tabela "Pendências que seguem para a Fase 1" no [parecer final](15-portao-fase-0-e-plano-3-recursos.md#parecer-final-do-portão-da-fase-0-2026-10-18). Em especial: F1-36 antes do Portão 1, chunker em C++ por pessoa diferente dos autores dos vetores, formatação mecânica do C++ depois de 28/10, e o teste de 1 hora no Windows.
+
+## Andamento da Fase 1a (verificado no GitHub)
+
+### Semana 1, atualizado em 2026-10-18
+| Tarefa | Estado | Evidência |
+| --- | --- | --- |
+| **F1-36** checagem vazia do baseline | **Feita** (PR #11, merge b4eddb0) | CI verde nos 4 jobs, inclusive o novo passo de testes no `lint`. Verificado por mim do zero: os 14 testes passam e 16 casos adversos se comportam como o esperado (relatórios vazios, chaves erradas, arquivo-resumo no lugar de rodada, valor texto, NaN, negativo, uma rodada sem p99, nenhuma com `load_ms`; mais os 7 casos de limite e de mediana que já funcionavam) |
+| **F1-01** chunker em C++ | Não iniciada (nenhum branch no GitHub) | |
+| **F1-20** portão do Godot | Não iniciada (nenhum branch no GitHub) | |
+| **F1-33** esqueleto do relatório | Não iniciada | |
+| `CLAUDE.md` e pedidos da semana 1 | **Na `main`** (PR #10) | |
+
+### Pontos de atenção
+- **Aceite sem registro no GitHub:** os PRs #10 e #11 foram aceitos sem nenhuma revisão ou comentário registrado (0 e 0). A revisão do #11 foi feita em conversa, e o registro não foi postado porque o modo automático bloqueou. Sem registro, a regra de "dois olhos" não deixa rastro. Daqui em diante, a sessão que revisa **comenta o veredito no PR** antes do aceite.
+- **PR #10 aceito por outra sessão:** não foi aceito pela sessão que o escreveu. Confirmar com o dono do produto que foi autorizado.
+- **Agentes com contexto desatualizado:** um relato de status citou os PRs #2 e #3 como "aguardando merge", o #1 como "a fechar" e o reinício do Windows como "esperando OK". Os três já estão resolvidos (PRs #2 a #9 aceitos, #1 fechado, reinício dispensado em 2026-10-17). Toda sessão nova deve começar lendo o `CLAUDE.md` e o parecer em [15](15-portao-fase-0-e-plano-3-recursos.md).
+- **Nota do ruff:** os avisos `S603` e `S607` (uso de `subprocess` por `sys.executable` no teste) já existiam e o lint do CI não cobre esses arquivos com a regra de segurança. Aceitável; reavaliar se o escopo do lint mudar.
+- **Pasta compartilhada:** continua no branch `feat/F0-08-vetores-de-teste`, atrasada em 1 commit, com uma alteração em `docs/medicoes/guia-1h.md`. Alguém deve decidir se essa alteração vira commit ou é descartada, e então voltar a pasta para a `main`.
