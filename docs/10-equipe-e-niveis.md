@@ -42,19 +42,16 @@ Perfil desejado dos sêniores: um com experiência em **engines / streaming de a
 
 ## Donos por módulo (CODEOWNERS)
 
-Cada pasta do repositório tem um dono (um sênior ou o arquiteto) que aprova os PRs dela. Sugestão inicial:
+Cada pasta do repositório tem um dono responsável. **Situação atual:** os três recursos (R1, R2, R3) trabalham pela conta do dono do produto e **não têm contas próprias no GitHub**. Por isso o arquivo [`.github/CODEOWNERS`](../.github/CODEOWNERS) aponta todos os caminhos para essa conta, e o papel responsável (R1, R2 ou R3) fica registrado nos comentários. Quando alguém ganhar conta, troca-se o dono do caminho e dá-se acesso de escrita ao repositório.
 
-```
-/docs/adr/           @arquiteto
-/sw-core/cache/      @senior-engine
-/sw-core/sched/      @senior-redes
-/sw-core/sources/    @senior-redes
-/sw-core/include/    @arquiteto
-/sw-pack/            @senior-engine
-/sw-godot/           @senior-engine
-/sw-netlab/          @pleno-qa
-/sw-services/        @senior-redes
-```
+| Papel | Pastas e arquivos |
+| --- | --- |
+| **R1** (líder técnico) | `sw-core/`, `sw-godot/`, `spike-fileaccess/`, `docs/adr/` |
+| **R2** (engenharia e qualidade) | `sw-netlab/`, `sw-pack/`, `sw-services/`, `.github/`, `CMakeLists.txt`, `cmake/`, `.clang-format`, `.clang-tidy` |
+| **R3** (conteúdo e apoio) | `docs/` (exceto ADRs), vetores de teste e relatórios, assets do mapa |
+| **Dono do produto** | `LICENSE`, `NOTICE`, `SECURITY.md` |
+
+Regra de revisão com 3 pessoas: [15](15-portao-fase-0-e-plano-3-recursos.md#regra-de-revisão-com-3-pessoas).
 
 ## Como trabalhar em paralelo sem bloquear
 

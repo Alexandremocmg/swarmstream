@@ -1,7 +1,33 @@
-# F0 owner map from docs/10-equipe-e-niveis.md; replace role handles with GitHub usernames.
-/sw-core/              @senior-engine
-/sw-godot/             @senior-engine
-/sw-netlab/            @pleno-qa
-/docs/adr/             @arquiteto
-/.clang-format         @pleno1
-/.clang-tidy           @pleno1
+# Mapa de donos por módulo (docs/10-equipe-e-niveis.md, docs/15).
+#
+# A equipe (R1, R2, R3) trabalha pela conta do dono do produto: os recursos
+# NÃO têm contas próprias no GitHub. Por isso todos os caminhos apontam para
+# essa conta, e o papel responsável fica no comentário de cada linha.
+# Quando alguém ganhar conta no GitHub, troque o dono do caminho (e dê acesso
+# de escrita ao repositório). Não coloque aqui usuários que não sejam
+# confirmados: nome de usuário inexistente ou de terceiros quebra a regra.
+#
+# R1 = líder técnico (arquitetura, contratos, cache, Godot, revisão crítica)
+# R2 = engenharia e qualidade (build, CI, empacotamento, HTTP, testes)
+# R3 = conteúdo e apoio (assets, documentação, vetores, relatórios)
+
+# R1
+/sw-core/              @Alexandremocmg
+/sw-godot/             @Alexandremocmg
+/spike-fileaccess/     @Alexandremocmg
+/docs/adr/             @Alexandremocmg
+
+# R2
+/sw-netlab/            @Alexandremocmg
+/sw-pack/              @Alexandremocmg
+/sw-services/          @Alexandremocmg
+/.github/              @Alexandremocmg
+/CMakeLists.txt        @Alexandremocmg
+/cmake/                @Alexandremocmg
+/.clang-format         @Alexandremocmg
+/.clang-tidy           @Alexandremocmg
+
+# Arquivos legais e de segurança: sempre o dono do produto
+/LICENSE               @Alexandremocmg
+/NOTICE                @Alexandremocmg
+/SECURITY.md           @Alexandremocmg
