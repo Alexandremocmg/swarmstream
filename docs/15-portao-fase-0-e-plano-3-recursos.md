@@ -168,7 +168,7 @@ Itens numerados conforme a lista "Lista para fechar a Fase 0". Cada pessoa entre
 2. Dias 3–4: R2 corrige o baseline; R1 congela o header; R3 completa os vetores.
 3. Dia 5: teste de 1 hora com a pessoa externa; reunião de fechamento (1 h) e decisão de passar para a F1a.
 
-## Situação do fechamento (atualizada em 2026-10-17, à noite)
+## Situação do fechamento (atualizada em 2026-10-17, à noite; PRs aceitos)
 
 Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
 
@@ -176,19 +176,19 @@ Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
 | --- | --- | --- | --- |
 | 1 | Git e primeiro commit | **Feito** | Commits na `main`; `REA-Estudo/` e builds fora |
 | 2 | Repositório, `CODEOWNERS`, e-mail | **Parcial** | Repositório e e-mail feitos. `CODEOWNERS` ainda com apelidos de função: depende dos usuários do GitHub de R1, R2, R3 |
-| 3 | CI com PR vermelho e PR verde | **Feito (provado)** | [PR #2](https://github.com/Alexandremocmg/swarmstream/pull/2) verde em Ubuntu, Windows (MSVC), ASan+UBSan e lint; [PR #1](https://github.com/Alexandremocmg/swarmstream/pull/1) vermelho em Ubuntu, Windows e ASan por uma asserção quebrada. A primeira tentativa revelou 3 defeitos reais do CI (travamento no Windows, `.clang-format` inválido para o clang-format 18, C++ existente fora do formato) |
+| 3 | CI com PR vermelho e PR verde | **Feito (provado e aceito)** | PR #2 aceito na `main` (adcf187) e PR #1 fechado sem merge (branch mantida como evidência). [PR #2](https://github.com/Alexandremocmg/swarmstream/pull/2) verde em Ubuntu, Windows (MSVC), ASan+UBSan e lint; [PR #1](https://github.com/Alexandremocmg/swarmstream/pull/1) vermelho em Ubuntu, Windows e ASan por uma asserção quebrada. A primeira tentativa revelou 3 defeitos reais do CI (travamento no Windows, `.clang-format` inválido para o clang-format 18, C++ existente fora do formato) |
 | 4 | Guia de ambiente e teste de 1 hora | **Guia escrito, teste não executado** | Falta máquina limpa e uma pessoa que não montou o ambiente ([protocolo](medicoes/guia-1h.md)) |
-| 5 | Método do baseline | **Quase feito** | [PR #3](https://github.com/Alexandremocmg/swarmstream/pull/3) verde: texturas GPU (carga de ~30 s para ~2,5 s), limites absolutos, carga fria por esvaziamento de cache (leitura pura ~2× a frio). Reinício do Windows não executado (ver decisão abaixo) |
-| 6 | ADRs 0010–0016 e `swarmstream.h` v0 | **Aceitos em `main`** (commit 8799c3c) | O registro de revisão diz que o dono do produto aprovou. **Confirmar** (abaixo) |
+| 5 | Método do baseline | **Feito** (PR #3 aceito na `main`, 2375cc0) | [PR #3](https://github.com/Alexandremocmg/swarmstream/pull/3) verde: texturas GPU (carga de ~30 s para ~2,5 s), limites absolutos, carga fria por esvaziamento de cache (leitura pura ~2× a frio). **Reinício do Windows dispensado por decisão do dono do produto (2026-10-17):** a leitura pura já dobra a frio e `load_ms` sozinho não mede I/O nesta cena; o reinício só reconfirmaria isso. Refazer na Fase 1, quando o cache for real. Pendente: o R1 aprovar os limites absolutos (escolhas do R2) |
+| 6 | ADRs 0010–0016 e `swarmstream.h` v0 | **Feito** (8799c3c) | Aprovação do dono do produto **confirmada por ele em 2026-10-17**, como consta no registro de revisão |
 | 7 | Correção de ADR-0001, doc 06, F1-20 | **Feito** | No mesmo commit |
 | 8 | Vetores de teste da spec | **Em andamento** | `sw-pack/testdata/` existe, ainda sem commit. Pendências: R1 aprovar a definição do chunker; o payload do envelope é sintético até existir `flatc` ou `sw-pack` |
 
 ### Problemas encontrados na verificação
-- **`main` está vermelha no lint** (commit 8799c3c). Causa: o código C++ existente não segue o `.clang-format`, e a configuração corrigida só está no PR #2, ainda não aceito.
-- **PRs #1, #2 e #3 abertos.** O #1 é só prova e não deve ser aceito. O #2 deve entrar antes do #3.
+- ~~`main` vermelha no lint~~ **Resolvido:** com o PR #2 aceito, `ci` e `lint` ficaram verdes na `main` (adcf187 e 2375cc0). O PR #2 tinha conflito com a `main` em `sw-core/CMakeLists.txt`, resolvido mantendo as duas mudanças (TIMEOUT de 120 s nos dois alvos de teste); build e testes passaram antes do merge.
+- **Atenção, lint por evento:** o lint de **PR** só checa os arquivos tocados e passa; o lint de **push** em um branch mostrou 205 violações de formato em `swarmstream.h`, `api_stub.cpp` e `api_v0_smoke.c`. Elas são do código do contrato congelado e só somem com o PR mecânico de formatação, previsto para depois do congelamento (28/10). Até lá, qualquer PR que toque esses três arquivos fica vermelho no lint.
 - **Formatação do C++ existente:** um PR mecânico de formatação fica para depois do congelamento do header (28/10), senão qualquer PR que toque esses arquivos fica vermelho no lint.
 - **Limites do baseline** (+3 quadros, +1, +2 ms, 500 ms) são escolhas do R2, não derivadas de dados. Precisam de aprovação do R1.
 - **Compilador local:** o Windows Defender bloqueou o MinGW na máquina do R2. Não foi alterado; a correção foi validada só pelo CI.
 
 ### Conclusão
-A Fase 0 está **perto de fechar**. Faltam 4 coisas: o teste de 1 hora (item 4), aceitar os PRs #2 e #3 (itens 3 e 5), os vetores da spec (item 8) e os usuários do GitHub para o `CODEOWNERS` (item 2). Nenhuma depende de novo desenvolvimento grande.
+A Fase 0 está **a três itens de fechar**: o teste de 1 hora com pessoa externa (item 4), os vetores da spec (item 8, com a definição do chunker a aprovar pelo R1) e os usuários do GitHub para o `CODEOWNERS` (item 2). Mais uma pendência pequena: o R1 aprovar os limites do baseline. Nenhuma exige desenvolvimento grande.
