@@ -167,3 +167,28 @@ Itens numerados conforme a lista "Lista para fechar a Fase 0". Cada pessoa entre
 1. Dias 1–2: R2 faz o repositório e o CI; R1 revisa os ADRs; R3 escreve o guia.
 2. Dias 3–4: R2 corrige o baseline; R1 congela o header; R3 completa os vetores.
 3. Dia 5: teste de 1 hora com a pessoa externa; reunião de fechamento (1 h) e decisão de passar para a F1a.
+
+## Situação do fechamento (atualizada em 2026-10-17, à noite)
+
+Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
+
+| # | Item | Estado | Evidência / o que falta |
+| --- | --- | --- | --- |
+| 1 | Git e primeiro commit | **Feito** | Commits na `main`; `REA-Estudo/` e builds fora |
+| 2 | Repositório, `CODEOWNERS`, e-mail | **Parcial** | Repositório e e-mail feitos. `CODEOWNERS` ainda com apelidos de função: depende dos usuários do GitHub de R1, R2, R3 |
+| 3 | CI com PR vermelho e PR verde | **Feito (provado)** | [PR #2](https://github.com/Alexandremocmg/swarmstream/pull/2) verde em Ubuntu, Windows (MSVC), ASan+UBSan e lint; [PR #1](https://github.com/Alexandremocmg/swarmstream/pull/1) vermelho em Ubuntu, Windows e ASan por uma asserção quebrada. A primeira tentativa revelou 3 defeitos reais do CI (travamento no Windows, `.clang-format` inválido para o clang-format 18, C++ existente fora do formato) |
+| 4 | Guia de ambiente e teste de 1 hora | **Guia escrito, teste não executado** | Falta máquina limpa e uma pessoa que não montou o ambiente ([protocolo](medicoes/guia-1h.md)) |
+| 5 | Método do baseline | **Quase feito** | [PR #3](https://github.com/Alexandremocmg/swarmstream/pull/3) verde: texturas GPU (carga de ~30 s para ~2,5 s), limites absolutos, carga fria por esvaziamento de cache (leitura pura ~2× a frio). Reinício do Windows não executado (ver decisão abaixo) |
+| 6 | ADRs 0010–0016 e `swarmstream.h` v0 | **Aceitos em `main`** (commit 8799c3c) | O registro de revisão diz que o dono do produto aprovou. **Confirmar** (abaixo) |
+| 7 | Correção de ADR-0001, doc 06, F1-20 | **Feito** | No mesmo commit |
+| 8 | Vetores de teste da spec | **Em andamento** | `sw-pack/testdata/` existe, ainda sem commit. Pendências: R1 aprovar a definição do chunker; o payload do envelope é sintético até existir `flatc` ou `sw-pack` |
+
+### Problemas encontrados na verificação
+- **`main` está vermelha no lint** (commit 8799c3c). Causa: o código C++ existente não segue o `.clang-format`, e a configuração corrigida só está no PR #2, ainda não aceito.
+- **PRs #1, #2 e #3 abertos.** O #1 é só prova e não deve ser aceito. O #2 deve entrar antes do #3.
+- **Formatação do C++ existente:** um PR mecânico de formatação fica para depois do congelamento do header (28/10), senão qualquer PR que toque esses arquivos fica vermelho no lint.
+- **Limites do baseline** (+3 quadros, +1, +2 ms, 500 ms) são escolhas do R2, não derivadas de dados. Precisam de aprovação do R1.
+- **Compilador local:** o Windows Defender bloqueou o MinGW na máquina do R2. Não foi alterado; a correção foi validada só pelo CI.
+
+### Conclusão
+A Fase 0 está **perto de fechar**. Faltam 4 coisas: o teste de 1 hora (item 4), aceitar os PRs #2 e #3 (itens 3 e 5), os vetores da spec (item 8) e os usuários do GitHub para o `CODEOWNERS` (item 2). Nenhuma depende de novo desenvolvimento grande.
