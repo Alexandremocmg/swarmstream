@@ -22,7 +22,7 @@ O trabalho técnico da Fase 0 está, em grande parte, entregue e de boa qualidad
 | `.clang-format`, `.clang-tidy`, `CODEOWNERS`, modelo de PR, workflows `ci.yml` e `lint.yml` | Existem |
 | Repositório git | **Não existe** (`fatal: not a git repository`) |
 | CI em Windows e Linux | **Nunca rodou**: sem git e sem GitHub não há execução. Só foi testado localmente, com MinGW, não com MSVC |
-| `CODEOWNERS` | Usa apelidos de função (`@senior-engine`), não usuários reais |
+| `CODEOWNERS` | Usava apelidos de função (`@senior-engine`); ver correção no item 2 |
 | `.gitattributes` | Não existe (arquivos misturam CRLF e LF) |
 | `CONTRIBUTING.md` | Seção "Ambiente" ainda diz "a completar na tarefa F0-13" |
 | `REA-Estudo/` (JDK, Ghidra, node_modules) | Está na raiz do projeto e **não está no `.gitignore`**: entraria no primeiro commit |
@@ -175,7 +175,7 @@ Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
 | # | Item | Estado | Evidência / o que falta |
 | --- | --- | --- | --- |
 | 1 | Git e primeiro commit | **Feito** | Commits na `main`; `REA-Estudo/` e builds fora |
-| 2 | Repositório, `CODEOWNERS`, e-mail | **Parcial** | Repositório e e-mail feitos. `CODEOWNERS` ainda com apelidos de função: depende dos usuários do GitHub de R1, R2, R3 |
+| 2 | Repositório, `CODEOWNERS`, e-mail | **Feito (PR de CODEOWNERS pendente de aceite)** | Repositório e e-mail feitos. **Os recursos não têm contas no GitHub** (confirmado pelo dono do produto em 2026-10-18; as contas `Edualc`, `Itivargitna` e `Zemreh` informadas antes não são deles e não receberam acesso). `CODEOWNERS` passa a apontar para a conta do dono do produto, com o papel (R1, R2, R3) em comentário. Correção em PR, aguardando aceite |
 | 3 | CI com PR vermelho e PR verde | **Feito (provado e aceito)** | PR #2 aceito na `main` (adcf187) e PR #1 fechado sem merge (branch mantida como evidência). [PR #2](https://github.com/Alexandremocmg/swarmstream/pull/2) verde em Ubuntu, Windows (MSVC), ASan+UBSan e lint; [PR #1](https://github.com/Alexandremocmg/swarmstream/pull/1) vermelho em Ubuntu, Windows e ASan por uma asserção quebrada. A primeira tentativa revelou 3 defeitos reais do CI (travamento no Windows, `.clang-format` inválido para o clang-format 18, C++ existente fora do formato) |
 | 4 | Guia de ambiente e teste de 1 hora | **Guia escrito, teste não executado** | Falta máquina limpa e uma pessoa que não montou o ambiente ([protocolo](medicoes/guia-1h.md)) |
 | 5 | Método do baseline | **Feito** (PR #3 aceito na `main`, 2375cc0) | [PR #3](https://github.com/Alexandremocmg/swarmstream/pull/3) verde: texturas GPU (carga de ~30 s para ~2,5 s), limites absolutos, carga fria por esvaziamento de cache (leitura pura ~2× a frio). **Reinício do Windows dispensado por decisão do dono do produto (2026-10-17):** a leitura pura já dobra a frio e `load_ms` sozinho não mede I/O nesta cena; o reinício só reconfirmaria isso. Refazer na Fase 1, quando o cache for real. Pendente: o R1 aprovar os limites absolutos (escolhas do R2) |
@@ -191,4 +191,4 @@ Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
 - **Compilador local:** o Windows Defender bloqueou o MinGW na máquina do R2. Não foi alterado; a correção foi validada só pelo CI.
 
 ### Conclusão
-A Fase 0 está **a três itens de fechar**: o teste de 1 hora com pessoa externa (item 4), os vetores da spec (item 8, com a definição do chunker a aprovar pelo R1) e os usuários do GitHub para o `CODEOWNERS` (item 2). Mais uma pendência pequena: o R1 aprovar os limites do baseline. Nenhuma exige desenvolvimento grande.
+A Fase 0 está **a três itens de fechar**: o teste de 1 hora com pessoa externa (item 4), os vetores da spec (item 8, com a definição do chunker a aprovar pelo R1) e aceitar o PR do `CODEOWNERS` (item 2). Mais uma pendência pequena: o R1 aprovar os limites do baseline. Nenhuma exige desenvolvimento grande.
