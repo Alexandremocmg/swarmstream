@@ -1,33 +1,92 @@
-# Baseline da bancada (F0-12)
+# Baseline da bancada (F0-12), método corrigido
 
-Rota gravada do modo robô, Godot 4.7.2-stable, GL Compatibility, vsync desligado, GPU NVIDIA GTX 1050 Ti (a mesma nas rodadas), assets no SSD local.
-Comando (180 s de rota, 1 aquecimento descartado, 5 medidas, 2 de cache frio):
+Rota gravada do modo robô, Godot 4.7.2-stable, GL Compatibility, vsync desligado, GTX 1050 Ti, assets em NVMe (Kingston SNV3S1000G). Itens corrigidos em relação à versão anterior (item 5 do fechamento da Fase 0, [15](../15-portao-fase-0-e-plano-3-recursos.md)):
 
-    python sw-godot/tools/baseline.py --godot <godot_console.exe> --route-seconds 180 --runs 5 \
-        --cold 2 --evict-dir <pasta grande sem relação> --evict-gb 13
+1. **Texturas em formato GPU comprimido** (era JPEG 8K decodificado na CPU).
+2. **Limites absolutos de stutter** (era "± 5% do baseline").
+3. **Carga a frio**: tentativa por esvaziamento de cache feita (abaixo); **a carga com reinício do Windows ainda não foi feita** (ver "Pendente").
 
-Dados brutos em `baseline.json`.
+Dados brutos: [baseline-gpu.json](baseline-gpu.json) (quente, método novo), [baseline-gpu-evict.json](baseline-gpu-evict.json) (frio por esvaziamento), [baseline-jpg.json](baseline-jpg.json) (método antigo, para comparação), [baseline-limits.json](baseline-limits.json) (limites). O resultado da versão anterior ficou em [baseline.json](baseline.json).
 
-| Rodada | carga (ms) | FPS | quadros >33 ms (após 3 s) | tempo acima de 33 ms (ms) | p99 (ms) | pior (ms) |
-|---|---|---|---|---|---|---|
-| 1 | 22220 | 533,8 | 3 | 601 | 3,46 | 354 |
-| 2 | 21944 | 537,6 | 3 | 423 | 3,44 | 255 |
-| 3 | 21959 | 546,6 | 3 | 503 | 3,34 | 346 |
-| 4 | 20610 | 527,5 | 3 | 444 | 4,01 | 279 |
-| 5 | 21011 | 501,6 | 3 | 362 | 4,74 | 180 |
-| **média** | 21549 | 529,4 | 3 | 467 | 3,80 | — |
-| **variação (máx−mín)/média** | **7,5%** | **8,5%** | 0% | 51% | 37% | 62% |
+## Como reproduzir
 
-`route.log` idêntico nas 5 rodadas.
+    # 1. gerar as texturas GPU (BC1/S3TC com mipmaps, 16 arquivos de 42,7 MiB = 683 MiB), ~1 min
+    godot --headless --path sw-godot/project --script res://scripts/bake_gpu_textures.gd
+    # 2. baseline quente: 1 aquecimento descartado + 5 rodadas de 60 s; grava os limites
+    python sw-godot/tools/baseline.py --godot <godot_console.exe> --tex gpu --route-seconds 60 --runs 5 \
+        --out docs/medicoes/baseline-gpu.json --limits-out docs/medicoes/baseline-limits.json
+    # 3. conferir uma rodada contra os limites (sai com código 1 se violar)
+    python sw-godot/tools/baseline.py --godot x --check measure.json --limits docs/medicoes/baseline-limits.json
+
+`--tex jpg` repete o método antigo. A carga é medida em três partes: `texture_read_ms` (só ler os bytes do disco), `texture_load_ms` (ler + interpretar + enviar à GPU) e `load_ms` (cena inteira).
+
+## 1. Texturas GPU: a carga deixou de ser decodificação de JPEG
+
+| Método | Carga (`load_ms`) | Quadros > 100 ms | Pior quadro |
+| --- | --- | --- | --- |
+| JPEG 8K → `Image` na CPU (antigo), 3 rodadas | 26,1 / 29,9 / 33,0 s | 3 em toda rodada | 132–554 ms |
+| BC1 pré-comprimido `.res` (novo), 5 rodadas | 2,30 / 2,41 / 2,72 / 2,82 / 2,55 s | 0 | 20–34 ms |
+
+A carga caiu mais de 10×. Isso confirma a hipótese do parecer: **no método antigo a carga era limitada pela CPU (decodificação de JPEG), não pelo disco**, e por isso a carga "a frio" não mudava. Os 3 quadros lentos que a rota tinha também sumiram (provavelmente o envio das texturas 8K sem compressão à GPU; não isolei a causa). (A carga JPEG desta rodada ficou mais lenta que as 21,5 s anteriores e variou 23%: a máquina estava mais carregada. O que vale é a ordem de grandeza.)
+
+## 2. Baseline quente do método novo (5 rodadas de 60 s)
+
+| Rodada | carga (ms) | leitura pura (ms) | FPS | quadros > 33 ms (após 3 s) | quadros > 100 ms | p99 (ms) | pior (ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 2296 | 424 | 506,6 | 0 | 0 | 3,7 | 27,0 |
+| 2 | 2411 | 450 | 505,3 | 0 | 0 | 3,8 | 22,8 |
+| 3 | 2719 | 499 | 499,4 | 1 | 0 | 4,0 | 33,8 |
+| 4 | 2819 | 499 | 483,9 | 0 | 0 | 3,9 | 20,5 |
+| 5 | 2550 | 454 | 504,6 | 0 | 0 | 4,2 | 22,6 |
+
+`route.log` idêntico nas 5 rodadas. Variação (máx−mín)/média: carga **20,4%**, leitura pura 16,1%, FPS 4,5%.
+
+**Veredito do rigor:** pela regra antiga (variação < 10% na carga e no FPS) a carga **não é confiável** neste método: a variação absoluta é de 0,52 s, mas sobre uma base de 2,5 s ela pesa 20%. O FPS está confiável (4,5%). Em vez de relaxar o limite em silêncio, a comparação da carga passa a usar tolerância absoluta (seção 3). A carga também mostrou tendência de subir nas rodadas 3–4 e voltar: ruído do sistema, não explicado.
+
+## 3. Limites absolutos propostos (substituem "stutter ± 5%")
+
+Calculados por `baseline.py` a partir das rodadas quentes e gravados em [baseline-limits.json](baseline-limits.json). **Proposta do R2; a aprovação é do responsável técnico (R1).**
+
+| Métrica | Limite | Regra |
+| --- | --- | --- |
+| Quadros > 33 ms após 3 s | ≤ **4** | pior do baseline (1) + 3 |
+| Quadros > 100 ms | ≤ **1** | pior do baseline (0) + 1 |
+| p99 do tempo de quadro | ≤ **6,24 ms** | pior p99 do baseline (4,24) + 2 ms |
+| Carga (`load_ms`), quente com quente | ≤ **3059 ms** | média (2559) + max(10%, 500 ms) |
+
+Por que absolutos: com 0–1 quadros lentos por rodada, "± 5%" não tem significado (um quadro a mais é +100%). Os limites acima só acusam regressões reais de stutter, e um quadro de 100 ms já viola o limite de 1.
+
+Pendências de método dos limites: (a) as margens (+3, +1, +2 ms, 500 ms) são escolhas do R2, não derivadas de dados; (b) só 5 rodadas de uma máquina; (c) o FPS médio não entra nos limites (500 FPS não mede streaming); se o R1 quiser um piso de FPS, deve ser absoluto.
+
+## 4. Carga a frio
+
+### 4.1 Esvaziamento de cache (feito)
+
+Antes de cada rodada fria, o script leu 16 GB de uma pasta não relacionada (sem falta de leitura: `evict shortfall 0 B`; RAM de 19,9 GB). Rota de 20 s, 2 rodadas quentes e 3 frias:
+
+| Condição | carga (ms) | **leitura pura (ms)** |
+| --- | --- | --- |
+| Quente (esta rodada) | 2331 · 2377 | 437 · 438 |
+| Quente (5 rodadas do item 2) | 2296 – 2819 | 424 – 499 |
+| **Fria (após esvaziar)** | 3220 · 3520 · 2669 | **874 · 952 · 755** |
+
+- **Leitura pura: a frio é sempre maior que a quente** (755–952 ms contra 424–499 ms, sem sobreposição; cerca de 2×). O esvaziamento funcionou e o I/O aparece quando isolado.
+- **Carga total: a frio e a quente se sobrepõem** (a rodada fria 3 deu 2669 ms, dentro da faixa quente de 2296–2819). O acréscimo médio da carga fria é ~0,4–0,8 s sobre ~2,5 s.
+
+**Conclusão do que vale hoje:** neste mapa (683 MiB de texturas GPU, em NVMe) a leitura do disco é cerca de 18% da carga a quente e 27% a frio; o resto é interpretar o recurso e enviar à GPU. Portanto **`load_ms` sozinho não mede I/O**; para streaming, o número a acompanhar é **`texture_read_ms`** (e, na Fase 1, o tempo de espera por falta do próprio cache). Se a carga fria por reinício também se sobrepuser à quente em `load_ms`, a conclusão a documentar é: *esta cena, neste disco, não mede I/O pela carga total*.
+
+### 4.2 Reinício do Windows (pendente, preparado)
+
+O esvaziamento por leitura é o método fraco que o parecer pediu para substituir. A medição definitiva é a primeira execução depois de reiniciar o Windows. Está pronta e **não foi executada**, porque reiniciar a máquina interrompe tudo o que estiver aberto e precisa de autorização do dono da máquina:
+
+    sw-godot\tools\cold_boot.ps1 -Arm -Godot <godot_console.exe> -Python <python.exe>   # registra 1 execução no próximo logon (HKCU RunOnce)
+    (reiniciar)                                                                        # ou -Arm -Reboot
+
+No logon o script espera 120 s (a inicialização assenta), roda a **primeira** rodada (fria) com `baseline.py --after-boot`, depois 3 rodadas quentes, e grava `docs/medicoes/baseline-cold-boot-gpu.json` e `.log`. O JSON registra os segundos desde o boot, o que prova que a rodada foi a primeira. Limites desta medição: a inicialização do Windows ainda gera I/O de fundo depois de 120 s; por isso o resultado vale como ordem de grandeza e deve ser repetido uma vez.
 
 ## Veredito
-- **Carga e FPS: confiáveis** (7,5% e 8,5%, abaixo de 10%), mas a variação de FPS está perto do limite; rodada 5 (501,6) puxa o spread.
-- **Stutter: a contagem é estável (3 quadros lentos em toda rodada), mas é só 3.** Rota de 180 s deu os mesmos 3–4 quadros que a de 60 s: não crescem com a duração. Uma contagem de 3 não resolve ±5%. A magnitude (tempo acima de 33 ms, 362–601 ms) varia 51% entre rodadas.
-- **Critério da Fase 1 ("stutter ± 5% do baseline") não é verificável nesta cena.** Sugestão: usar limite absoluto (ex.: quadros lentos após 3 s ≤ 3 + N e p99 ≤ baseline + 2 ms), decidido pelo sênior. O p99 de ~4 ms varia 1,4 ms em absoluto; a % engana.
-- Hipótese não verificada: os 3 picos são eventos fixos da rota (ex.: primeiro uso de região/textura), não ruído aleatório.
 
-## Carga a frio: não demonstrada
-Rodadas frias: 21454 e 21518 ms, dentro da faixa das quentes (20610–22220). Duas leituras possíveis, que não consegui separar:
-1. a expulsão do cache falhou (li 12 GB de uma pasta não relacionada, 0,96 GB a menos que o pedido; RAM de 19,9 GB), ou
-2. a carga é limitada por decodificação de JPEG 8K (CPU), não por leitura do SSD.
-Para conclusão sólida: medir após reiniciar o Windows (primeira execução) ou com ferramenta de limpeza do cache com admin. Se for (2), o "tempo de carga lendo do SSD" não mede I/O nesta cena.
+- **Carga e stutter agora são medidos de forma útil**: a carga não é mais dominada por JPEG, os quadros lentos sumiram do baseline e há limites absolutos verificáveis (`--check`).
+- **A carga total continua instável em termos relativos (20%)** porque o valor ficou pequeno (2,5 s); por isso o critério de carga é absoluto.
+- **Esta cena ainda mede pouco I/O**: com 683 MiB em NVMe, a leitura pura é uma fração da carga. Para o Portão 1 será preciso (a) um conjunto de dados maior que a RAM, ou limitar a banda, e (b) olhar `texture_read_ms`/espera por falta, não `load_ms`.
+- **Ainda não provado**: carga fria por reinício (4.2), BC7 (as texturas foram baixadas em BC1; BC7 dobra os bytes e não foi medido), e a repetição em outra máquina.

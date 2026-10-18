@@ -42,3 +42,6 @@ spike-fileaccess/out/
 spike-fileaccess/build.log
 # medições locais de ferramentas
 sw-godot/assets.xlsx.inspect.ndjson
+
+# texturas GPU geradas por sw-godot/project/scripts/bake_gpu_textures.gd
+sw-godot/project/assets/gpu/
