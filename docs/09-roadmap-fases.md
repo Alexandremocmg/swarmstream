@@ -4,6 +4,8 @@ Cada fase tem **objetivo, atividades por trilha, entregáveis e critério de sa�
 
 As durações supõem a equipe base de [10-equipe-e-niveis.md](10-equipe-e-niveis.md) (~6–7 pessoas) e são **estimativas iniciais**: revisar ao fim de cada fase. Os níveis (J = júnior, P = pleno, S = sênior, A = arquiteto/tech lead) indicam o nível mínimo recomendado para **liderar** a atividade; níveis abaixo podem participar em par.
 
+> **Fase 0 encerrada e Fase 1a aberta em 2026-10-18** ([briefing](16-briefing-fase-1a.md)).
+>
 > **Cronograma vigente (2026-10-17): equipe de 3 recursos.** As durações e a divisão da Fase 1 em F1a e F1b estão em [15-portao-fase-0-e-plano-3-recursos.md](15-portao-fase-0-e-plano-3-recursos.md). As durações abaixo são as do plano original para 7 pessoas.
 
 ## Visão geral

@@ -18,6 +18,7 @@
 | [13 — Skills do Claude](13-skills-claude.md) | Skills instaladas no projeto, por nível e por trilha | Todos os devs |
 | [14 — Briefing da Fase 0](14-briefing-fase-0.md) | O que pedir a cada pessoa na Fase 0, com exemplos de pedido | Todos, dono do produto |
 | [15 — Portão da Fase 0 e plano para 3 recursos](15-portao-fase-0-e-plano-3-recursos.md) | Parecer sobre a passagem para a Fase 1, lista de fechamento e novo plano para 3 pessoas | Dono do produto, líder técnico |
+| [16 — Briefing da Fase 1a](16-briefing-fase-1a.md) | O que pedir a cada recurso na Fase 1a, critério do Portão 1 e cronograma | Todos, dono do produto |
 | [Spike F0 — FileAccess no Godot](spikes/F0-spike-fileaccess-godot.md) | Onde dá para interceptar a leitura de arquivos via GDExtension, riscos e plano de 2 dias | T2, T3 |
 | [Glossário](glossario.md) | Termos do projeto | Todos |
 | [ADRs](adr/README.md) | Decisões de arquitetura | Todos os devs |
