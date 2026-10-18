@@ -21,21 +21,31 @@ var last_logged_waypoint := -1
 var route_log: FileAccess
 var measure_enabled := false
 var load_ms := 0.0
+var texture_load_ms := 0.0
+var texture_bytes := 0
+var texture_read_ms := 0.0  # só leitura dos bytes do disco (isola I/O de decodificação e envio à GPU)
+var texture_mode := "gpu"  # "gpu" = .res BC1 pré-comprimido (lê bytes); "jpg" = decodifica JPEG 8K na CPU (método antigo)
 var frame_ms: PackedFloat64Array = PackedFloat64Array()
 var last_frame_usec := 0
 
 
 func _ready() -> void:
-	var load_started := Time.get_ticks_usec()
-	_build_regions()
-	_build_camera()
-	load_ms = (Time.get_ticks_usec() - load_started) / 1000.0
 	var args := OS.get_cmdline_user_args()
 	robot_enabled = "--robot" in args
 	measure_enabled = "--measure" in args
 	for index in args.size():
 		if args[index] == "--route-seconds" and index + 1 < args.size():
 			route_seconds = maxf(0.1, args[index + 1].to_float())
+		if args[index] == "--tex" and index + 1 < args.size():
+			texture_mode = args[index + 1]
+	if texture_mode != "gpu" and texture_mode != "jpg":
+		push_error("--tex deve ser gpu ou jpg")
+		get_tree().quit(2)
+		return
+	var load_started := Time.get_ticks_usec()
+	_build_regions()
+	_build_camera()
+	load_ms = (Time.get_ticks_usec() - load_started) / 1000.0
 	if robot_enabled:
 		_start_robot()
 
@@ -68,6 +78,26 @@ func _build_regions() -> void:
 
 
 func _load_region_texture(asset_id: String) -> Texture2D:
+	var started := Time.get_ticks_usec()
+	var texture := _load_region_texture_uncounted(asset_id)
+	texture_load_ms += (Time.get_ticks_usec() - started) / 1000.0
+	return texture
+
+
+func _load_region_texture_uncounted(asset_id: String) -> Texture2D:
+	if texture_mode == "gpu":
+		var path := "res://assets/gpu/%s_diff.res" % asset_id
+		var file := FileAccess.open(path, FileAccess.READ)
+		if file == null:
+			push_error("textura GPU ausente: %s (rode bake_gpu_textures.gd)" % path)
+			get_tree().quit(3)
+			return null
+		var read_started := Time.get_ticks_usec()
+		var raw := file.get_buffer(file.get_length())
+		texture_read_ms += (Time.get_ticks_usec() - read_started) / 1000.0
+		texture_bytes += raw.size()
+		file.close()
+		return ResourceLoader.load(path, "Texture2D", ResourceLoader.CACHE_MODE_IGNORE) as Texture2D
 	var directory := "res://assets/regions/%s" % asset_id
 	if DirAccess.open(directory) == null:
 		return null
@@ -75,6 +105,9 @@ func _load_region_texture(asset_id: String) -> Texture2D:
 		if filename.begins_with(asset_id + "_diff_") and filename.ends_with(".jpg"):
 			var image := Image.new()
 			var error := image.load(ProjectSettings.globalize_path(directory.path_join(filename)))
+			if error == OK:
+				var jpg := FileAccess.open(directory.path_join(filename), FileAccess.READ)
+				texture_bytes += jpg.get_length() if jpg else 0
 			if error == OK:
 				return ImageTexture.create_from_image(image)
 	return null
@@ -135,6 +168,8 @@ func _write_measurements() -> void:
 	var total := 0.0
 	var worst := 0.0
 	var over_33 := 0
+	var over_50 := 0
+	var over_100 := 0
 	var excess_ms := 0.0
 	var over_33_steady := 0
 	var elapsed := 0.0
@@ -144,6 +179,10 @@ func _write_measurements() -> void:
 		worst = maxf(worst, value)
 		if value > 33.0:
 			over_33 += 1
+			if value > 50.0:
+				over_50 += 1
+			if value > 100.0:
+				over_100 += 1
 			excess_ms += value - 33.0
 			if elapsed > WARMUP_SECONDS * 1000.0:
 				over_33_steady += 1
@@ -152,10 +191,17 @@ func _write_measurements() -> void:
 	var p99 := sorted[mini(int(sorted.size() * 0.99), sorted.size() - 1)] if sorted.size() > 0 else 0.0
 	var report := {
 		"load_ms": load_ms,
+		"texture_load_ms": texture_load_ms,
+		"scene_build_ms": load_ms - texture_load_ms,
+		"texture_bytes": texture_bytes,
+		"texture_read_ms": texture_read_ms,
+		"texture_mode": texture_mode,
 		"frames": frame_ms.size(),
 		"avg_fps": 1000.0 * frame_ms.size() / total if total > 0.0 else 0.0,
 		"frames_over_33ms": over_33,
 		"frames_over_33ms_steady": over_33_steady,
+		"frames_over_50ms": over_50,
+		"frames_over_100ms": over_100,
 		"excess_ms_over_33": excess_ms,
 		"p99_frame_ms": p99,
 		"worst_frame_ms": worst,

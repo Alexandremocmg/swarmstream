@@ -11,4 +11,8 @@ python tools/download_assets.py --resolution 8k
 godot --editor --path project
 ```
 
+### Texturas GPU e baseline (F0-12)
+
+A cena carrega, por padrão, texturas BC1 pré-comprimidas (`--tex gpu`). Gere-as uma vez com `godot --headless --path project --script res://scripts/bake_gpu_textures.gd` (saem em `project/assets/gpu/`, fora do Git). `--tex jpg` repete o método antigo (decodificação de JPEG 8K na CPU). Método, limites e carga a frio: [docs/medicoes/baseline.md](../docs/medicoes/baseline.md).
+
 Os arquivos de arte ficam fora do Git em `project/assets/regions/`. `assets.csv` detalha cada arquivo e checksum após o download. A rota automatizada inicia com `godot --path project -- --robot --route-seconds 8`; ela percorre waypoints no passo fixo de física, grava coordenadas e tempos simulados em `user://route.log` e sai ao concluir. `--route-seconds` reduz o tempo sem alterar os waypoints.

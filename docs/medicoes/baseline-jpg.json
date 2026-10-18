@@ -1,0 +1,85 @@
+{
+  "renderers": [
+    "NVIDIA GeForce GTX 1050 Ti"
+  ],
+  "texture_mode": "jpg",
+  "cold_runs": [],
+  "cold_boot_run": null,
+  "cold_boot_seconds_after_boot": null,
+  "limits": {
+    "frames_over_33ms_steady": 7.0,
+    "frames_over_100ms": 4.0,
+    "p99_frame_ms": 7.482,
+    "load_ms": 32627.363266666667
+  },
+  "route_seconds": 60.0,
+  "route_log_identical": true,
+  "runs": [
+    {
+      "avg_fps": 385.072795636035,
+      "excess_ms_over_33": 1506.537,
+      "frames": 23500,
+      "frames_over_100ms": 3,
+      "frames_over_33ms": 3,
+      "frames_over_33ms_steady": 3,
+      "frames_over_50ms": 3,
+      "load_ms": 33020.594,
+      "p99_frame_ms": 4.701,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 60.0,
+      "scene_build_ms": 15.2189999999973,
+      "texture_bytes": 594358045,
+      "texture_load_ms": 33005.375,
+      "texture_mode": "jpg",
+      "worst_frame_ms": 553.677
+    },
+    {
+      "avg_fps": 402.623273760652,
+      "excess_ms_over_33": 365.655,
+      "frames": 24096,
+      "frames_over_100ms": 3,
+      "frames_over_33ms": 4,
+      "frames_over_33ms_steady": 4,
+      "frames_over_50ms": 4,
+      "load_ms": 29869.629,
+      "p99_frame_ms": 5.482,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 60.0,
+      "scene_build_ms": 12.6500000000051,
+      "texture_bytes": 594358045,
+      "texture_load_ms": 29856.979,
+      "texture_mode": "jpg",
+      "worst_frame_ms": 167.961
+    },
+    {
+      "avg_fps": 437.798176795099,
+      "excess_ms_over_33": 276.248,
+      "frames": 26199,
+      "frames_over_100ms": 3,
+      "frames_over_33ms": 3,
+      "frames_over_33ms_steady": 3,
+      "frames_over_50ms": 3,
+      "load_ms": 26093.495,
+      "p99_frame_ms": 4.59,
+      "renderer": "NVIDIA GeForce GTX 1050 Ti",
+      "route_seconds": 60.0,
+      "scene_build_ms": 10.1239999999998,
+      "texture_bytes": 594358045,
+      "texture_load_ms": 26083.371,
+      "texture_mode": "jpg",
+      "worst_frame_ms": 132.042
+    }
+  ],
+  "spread_percent": {
+    "load_ms": 23.354044388210433,
+    "texture_load_ms": 23.346835387535492,
+    "avg_fps": 12.907130651059616,
+    "frames_over_33ms": 30.0,
+    "frames_over_33ms_steady": 30.0,
+    "frames_over_50ms": 30.0,
+    "frames_over_100ms": 0.0,
+    "excess_ms_over_33": 171.79288227737334,
+    "p99_frame_ms": 18.114127123806952,
+    "worst_frame_ms": 148.17086027551306
+  }
+}
