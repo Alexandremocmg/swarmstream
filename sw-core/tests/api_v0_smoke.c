@@ -8,6 +8,7 @@
  * precisa de ADR (ADR-0014). */
 #include "swarmstream.h"
 
+#include <stddef.h>
 #include <stdio.h>
 
 #define CHECK(cond)                                                       \
@@ -27,6 +28,14 @@ _Static_assert(sizeof(sw_vec3) == 12, "layout de sw_vec3 mudou");
 _Static_assert(sizeof(sw_stats) == 8 + 16 * 8, "layout de sw_stats mudou");
 _Static_assert(sizeof(sw_result) == 4, "sw_result precisa ter 32 bits");
 _Static_assert(sizeof(sw_request_id) == 8, "sw_request_id precisa ter 64 bits");
+_Static_assert(SW_RESIDENCY_ABSENT == 0, "saída zerada em erro precisa significar ABSENT");
+_Static_assert(sizeof(sw_position_hint) == 48, "layout de sw_position_hint mudou");
+_Static_assert(offsetof(sw_position_hint, space_id) == 8, "layout de sw_position_hint mudou");
+_Static_assert(offsetof(sw_position_hint, velocity) == 28, "layout de sw_position_hint mudou");
+_Static_assert(offsetof(sw_read_options, timeout_ms) == 8, "layout de sw_read_options mudou");
+_Static_assert(offsetof(sw_file_info, build_time_unix) == 16, "layout de sw_file_info mudou");
+_Static_assert(offsetof(sw_stats, pending_requests) == 8 + 15 * 8, "layout de sw_stats mudou");
+_Static_assert(sizeof(sw_allocator) == 3 * sizeof(void*), "layout de sw_allocator mudou");
 
 static void SW_CALL never_called(void* user, sw_request_id id, sw_result r, uint64_t n)
 {
@@ -47,7 +56,7 @@ int main(void)
     uint64_t n = 42;
     sw_request_id id = 42;
     sw_residency res = SW_RESIDENCY_LOCAL;
-    sw_vec3 pos = { 1.0f, 2.0f, 3.0f };
+    sw_position_hint pos;
     const char* paths[1] = { "textures/rocha_4k.png" };
     int cb_called = 0;
     char buf[16];
@@ -93,7 +102,11 @@ int main(void)
 
     NI(sw_hint_files(ctx, paths, 1, 30000));
     NI(sw_hint_group(ctx, "regiao_norte", 60000));
-    NI(sw_hint_position(ctx, &pos, NULL));
+    memset(&pos, 0, sizeof(pos));
+    pos.struct_size = sizeof(pos);
+    pos.space_id = 7;
+    pos.position.x = 1.0f;
+    NI(sw_hint_position(ctx, &pos));
 
     NI(sw_set_game_state(ctx, SW_GAME_STATE_ONLINE_MATCH));
     NI(sw_set_p2p_enabled(ctx, 0));

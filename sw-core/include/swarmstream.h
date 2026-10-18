@@ -3,9 +3,9 @@
  *
  * swarmstream.h — API pública do sw-core (contrato v0).
  *
- * Estado: RASCUNHO PARA REVISÃO (F0-06). Depois de aprovado pelos dois
- * sêniores, fica congelado para a Fase 1; toda mudança passa a exigir ADR
- * (ver docs/adr/0014-contrato-swarmstream-h-v0.md).
+ * Estado: CONGELADO em 2026-10-17 (v0.0, ADR-0014 aceito). Qualquer
+ * mudança, inclusive compatível, exige ADR novo e aprovação de R1 + R2 no
+ * PR. Registro da revisão: docs/revisoes/F0-revisao-adrs-0010-0016.md.
  *
  * Regras gerais do contrato
  * -------------------------
@@ -16,6 +16,20 @@
  *   ele compilou. Na entrada, a biblioteca lê só os campos que cabem nesse
  *   tamanho (o resto assume o padrão). Na saída, escreve só até esse tamanho.
  *   É assim que campos novos entram no fim das structs sem quebrar binários.
+ *   Validação (nada é ignorado calado):
+ *     . struct_size menor que o tamanho v0 da struct => SW_E_INVALID_ARGUMENT;
+ *     . struct_size maior que o conhecido pela biblioteca: bytes extras todos
+ *       zero são aceitos; algum diferente de zero => SW_E_VERSION_MISMATCH;
+ *     . bit de `flags` desconhecido ou campo `reserved*` != 0 =>
+ *       SW_E_INVALID_ARGUMENT.
+ *   Em erro, structs de saída são zeradas preservando `struct_size`.
+ * - Padrão = zero, para bindings (C#, Rust) que não usam as funções inline:
+ *   zere a struct e preencha struct_size e api_version. Exceções, escritas
+ *   pelas funções *_init: sw_config.log_level = SW_LOG_WARN e
+ *   sw_read_options.timeout_ms = SW_WAIT_FOREVER.
+ * - Tempo de vida: sw_init copia strings, chaves e URLs; o chamador pode
+ *   liberá-las ao voltar. log_fn, log_user e o alocador precisam valer até
+ *   sw_shutdown voltar.
  * - Strings: UTF-8, terminadas em NUL. Caminhos virtuais seguem
  *   docs/03-formato-de-conteudo.md §6: relativos à raiz do jogo, NFC,
  *   separador '/', sem '/' inicial ou final, sem "." nem "..", no máximo
@@ -26,8 +40,14 @@
  *   silenciosa.
  * - Threads: todas as funções podem ser chamadas de qualquer thread, ao
  *   mesmo tempo, exceto onde indicado (sw_shutdown, sw_close, sw_dir_*).
- * - Caminho quente: sw_read, sw_read_async e sw_query não alocam memória
- *   quando os dados estão no cache.
+ * - Callbacks (log e leitura) rodam em threads de conclusão dedicadas do
+ *   sw-core: nunca na thread dona do cache e nunca de dentro da função que
+ *   criou o pedido. Um callback lento atrasa só outros callbacks.
+ * - Caminho quente: sw_read, sw_read_async, sw_ensure_async e sw_query não
+ *   alocam memória. Pedidos assíncronos usam um pool fixo
+ *   (sw_config.max_pending_requests); pool cheio => SW_E_QUEUE_FULL.
+ * - Plataformas do v0: Windows x64 e Linux x86_64/arm64 (64 bits). Os
+ *   testes de layout valem para elas.
  */
 #ifndef SWARMSTREAM_H
 #define SWARMSTREAM_H
@@ -95,6 +115,7 @@ typedef int32_t sw_result;
 enum {
     SW_OK                    = 0,
     SW_DONE                  = 1,   /* fim de iteração (sw_dir_next) */
+    SW_PARTIAL               = 2,   /* feito em parte; o que faltou está descrito na função */
 
     SW_E_NOT_IMPLEMENTED     = -1,
     SW_E_INVALID_ARGUMENT    = -2,
@@ -116,7 +137,8 @@ enum {
     SW_E_CACHE_LOCKED        = -18, /* outro processo é dono da pasta de cache (ADR-0011) */
     SW_E_INTERNAL            = -19,
     SW_E_MANIFEST_UNSUPPORTED = -20, /* min_reader maior que o suportado: atualizar o cliente (03 §8) */
-    SW_E_MANIFEST_ROLLBACK   = -21  /* build_seq menor que o do manifesto instalado (03 §8) */
+    SW_E_MANIFEST_ROLLBACK   = -21, /* build_seq menor que o do manifesto instalado (03 §8) */
+    SW_E_QUEUE_FULL          = -22  /* pool de pedidos assíncronos cheio; tente de novo */
 };
 
 #define SW_SUCCEEDED(r) ((r) >= 0)
@@ -154,6 +176,7 @@ typedef void (SW_CALL *sw_log_fn)(void* user, sw_log_level level, const char* me
 /* Alocador opcional da engine. Os dois ponteiros juntos ou nenhum (NULL =
  * alocador do sistema). Precisa ser thread-safe. `alignment` é potência de 2.
  * `size` em free_fn é o mesmo pedido em alloc_fn. */
+/* Layout congelado para sempre (não tem struct_size). */
 typedef struct sw_allocator {
     void* (SW_CALL *alloc_fn)(void* user, size_t size, size_t alignment);
     void  (SW_CALL *free_fn)(void* user, void* ptr, size_t size);
@@ -180,8 +203,8 @@ typedef struct sw_config {
     const char*    manifest_path;    /* obrigatório; manifest.bin local (03 §7, ADR-0012) */
 
     const uint8_t* trusted_keys;     /* trusted_key_count * 32 bytes: chaves públicas Ed25519 */
-    uint32_t       trusted_key_count;
-    uint32_t       reserved0;        /* 0 */
+    uint32_t       trusted_key_count;    /* >= 1; 0 => SW_E_INVALID_ARGUMENT */
+    uint32_t       max_pending_requests; /* pedidos assíncronos em voo; 0 = padrão (4096) */
 
     uint64_t       disk_cache_capacity_bytes; /* teto do cache em disco; obrigatório, > 0 */
     uint64_t       ram_cache_bytes;           /* cache de blocos descomprimidos; 0 = padrão */
@@ -226,6 +249,8 @@ SW_API sw_result SW_CALL sw_shutdown(sw_ctx* ctx);
 /* ------------------------------------------------------------------------
  * Arquivos e diretórios virtuais
  * ------------------------------------------------------------------------ */
+/* Um arquivo tem exatamente um entre CORE, GROUP e OPTIONAL (03 §6);
+ * diretório tem só DIRECTORY. */
 enum {
     SW_FILE_CORE      = 1u << 0,  /* grupo core: sempre local */
     SW_FILE_GROUP     = 1u << 1,  /* pertence a um grupo de conteúdo */
@@ -244,10 +269,14 @@ typedef struct sw_file_info {
  * caminho não existir no manifesto. */
 SW_API sw_result SW_CALL sw_open(sw_ctx* ctx, const char* path, sw_file** out_file);
 
-/* Fecha o arquivo. Cancela as leituras assíncronas pendentes dele e só
- * volta depois que todos os callbacks delas terminaram (cada um recebe
- * SW_E_CANCELLED ou o resultado, se já tinha concluído). Não chamar de
- * dentro de callback (SW_E_BUSY). Não usar `file` em outra thread durante
+/* Fecha o arquivo. Cancela os pedidos assíncronos pendentes dele e só
+ * volta depois que todos os callbacks deles terminaram (cada um recebe
+ * SW_E_CANCELLED ou o resultado, se já tinha concluído). O cancelamento não
+ * espera a rede: no máximo uma escrita de disco em curso. A partir do
+ * início do sw_close, pedidos novos neste arquivo (inclusive vindos de
+ * callbacks) devolvem SW_E_CANCELLED na hora, sem callback. Solta os leases
+ * de sw_ensure_async deste arquivo. Não chamar de dentro de callback
+ * (SW_E_BUSY). Fora os callbacks, não usar `file` em outra thread durante
  * a chamada. Depois de SW_OK, `file` é inválido. */
 SW_API sw_result SW_CALL sw_close(sw_file* file);
 
@@ -313,8 +342,8 @@ SW_API sw_result SW_CALL sw_read(sw_file* file, uint64_t offset, void* dst, uint
 
 /* Callback de leitura assíncrona. Chamado exatamente uma vez por pedido
  * aceito, numa thread interna. Não pode bloquear. Pode chamar sw_read_async,
- * sw_query, sw_cancel e sw_hint_*; não pode chamar sw_read, sw_close nem
- * sw_shutdown. */
+ * sw_ensure_async, sw_query, sw_cancel e sw_hint_*; não pode chamar sw_read,
+ * sw_close nem sw_shutdown. */
 typedef void (SW_CALL *sw_read_cb)(void* user, sw_request_id id, sw_result result,
                                    uint64_t bytes_read);
 
@@ -329,9 +358,12 @@ SW_API sw_result SW_CALL sw_read_async(sw_file* file, uint64_t offset, void* dst
 
 /* Garante que o trecho fique no cache, sem copiar bytes. Mesmas regras de
  * sw_read_async (callback exatamente uma vez; bytes_read = bytes do trecho
- * que ficaram locais). Serve a loaders que trabalham com o recurso inteiro
- * (abordagem A do spike docs/spikes/F0-spike-fileaccess-godot.md): pedem o
- * arquivo com prazo e só leem quando o callback disser que está local. */
+ * que ficaram locais). Quando o callback diz SW_OK, os bytes ficam presos
+ * por lease (ADR-0005) até o sw_close deste `file`: a remoção não os tira
+ * antes da leitura. Bytes presos contam no teto do cache; se não couberem,
+ * o callback recebe SW_E_DISK_FULL. Serve a loaders que trabalham com o
+ * recurso inteiro (ADR-0016): abrem, garantem, leem com timeout_ms = 0 e
+ * fecham. */
 SW_API sw_result SW_CALL sw_ensure_async(sw_file* file, uint64_t offset, uint64_t size,
                                          const sw_read_options* opts, sw_read_cb cb, void* user,
                                          sw_request_id* out_id);
@@ -344,10 +376,11 @@ SW_API sw_result SW_CALL sw_cancel(sw_ctx* ctx, sw_request_id id);
 
 /* Onde estão os bytes do trecho, neste instante (pode mudar logo depois). */
 typedef int32_t sw_residency;
+/* 0 é o valor seguro: quem ignora um erro (saída zerada) vê ABSENT, nunca LOCAL. */
 enum {
-    SW_RESIDENCY_LOCAL   = 0,  /* todo o trecho está no cache */
+    SW_RESIDENCY_ABSENT  = 0,  /* falta algo, não pedido */
     SW_RESIDENCY_PENDING = 1,  /* falta algo, já pedido */
-    SW_RESIDENCY_ABSENT  = 2   /* falta algo, não pedido */
+    SW_RESIDENCY_LOCAL   = 2   /* todo o trecho está no cache */
 };
 
 SW_API sw_result SW_CALL sw_query(sw_file* file, uint64_t offset, uint64_t size,
@@ -356,28 +389,47 @@ SW_API sw_result SW_CALL sw_query(sw_file* file, uint64_t offset, uint64_t size,
 /* ------------------------------------------------------------------------
  * Dicas para o prefetch
  * ------------------------------------------------------------------------
- * Dicas são pedidos com prazo longo; nunca bloqueiam e nunca garantem
- * que os dados cheguem. Uma dica nova para o mesmo item substitui o prazo
- * anterior se for mais curta.
+ * Dicas são pedidos com prazo longo; nunca bloqueiam, nunca garantem que os
+ * dados cheguem e não prendem nada no cache (o que chega entra "frio",
+ * 04 §Remoção). Uma dica nova para o mesmo item substitui o prazo anterior
+ * se for mais curta. Dica cujo prazo passou sem os dados chegarem é
+ * descartada: nunca vira pedido urgente. Para prazo duro, use
+ * sw_ensure_async.
  */
 
-/* Caminhos desconhecidos são ignorados; nesse caso devolve SW_E_NOT_FOUND,
- * mas os caminhos válidos foram registrados. */
+/* SW_OK: todos registrados. SW_PARTIAL: algum caminho não existe no
+ * manifesto e foi ignorado; os demais foram registrados.
+ * SW_E_NOT_FOUND: nenhum caminho existe. */
 SW_API sw_result SW_CALL sw_hint_files(sw_ctx* ctx, const char* const* paths, size_t count,
                                        uint32_t deadline_ms);
 
 /* Grupo de conteúdo do manifesto ("regiao_norte"). */
 SW_API sw_result SW_CALL sw_hint_group(sw_ctx* ctx, const char* group, uint32_t deadline_ms);
 
+/* Sem struct_size: layout congelado para sempre (só aparece dentro de
+ * outras structs). */
 typedef struct sw_vec3 {
     float x, y, z;
 } sw_vec3;
 
-/* Posição e velocidade do jogador, nas unidades do mundo do jogo (as
- * mesmas dos traces gravados). Chamar algumas vezes por segundo basta.
- * `velocity` pode ser NULL. */
-SW_API sw_result SW_CALL sw_hint_position(sw_ctx* ctx, const sw_vec3* position,
-                                          const sw_vec3* velocity);
+enum {
+    SW_POSITION_HAS_VELOCITY = 1u << 0
+};
+
+typedef struct sw_position_hint {
+    uint32_t struct_size;  /* = sizeof(sw_position_hint) */
+    uint32_t flags;        /* SW_POSITION_* */
+    uint64_t space_id;     /* nível/cena/mapa; o mesmo id gravado nos traces */
+    sw_vec3  position;     /* unidades do mundo do jogo */
+    sw_vec3  velocity;     /* só vale com SW_POSITION_HAS_VELOCITY */
+    uint32_t reserved0;    /* 0 */
+    uint32_t reserved1;    /* 0 */
+} sw_position_hint;
+
+/* Posição do jogador para o índice espacial dos traces (06 §Prefetch).
+ * Chamar algumas vezes por segundo basta. space_id desconhecido =>
+ * SW_E_NOT_FOUND. */
+SW_API sw_result SW_CALL sw_hint_position(sw_ctx* ctx, const sw_position_hint* hint);
 
 /* ------------------------------------------------------------------------
  * Estado do jogo e rede
@@ -402,8 +454,12 @@ SW_API sw_result SW_CALL sw_set_upload_limit(sw_ctx* ctx, uint64_t bytes_per_sec
 /* ------------------------------------------------------------------------
  * Estatísticas
  * ------------------------------------------------------------------------
- * Contadores acumulados desde sw_init. Percentis de espera numa falta
- * calculados sobre os últimos 60 s. Definições em docs/08-metricas-e-testes.md.
+ * Contadores acumulados desde sw_init. Definições em docs/08-metricas-e-testes.md:
+ *   - reads/hits/misses contam sw_read e sw_read_async; sw_ensure_async e
+ *     dicas não contam como leitura.
+ *   - espera numa falta = do pedido de leitura até os dados ficarem locais,
+ *     mesmo quando o chamador não esperou (timeout_ms = 0 ou timeout);
+ *     percentis sobre os últimos 60 s.
  */
 typedef struct sw_stats {
     uint32_t struct_size;            /* = sizeof(sw_stats), preenchido pelo chamador */

@@ -4,7 +4,7 @@ Responsável pela camada 1. **É a parte de maior risco do projeto**: um sistema
 
 ## API do núcleo (rascunho do `swarmstream.h`)
 
-> **Substituído.** O contrato v0 está em [`sw-core/include/swarmstream.h`](../sw-core/include/swarmstream.h) ([ADR-0014](adr/0014-contrato-swarmstream-h-v0.md)): leitura com prazo e limite de espera, `stat`/listagem, cancelamento, erros explícitos em todas as funções. O rascunho abaixo fica como registro.
+> **Substituído.** O contrato v0, congelado, está em [`sw-core/include/swarmstream.h`](../sw-core/include/swarmstream.h) ([ADR-0014](adr/0014-contrato-swarmstream-h-v0.md)): leitura com prazo e limite de espera, `sw_ensure_async` (garante e prende os dados sem copiar), `stat`/listagem, cancelamento, erros explícitos em todas as funções. O rascunho abaixo fica só como registro; não programe contra ele.
 
 ```c
 // ciclo de vida
@@ -61,9 +61,17 @@ Três fontes de informação, combinadas:
 
 ## SDK Godot (`sw-godot`) — primeira integração
 
+Decisão em [ADR-0016](adr/0016-ponto-de-intercepcao-godot.md), a partir do [spike F0](spikes/F0-spike-fileaccess-godot.md).
+
 - GDExtension em C++.
-- Ponto de entrada: implementar `FileAccess` / `DirAccess` customizados para que `res://` (ou um prefixo próprio, ex.: `swarm://`) leia pelo `sw-core`.
-- Integração com o carregamento em thread do Godot (`ResourceLoader.load_threaded_request`) para não travar a thread principal.
+- **Uma GDExtension não implementa `FileAccess`/`DirAccess`** no Godot 4 (sem métodos virtuais nem classe `…Extension`; medido no 4.7.2). O ponto de entrada é um **`ResourceFormatLoader` registrado na frente** (`add_resource_format_loader(loader, true)`) para os tipos pesados: texturas, malhas e áudio.
+- Fluxo de um recurso: o jogo (ou a dependência de uma cena) chama `load()` → o loader abre o arquivo no `sw-core`, lê com `timeout_ms = 0` e **nunca espera a rede** dentro do `_load`. Se os bytes estão locais, constrói o recurso a partir do buffer (`Image.create_from_data`, `ArrayMesh.add_surface_from_arrays`, `load_from_buffer` de áudio). Se não estão, aplica a política de falta abaixo e dispara `sw_ensure_async` para o nível melhor.
+- Por que o `_load` não espera: as cargas em thread do Godot rodam em tarefas de baixa prioridade do `WorkerThreadPool`, limitadas a ~30% dos núcleos (`low_priority_thread_ratio`). Um `_load` que bloqueia na rede derruba a vazão do carregamento inteiro (medido no spike: 16 pedidos de 200 ms levaram 1,7 s com 8 núcleos).
+- O loader **não delega** ao loader nativo do Godot: `CompressedTexture2D` e os recursos binários (`.res`, `.scn`, `.mesh`) abrem por caminho via `FileAccess`, que não passa pelo `sw-core`. O `sw-pack` exporta os tipos pesados num formato legível por buffer.
+- **Troca no lugar:** quando o mip/LOD melhor chega, o loader atualiza o mesmo recurso (`ImageTexture.update`/`set_image`, troca de superfície) na thread principal, porque o `ResourceLoader` guarda o recurso no cache dele.
+- **Regra para o estúdio:** tudo que o jogo lê por `FileAccess`, `ConfigFile` ou `DirAccess` fica no grupo `core`. Cenas, scripts e recursos pequenos também; eles passam pelo caminho normal do Godot. O plugin de editor sinaliza essas leituras quando detectar.
+- Reserva, se algum tipo não puder ser materializado por buffer: o grupo vira um `.pck` montado com `ProjectSettings.load_resource_pack()` quando estiver completo (sem streaming por bloco).
+- Integração com o carregamento em thread (`ResourceLoader.load_threaded_request`): funciona com o loader (o `_load` roda em thread de worker), desde que não bloqueie.
 - Nós de ajuda: `SwarmHintArea3D` (ao entrar, chama `sw_hint_group`), `SwarmStats` (overlay de debug).
 - Plugin de editor: marcar pastas/recursos como `core`, grupo ou opcional; exportar para o `sw-pack`.
 

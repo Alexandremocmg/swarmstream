@@ -42,7 +42,7 @@ Além das de júnior:
 Além das de pleno:
 | Skill | Tarefas típicas do backlog |
 | --- | --- |
-| `gdextension` | F1-20 (`FileAccess` customizado sobre o `sw-core`) |
+| `gdextension` | F1-20 (`ResourceFormatLoader` na frente sobre o `sw-core`, ADR-0016) |
 | `multithreading` | F1-20, F1-21 (carregamento em thread no Godot sem travar o frame) |
 | `godot-optimization` | Medir stutter e pop-in no Portão 1 |
 | `memory-model` | F1-12, F1-13 (fila MPSC, leases com atômicos) |

@@ -1,6 +1,8 @@
 # ADR-0014: Contrato `swarmstream.h` v0 e regras de compatibilidade da API
 
-**Status:** Proposta — em revisão pelos dois sêniores · **Data:** 2026-10-17 · **Autor:** arquiteto/tech lead · **Revisores:** sênior de engine/streaming **e** sênior de redes/sistemas
+**Status:** Aceita (2026-10-17: revisão R1, leitura independente, aprovação do dono do produto) · **Data:** 2026-10-17 · **Autor:** R1 (líder técnico)
+
+**Revisão (regra de 3 pessoas, [15](../15-portao-fase-0-e-plano-3-recursos.md#regra-de-revisão-com-3-pessoas)):** R1 revisou · leitura e comentários: revisor independente · aprovação: dono do produto (2026-10-17). Registro: [revisão F0](../revisoes/F0-revisao-adrs-0010-0016.md)
 
 ## Contexto
 A API pública em C ([ADR-0006](0006-cpp20-nucleo-com-api-c.md)) é a única dependência dura entre trilhas na Fase 1: o `sw-godot` (T3) programa contra ela enquanto o `sw-core` (T2/T4) é escrito. O rascunho em [06](../06-integracao-engine-sdk.md#api-do-núcleo-rascunho-do-swarmstreamh) tinha lacunas que viram retrabalho se ficarem para depois:
@@ -21,20 +23,23 @@ A API pública em C ([ADR-0006](0006-cpp20-nucleo-com-api-c.md)) é a única dep
 3. **Mudança depois do congelamento exige ADR novo**, mesmo se compatível:
    - adição compatível (função nova, campo no fim de struct, erro novo, flag nova) → ADR curto + MINOR + 1;
    - mudança incompatível (assinatura, semântica, layout, remoção) → ADR com justificativa medida + MAJOR + 1.
-4. **Layout travado por teste:** `sw-core/tests/api_v0_smoke.c` e `api_v0_cxx.cpp` verificam os tamanhos das structs. Teste que quebra = mudança de contrato.
+4. **Layout travado por teste:** `sw-core/tests/api_v0_smoke.c` e `api_v0_cxx.cpp` verificam `sizeof` **e** `offsetof` das structs. O v0 só suporta plataformas de 64 bits (Windows x64, Linux x86_64/arm64); o teste falha em 32 bits. Teste que quebra = mudança de contrato.
+   - `sw_allocator` e `sw_vec3` não têm `struct_size`: o layout delas fica congelado para sempre. Precisar de mais campos = struct nova.
 5. **Sem modo de manifesto sem assinatura** ([ADR-0012](0012-serializacao-do-manifesto.md)): a F1 usa a chave de teste em `trusted_keys`.
 6. **Fora do v0, de propósito** (entram por ADR quando a fase precisar): instalação e modo completo (pin de grupos, sem remoção) para o launcher (F4); cifra por pacote e chave de licença (F4); troca de manifesto em execução (patch com o jogo aberto); eventos de telemetria por callback.
 
 ## Processo de revisão e congelamento
 
-| Quando | O quê | Quem |
-| --- | --- | --- |
-| 2026-10-19 (seg., semana 1) | Header, stub e teste enviados para revisão no PR do F0-06 | Arquiteto |
-| até 2026-10-21 | Aprovação ou lista de mudanças, nos comentários do PR (2 dias, como no briefing) | Os dois sêniores |
-| até 2026-10-27 | Mudanças aplicadas; segunda rodada, se necessária | Arquiteto + sêniores |
-| **2026-10-28 (qua., semana 2)** | **Congelamento:** este ADR passa a "Aceita", o header ganha a marca "CONGELADO" e o CODEOWNERS de `/sw-core/include/` exige o arquiteto e um sênior | Arquiteto |
+O plano original pedia dois sêniores. Com 3 recursos ([15](../15-portao-fase-0-e-plano-3-recursos.md#regra-de-revisão-com-3-pessoas)), vale a regra de 3 pessoas, com dois olhos obrigatórios porque a API pública é código crítico:
 
-Se a revisão não fechar até 2026-10-28, a Fase 1 não começa ([14](../14-briefing-fase-0.md#se-alguém-atrasar)); o dono do produto é avisado no mesmo dia.
+| Etapa | O quê | Quem |
+| --- | --- | --- |
+| 1 | Revisão R1 e correções (residência com 0 seguro, `SW_PARTIAL`, regras de callback) | R1 |
+| 2 | Leitura e comentários; achados aplicados ou recusados com motivo no [registro da revisão](../revisoes/F0-revisao-adrs-0010-0016.md) | Revisor independente |
+| 3 | Aprovação | Dono do produto |
+| 4 | **Congelamento:** este ADR passa a "Aceita", o header ganha a marca "CONGELADO", e mudanças em `/sw-core/include/` passam a exigir ADR e aprovação de R1 + R2 no PR | R1 |
+
+Se o congelamento não acontecer, a Fase 1 não começa ([14](../14-briefing-fase-0.md#se-alguém-atrasar)).
 
 ### Lista de verificação para os revisores
 - [ ] **Engine:** a abordagem A do spike (`ResourceFormatLoader` na frente + `sw_ensure_async` + `sw_read`) e a reserva B (`.pck` por grupo) funcionam só com esta API? Se o ADR de intercepção (0016) escolher outra abordagem, o que falta?

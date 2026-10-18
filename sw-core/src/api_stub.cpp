@@ -43,6 +43,7 @@ const char* SW_CALL sw_result_name(sw_result result)
     switch (result) {
     case SW_OK:                  return "SW_OK";
     case SW_DONE:                return "SW_DONE";
+    case SW_PARTIAL:             return "SW_PARTIAL";
     case SW_E_NOT_IMPLEMENTED:   return "SW_E_NOT_IMPLEMENTED";
     case SW_E_INVALID_ARGUMENT:  return "SW_E_INVALID_ARGUMENT";
     case SW_E_VERSION_MISMATCH:  return "SW_E_VERSION_MISMATCH";
@@ -64,6 +65,7 @@ const char* SW_CALL sw_result_name(sw_result result)
     case SW_E_INTERNAL:          return "SW_E_INTERNAL";
     case SW_E_MANIFEST_UNSUPPORTED: return "SW_E_MANIFEST_UNSUPPORTED";
     case SW_E_MANIFEST_ROLLBACK: return "SW_E_MANIFEST_ROLLBACK";
+    case SW_E_QUEUE_FULL:        return "SW_E_QUEUE_FULL";
     default:                     return "SW_E_UNKNOWN";
     }
 }
@@ -146,7 +148,7 @@ sw_result SW_CALL sw_hint_files(sw_ctx*, const char* const*, size_t, uint32_t)
 
 sw_result SW_CALL sw_hint_group(sw_ctx*, const char*, uint32_t) { return SW_E_NOT_IMPLEMENTED; }
 
-sw_result SW_CALL sw_hint_position(sw_ctx*, const sw_vec3*, const sw_vec3*)
+sw_result SW_CALL sw_hint_position(sw_ctx*, const sw_position_hint*)
 {
     return SW_E_NOT_IMPLEMENTED;
 }
