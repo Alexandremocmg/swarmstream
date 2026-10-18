@@ -18,7 +18,7 @@ Medido na bancada, perfil `cabo_50` (50 Mbps, 25 ms), no mapa de teste, com a ro
 
 Se falhar: ajustar prefetch e `core` (até +4 semanas) ou **repensar o produto** (por exemplo, usar o P2P só para instalação e patches).
 
-Duas condições antes de confiar nos números: **F1-36** pronta (a checagem não pode passar com relatório vazio) e **a bancada validada com uma mudança conhecida** (rede mais lenta tem de piorar a espera; risco R15).
+Duas condições antes de confiar nos números: **F1-36** pronta (a checagem não pode passar com relatório vazio) e **a bancada validada com uma mudança conhecida** (rede mais lenta tem de piorar a espera; risco R15), o que só é possível quando o jogo já lê pela rede (semana 5).
 
 ## O que entra e o que fica para a F1b
 | Na F1a | Na F1b (depois do Portão 1) |
@@ -42,9 +42,9 @@ Duas condições antes de confiar nos números: **F1-36** pronta (a checagem nã
 ## Cronograma sugerido (semanas)
 | Semana | R1 | R2 | R3 |
 | --- | --- | --- | --- |
-| 1 | **F1-20 portão:** textura BCn 4K, malha com 2 LODs e áudio OGG materializados a partir do mock | **F1-36** primeiro, depois F1-01 (chunker C++) | Validar a bancada com uma mudança conhecida; teste de 1 hora no Windows; esqueleto do F1-33 |
+| 1 | **F1-20 portão:** textura BCn 4K, malha com 2 LODs e áudio OGG materializados a partir do mock | **F1-36** primeiro, depois F1-01 (chunker C++) | Teste de 1 hora no Windows; esqueleto do F1-33 (pedidos prontos em [17](17-pedidos-semana-1.md)) |
 | 2–3 | F1-10, F1-12 (slots, thread dona) | F1-03, F1-04 (compressão, manifesto) | F1-02, F1-08 (testes e relatório do `sw-pack`) |
-| 4–5 | F1-11, F1-13 (journal, leases) | F1-27, F1-29 (fonte HTTP, estimador); F1-17 (VFS) | F1-18 (inspetor do cache), F1-30 (telemetria) |
+| 4–5 | F1-11, F1-13 (journal, leases) | F1-27, F1-29 (fonte HTTP, estimador); F1-17 (VFS) | F1-18 (inspetor do cache), F1-30 (telemetria); **validar a bancada com uma mudança conhecida assim que o jogo ler pela rede** |
 | 6–7 | F1-28 (agendador v1); F1-21 (política de textura) | F1-14, F1-16 (remoção, checksum); F1-05, F1-07 (core, mips) | F1-24 (overlay), F1-33 (relatório da rodada) |
 | 8–9 | Integração, medição no mapa de teste | F1-31, F1-32 (queda, disco cheio) | F1-34 (rodadas nos 3 perfis); relatório do Portão 1 |
 
@@ -72,7 +72,7 @@ Folga: os prazos são estimativa. Se uma tarefa passar de 5 dias, o R1 quebra em
 
 ## Pedido ao R3 (conteúdo e apoio)
 
-> Sua primeira semana é de **preparar a medição**: (1) valide a bancada com uma mudança conhecida, trocando o perfil `cabo_50` por `adsl_10` e mostrando que a carga ou a espera piora de forma coerente (se não piorar, a bancada não mede o que deveria e precisamos saber antes de gastar semanas); (2) repita o **teste de 1 hora no Windows** (Windows Sandbox, pessoa que não montou o ambiente, só o guia do CONTRIBUTING, cronômetro) e registre em `docs/medicoes/guia-1h.md`; (3) faça o esqueleto do script de relatório da rodada (F1-33), lendo o formato dos relatórios do `baseline.py`.
+> Sua primeira semana é de **preparar a medição**: (1) repita o **teste de 1 hora no Windows** (Windows Sandbox, pessoa que não montou o ambiente, só o guia do CONTRIBUTING, cronômetro) e registre em `docs/medicoes/guia-1h.md`; (2) faça o esqueleto do script de relatório da rodada (F1-33), lendo o formato dos relatórios do `baseline.py`. A **validação da bancada com uma mudança conhecida** (trocar `cabo_50` por `adsl_10` e ver a espera piorar de forma coerente; se não piorar, a bancada não mede o que deveria) fica para o primeiro momento em que o jogo ler pela rede, previsto para a semana 5: antes disso não existe caminho de rede e a troca de perfil não altera nada.
 >
 > Depois: testes de borda e relatório do `sw-pack` (F1-02, F1-08), inspetor do cache (F1-18), telemetria de `read_miss`, `eviction` e `frame_stutter` (F1-30), overlay de debug no Godot (F1-24) e as rodadas semanais nos 3 perfis com comparação ao baseline (F1-34). Ao fim, monte o **relatório do Portão 1** com a tabela de métricas acima.
 >
