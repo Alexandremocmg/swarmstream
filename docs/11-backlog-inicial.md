@@ -30,7 +30,7 @@ Modelo de issue: [templates/tarefa-template.md](templates/tarefa-template.md).
 ### T1 — Conteúdo e build
 | ID | Tarefa | Nível | Tam. | Depende de | Critério de aceite |
 | --- | --- | --- | --- | --- | --- |
-| F1-01 | Chunker FastCDC com tamanhos mín/médio/máx configuráveis | S | M | F0-08 | Mudar 1 byte num arquivo de 1 GB altera ≤ 3 blocos |
+| F1-01 | Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: [03 §11.1](03-formato-de-conteudo.md), [vetores](../sw-pack/testdata/README.md)) | S | M | F0-08 | Mudar 1 byte num arquivo de 1 GB altera ≤ 3 blocos. **Condição aprovada pelo R1 e pelo dono do produto: escrito só a partir da spec, por pessoa que não escreveu as versões em Python (R2, não R1 nem R3), e reproduzindo todos os vetores antes de entrar na `main`** |
 | F1-02 | Testes do chunker (arquivos vazios, pequenos, enormes, aleatórios) | J | P | F1-01 | `boa-primeira-tarefa`; cobertura dos casos de borda |
 | F1-03 | Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo | P | M | F1-01 | Taxa e tempo por tipo no relatório da CLI |
 | F1-04 | Geração do manifesto v0, assinado com a chave de teste ([ADR-0012](adr/0012-serializacao-do-manifesto.md)) | P | M | F1-01 | Manifesto lido de volta é idêntico; adulterado é recusado; tamanho do arquivo e memória residente medidos |
@@ -79,6 +79,7 @@ Modelo de issue: [templates/tarefa-template.md](templates/tarefa-template.md).
 | F1-33 | Script de relatório da rodada (métricas por perfil) | J | M | F1-30 | `boa-primeira-tarefa`; tabela pronta para o Portão 1 |
 | F1-34 | Rodadas semanais nos 3 perfis + comparação com o baseline | J | P (recorrente) | F1-33 | Relatório da semana publicado |
 | F1-35 | Experimento: blocos de 64, 128 e 256 KB | P | M | F1-33 | Recomendação registrada em ADR-0002 |
+| F1-36 | **Corrigir a checagem vazia do `baseline.py --check`**: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso | P | P | F0-12 | **Pronto antes do Portão 1** (R2). Teste: 3 relatórios vazios e 3 com chaves erradas saem com código 1 e dizem qual métrica faltou |
 
 ## F2 — Híbrido P2P (resumo; detalhar no planejamento da fase)
 

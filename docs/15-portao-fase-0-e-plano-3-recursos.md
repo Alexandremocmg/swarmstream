@@ -178,10 +178,10 @@ Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
 | 2 | Repositório, `CODEOWNERS`, e-mail | **Feito (PR de CODEOWNERS pendente de aceite)** | Repositório e e-mail feitos. **Os recursos não têm contas no GitHub** (confirmado pelo dono do produto em 2026-10-18; as contas `Edualc`, `Itivargitna` e `Zemreh` informadas antes não são deles e não receberam acesso). `CODEOWNERS` passa a apontar para a conta do dono do produto, com o papel (R1, R2, R3) em comentário. Correção em PR, aguardando aceite |
 | 3 | CI com PR vermelho e PR verde | **Feito (provado e aceito)** | PR #2 aceito na `main` (adcf187) e PR #1 fechado sem merge (branch mantida como evidência). [PR #2](https://github.com/Alexandremocmg/swarmstream/pull/2) verde em Ubuntu, Windows (MSVC), ASan+UBSan e lint; [PR #1](https://github.com/Alexandremocmg/swarmstream/pull/1) vermelho em Ubuntu, Windows e ASan por uma asserção quebrada. A primeira tentativa revelou 3 defeitos reais do CI (travamento no Windows, `.clang-format` inválido para o clang-format 18, C++ existente fora do formato) |
 | 4 | Guia de ambiente e teste de 1 hora | **Feito (Ubuntu): 29 min** | Passou na meta de menos de 60 min em 2026-10-18 ([registro](medicoes/guia-1h.md)). Achado: o `git` não estava instalado antes do clone (corrigido no guia). **Windows não testado por pessoa externa**; repetir na Fase 1. Lacunas do registro: participante, observador e ajuda não informados |
-| 5 | Método do baseline | **Feito** (PR #3 aceito na `main`, 2375cc0) | [PR #3](https://github.com/Alexandremocmg/swarmstream/pull/3) verde: texturas GPU (carga de ~30 s para ~2,5 s), limites absolutos, carga fria por esvaziamento de cache (leitura pura ~2× a frio). **Reinício do Windows dispensado por decisão do dono do produto (2026-10-17):** a leitura pura já dobra a frio e `load_ms` sozinho não mede I/O nesta cena; o reinício só reconfirmaria isso. Refazer na Fase 1, quando o cache for real. Pendente: o R1 aprovar os limites absolutos (escolhas do R2) |
+| 5 | Método do baseline | **Feito** (PR #3 aceito na `main`, 2375cc0) | [PR #3](https://github.com/Alexandremocmg/swarmstream/pull/3) verde: texturas GPU (carga de ~30 s para ~2,5 s), limites absolutos, carga fria por esvaziamento de cache (leitura pura ~2× a frio). **Reinício do Windows dispensado por decisão do dono do produto (2026-10-17):** a leitura pura já dobra a frio e `load_ms` sozinho não mede I/O nesta cena; o reinício só reconfirmaria isso. Refazer na Fase 1, quando o cache for real. Limites aprovados pelo R1 e pelo dono do produto em 2026-10-18 (PR #7, 4fd3738): quadros acima de 33 ms ≤ 2, acima de 100 ms = 0, p99 ≤ 6,24 ms, carga ≤ 3,06 s pela mediana de 3 rodadas |
 | 6 | ADRs 0010–0016 e `swarmstream.h` v0 | **Feito** (8799c3c) | Aprovação do dono do produto **confirmada por ele em 2026-10-17**, como consta no registro de revisão |
 | 7 | Correção de ADR-0001, doc 06, F1-20 | **Feito** | No mesmo commit |
-| 8 | Vetores de teste da spec | **Em andamento** | `sw-pack/testdata/` existe, ainda sem commit. Pendências: R1 aprovar a definição do chunker; o payload do envelope é sintético até existir `flatc` ou `sw-pack` |
+| 8 | Vetores de teste da spec | **Feito** (PR #6, 06c04db) | Envelope assinado, Zstd/LZ4 e chunker. Definição do chunker (`swarmstream-fastcdc-v0`) **aprovada pelo R1 e pelo dono do produto em 2026-10-18**, com uma terceira implementação feita pelo R1 só a partir do pseudocódigo. Payload do envelope segue sintético até existir `flatc` ou `sw-pack` |
 
 ### Problemas encontrados na verificação
 - ~~`main` vermelha no lint~~ **Resolvido:** com o PR #2 aceito, `ci` e `lint` ficaram verdes na `main` (adcf187 e 2375cc0). O PR #2 tinha conflito com a `main` em `sw-core/CMakeLists.txt`, resolvido mantendo as duas mudanças (TIMEOUT de 120 s nos dois alvos de teste); build e testes passaram antes do merge.
@@ -191,4 +191,42 @@ Verificada no GitHub (PRs, execuções do CI) e no disco, não só nos relatos.
 - **Compilador local:** o Windows Defender bloqueou o MinGW na máquina do R2. Não foi alterado; a correção foi validada só pelo CI.
 
 ### Conclusão
-A Fase 0 está **a um item de fechar**: os vetores da spec (item 8, com a definição do chunker a aprovar pelo R1). O teste de 1 hora (item 4) passou no Ubuntu e o `CODEOWNERS` (item 2) foi aceito. Mais uma pendência pequena: o R1 aprovar os limites do baseline. Nenhuma exige desenvolvimento grande.
+**Todos os itens da lista de fechamento estão cumpridos.** Falta o parecer final do portão (próxima seção). O teste de 1 hora (item 4) passou no Ubuntu e o `CODEOWNERS` (item 2) foi aceito. Mais uma pendência pequena: o R1 aprovar os limites do baseline. Nenhuma exige desenvolvimento grande.
+
+## Parecer final do portão da Fase 0 (2026-10-18)
+
+**Veredito: passar para a Fase 1a.** Os 8 itens da lista de fechamento estão cumpridos, e o que ficou pendente é pequeno, tem dono e não impede começar.
+
+### O que eu verifiquei por conta própria (não só no relato)
+| Verificação | Resultado |
+| --- | --- |
+| `main` no GitHub (4fd3738) | `ci` e `lint` verdes: build e teste em Ubuntu e Windows (MSVC), ASan+UBSan |
+| Prova do CI vermelho e verde | PR #1 vermelho em 3 jobs por uma asserção quebrada; PRs #2 a #7 verdes |
+| Vetores da spec | `verify_vectors.py` completo: 111 conferências, 0 falhas; `test_properties.py`: 5 de 5; terceira implementação do chunker (`verify_chunker_r1.py`): todos os casos |
+| Limites do baseline | `--check` aceita as 5 rodadas reais e **recusa** regressões fabricadas (3 quadros acima de 33 ms; 1 acima de 100 ms; p99 de 7 ms; mediana de carga de 3,5 s). Aceita 2 quadros e uma única rodada lenta de carga, como definido |
+| Teste de 1 hora | 29 min no Ubuntu (relato do teste; registro em [guia-1h.md](medicoes/guia-1h.md)) |
+| ADRs | 0001 a 0016 aceitos; `swarmstream.h` v0 congelado |
+
+### Aprovações do dono do produto nesta fase
+ADRs 0001–0009, plano para 3 recursos e adiamento do backend, ADRs 0010–0016 e congelamento do header, definição do chunker e limites do baseline, aceitação dos PRs #2 a #7.
+
+### Pendências que seguem para a Fase 1 (nenhuma bloqueia a entrada)
+| # | Pendência | Dono | Quando |
+| --- | --- | --- | --- |
+| 1 | **F1-36: a checagem de limites aceita relatórios sem as métricas** ("within limits" e código 0 com relatórios vazios ou com chaves erradas). Achado nesta verificação | R2 | **Antes do Portão 1** |
+| 2 | Chunker em C++ escrito só a partir da spec, por pessoa diferente de quem fez as versões em Python, reproduzindo todos os vetores antes de entrar na `main` (F1-01) | R2 | F1a, início |
+| 3 | Decisão sobre o tamanho do manifesto: com a média real de ≈ 148 KiB o manifesto de 150 GB fica perto de 47 MB (dados aleatórios); medir nos assets reais (F1-04) | R1 | F1a |
+| 4 | Teste de 1 hora no **Windows** por pessoa externa | R3 | F1a |
+| 5 | PR mecânico de formatação do C++ (`swarmstream.h`, `api_stub.cpp`, `api_v0_smoke.c`) | R2 | Depois do congelamento de 28/10 |
+| 6 | Payload real do envelope (FlatBuffers) como vetor novo | R2 | Quando existir `flatc` ou `sw-pack` |
+| 7 | Reinício do Windows para a carga fria, dispensado nesta fase; refazer com o cache real | R2 | F1 |
+| 8 | Export do Godot com `.pck`, Linux e macOS no spike, abordagens B, C e E do spike | R1 | F1a (início da F1-20) |
+
+### Ressalvas honestas sobre o que a Fase 0 provou
+- **Os limites de stutter vêm de pouca amostra:** 1 quadro lento em 300 s. Com a taxa estimada, uma rodada sem regressão passa de 2 quadros em cerca de 0,1% das vezes, mas com tão poucos eventos a taxa real pode ser bem maior (no limite superior de confiança, cerca de 7% por rodada). Falha com 3 quadros deve levar a **repetir com mais rodadas e investigar a causa**, não a concluir regressão de imediato.
+- **O baseline mede o jogo com cache cheio, não o streaming.** Ele só prova que o `sw-core` não piora o jogo; a taxa de falta e a espera p99 ficam para a F1a.
+- **Windows e MSVC:** só o CI exercitou o MSVC; nenhuma pessoa o testou.
+- **A bancada ainda não prova que acompanha mudanças de I/O** (risco R15): a leitura pura dobrou a frio, mas a carga total não. Validar com uma mudança conhecida (rede mais lenta) no início da F1a.
+
+### Próximo passo
+Começar a **F1a** (≈ 8–9 semanas, plano para 3 recursos): cache em disco com journal, VFS, fonte HTTP e agendador v1, `sw-pack` mínimo, loader do Godot com política de falta (ADR-0016) e medição em 3 perfis de rede. O **Portão 1** fica no fim da F1a, com os limites absolutos aprovados.
