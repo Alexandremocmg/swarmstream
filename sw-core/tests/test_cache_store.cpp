@@ -38,7 +38,7 @@ void test_cache_store_alloc_write_commit_read()
     assert(read_res.has_value());
     Lease lease = std::move(read_res.value());
     assert(lease.valid());
-    assert(lease.size() == test_data.size());
+    assert(lease.size() == test_data.size() + 1); // QUEBRA PROPOSITAL
     assert(std::memcmp(lease.data(), test_data.data(), test_data.size()) == 0);
     assert(lease.slot_id() == slot);
     assert(lease.piece_id() == piece);
