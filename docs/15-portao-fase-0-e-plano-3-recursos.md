@@ -229,4 +229,6 @@ ADRs 0001–0009, plano para 3 recursos e adiamento do backend, ADRs 0010–0016
 - **A bancada ainda não prova que acompanha mudanças de I/O** (risco R15): a leitura pura dobrou a frio, mas a carga total não. Validar com uma mudança conhecida (rede mais lenta) no início da F1a.
 
 ### Próximo passo
+**Aprovado pelo dono do produto em 2026-10-18: a Fase 0 está encerrada e a Fase 1a está aberta.** O briefing por recurso, o critério do Portão 1 e o cronograma estão em [16-briefing-fase-1a.md](16-briefing-fase-1a.md).
+
 Começar a **F1a** (≈ 8–9 semanas, plano para 3 recursos): cache em disco com journal, VFS, fonte HTTP e agendador v1, `sw-pack` mínimo, loader do Godot com política de falta (ADR-0016) e medição em 3 perfis de rede. O **Portão 1** fica no fim da F1a, com os limites absolutos aprovados.
