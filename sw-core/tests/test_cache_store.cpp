@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
+#include "swarmstream/memory_cache_store.hpp"
+
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <thread>
 #include <vector>
 
-#include "swarmstream/memory_cache_store.hpp"
-
 namespace swarmstream {
 
-void test_cache_store_alloc_write_commit_read() {
+void test_cache_store_alloc_write_commit_read()
+{
     std::cout << "[Test] CacheStore: Alloc, write, commit, read\n";
     auto store = std::make_shared<MemoryCacheStore>(16, 1024);
 
@@ -45,7 +46,8 @@ void test_cache_store_alloc_write_commit_read() {
     assert(store->active_leases_count() == 1);
 }
 
-void test_cache_store_lease_prevents_free() {
+void test_cache_store_lease_prevents_free()
+{
     std::cout << "[Test] CacheStore: Active lease prevents free (ADR-0005)\n";
     auto store = std::make_shared<MemoryCacheStore>(8, 1024);
 
@@ -87,7 +89,8 @@ void test_cache_store_lease_prevents_free() {
     assert(!store->has_piece(piece));
 }
 
-void test_cache_store_out_of_slots() {
+void test_cache_store_out_of_slots()
+{
     std::cout << "[Test] CacheStore: Out of slots capacity\n";
     auto store = std::make_shared<MemoryCacheStore>(3, 512);
 
@@ -108,7 +111,8 @@ void test_cache_store_out_of_slots() {
     assert(s_realloc.value() == s1.value());
 }
 
-void test_cache_store_bounds_checking() {
+void test_cache_store_bounds_checking()
+{
     std::cout << "[Test] CacheStore: Bounds checking\n";
     auto store = std::make_shared<MemoryCacheStore>(4, 100);
 
@@ -126,7 +130,8 @@ void test_cache_store_bounds_checking() {
     assert(write_offset_err.error() == CacheErrorCode::InvalidSize);
 }
 
-void test_cache_store_checksum_corruption() {
+void test_cache_store_checksum_corruption()
+{
     std::cout << "[Test] CacheStore: Checksum corruption detection\n";
     auto store = std::make_shared<MemoryCacheStore>(4, 1024);
 
@@ -149,7 +154,8 @@ void test_cache_store_checksum_corruption() {
     assert(read_res.error() == CacheErrorCode::CorruptedChecksum);
 }
 
-void test_cache_store_journal_and_checkpoint() {
+void test_cache_store_journal_and_checkpoint()
+{
     std::cout << "[Test] CacheStore: WAL Journal records and checkpoint\n";
     auto store = std::make_shared<MemoryCacheStore>(8, 1024);
 
@@ -178,7 +184,8 @@ void test_cache_store_journal_and_checkpoint() {
     assert(store->last_lsn() == 3);
 }
 
-void test_cache_store_concurrent_readers() {
+void test_cache_store_concurrent_readers()
+{
     std::cout << "[Test] CacheStore: Concurrent multithreaded readers\n";
     auto store = std::make_shared<MemoryCacheStore>(16, 4096);
 
@@ -220,7 +227,8 @@ void test_cache_store_concurrent_readers() {
 
 } // namespace swarmstream
 
-void run_cache_store_tests() {
+void run_cache_store_tests()
+{
     swarmstream::test_cache_store_alloc_write_commit_read();
     swarmstream::test_cache_store_lease_prevents_free();
     swarmstream::test_cache_store_out_of_slots();

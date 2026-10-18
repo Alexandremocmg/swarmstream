@@ -45,4 +45,6 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
 
     add_test(NAME sw-core-tests COMMAND sw-core-tests)
+    # Teste pendurado deve falhar, não travar o CI.
+    set_tests_properties(sw-core-tests PROPERTIES TIMEOUT 120)
 endif()
