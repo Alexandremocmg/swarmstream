@@ -195,7 +195,7 @@ table Sources {
 
 table Chunker {                // INFORMATIVO: o leitor não depende disto
   min_size: uint32; avg_size: uint32; max_size: uint32;
-  algorithm: string;           // ex.: "fastcdc2020-sha256gear-v0"
+  algorithm: string;           // v0: "swarmstream-fastcdc-v0" (§11.1)
 }
 
 table ManifestPayload {
@@ -276,10 +276,13 @@ Patch: o estúdio publica um manifesto novo (`build_seq` maior). O cliente compa
 
 O leitor não depende do chunker, mas **dois builds só compartilham blocos se o chunker for idêntico**. Parâmetros fixados para o v0 (qualquer mudança invalida dedup entre builds, não a leitura):
 
-- FastCDC 2020 com normalização nível 2, `min = 32 KiB`, `avg = 128 KiB`, `max = 256 KiB`; arquivos menores que `min` viram um único bloco.
+- FastCDC com normalização nível 2, **um byte por passo**, `min = 32 KiB`, `avg = 128 KiB`, `max = 256 KiB`; trecho restante com até `min` bytes vira um único bloco. Identificador no manifesto: `Chunker.algorithm = "swarmstream-fastcdc-v0"`.
+- **Não é compatível bit a bit** com as implementações públicas de FastCDC (que usam outra tabela gear, máscaras espalhadas e, no FastCDC 2020, dois bytes por passo). Não use uma biblioteca externa como referência: a referência são os vetores de [`sw-pack/testdata/`](../sw-pack/testdata/README.md).
 - Tabela gear de 256 entradas de 64 bits: `gear[i] = LE64(SHA-256("swarmstream-gear-v0" ‖ byte(i))[0..8])`.
-- Máscaras nas posições altas do hash: `mask_s` com 19 bits altos, `mask_l` com 15 bits altos (corte quando `(fp & mask) == 0`).
-- Algoritmo exato (pseudocódigo) e vetores: [`sw-pack/testdata/README.md`](../sw-pack/testdata/README.md), **proposta pendente de aprovação do sênior**; a F0-08 só exige que o **registro** (`Chunker.algorithm`) exista no manifesto.
+- Máscaras: `mask_s` = os `log2(avg)+2` bits **mais significativos** de 64 em 1 (19 bits para 128 KiB); `mask_l` = os `log2(avg)−2` mais significativos (15 bits). `mask_s` vale para posições `i < normal`, `mask_l` a partir daí; corte quando `(fp & mask) == 0`.
+- O hash começa em `fp = 0` na posição `min` (as primeiras `min` posições não entram no hash), e o bloco **inclui** o byte que disparou o corte (`retorne i+1`). Sem corte até `min(restante, max)`, o bloco termina ali.
+- Algoritmo exato (pseudocódigo) e vetores: [`sw-pack/testdata/README.md`](../sw-pack/testdata/README.md). **Aprovado pelo R1 em 2026-10-18**; faz parte do formato e só muda por ADR.
+- Tamanho real, medido em 64 MiB pseudoaleatórios: **média ≈ 148 KiB** (mediana 148 KiB; 1,1% dos blocos no máximo; 17% até 128 KiB). `avg` é o ponto de normalização, não a média. Inserir 1 byte no meio mudou 1 bloco. O orçamento de [§7.3](#73-orçamento-de-tamanho-meta--50-mb-para-150-gb-de-jogo) deve usar a média medida nos assets reais (F1-04), não 128 KiB.
 
 Divergência assumida em relação ao rascunho anterior ("bloco 64–256 KB"): o limite rígido é `raw_size ≤ 256 KiB`; não há mínimo para o leitor (blocos de cauda e arquivos pequenos são menores), e o `avg` é configurável.
 

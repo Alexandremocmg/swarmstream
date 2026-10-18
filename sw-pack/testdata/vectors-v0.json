@@ -2,7 +2,7 @@
  "version": 0,
  "spec": "docs/03-formato-de-conteudo.md",
  "chunker": {
-  "algorithm": "fastcdc2020-sha256gear-v0",
+  "algorithm": "swarmstream-fastcdc-v0",
   "gear_first4_hex": [
    "5fd4854f5bee09f4",
    "4477dfd724b83314",

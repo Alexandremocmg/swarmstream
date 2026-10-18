@@ -264,7 +264,7 @@ def build_chunker() -> dict[str, Any]:
         }
     )
     return {
-        "algorithm": "fastcdc2020-sha256gear-v0",
+        "algorithm": "swarmstream-fastcdc-v0",
         "gear_first4_hex": [format(g, "016x") for g in gear[:4]],
         "gear_table_sha256": sha256(b"".join(struct.pack("<Q", g) for g in gear)).hex(),
         "cases": cases,
