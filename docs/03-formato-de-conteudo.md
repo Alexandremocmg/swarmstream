@@ -279,7 +279,7 @@ O leitor não depende do chunker, mas **dois builds só compartilham blocos se o
 - FastCDC 2020 com normalização nível 2, `min = 32 KiB`, `avg = 128 KiB`, `max = 256 KiB`; arquivos menores que `min` viram um único bloco.
 - Tabela gear de 256 entradas de 64 bits: `gear[i] = LE64(SHA-256("swarmstream-gear-v0" ‖ byte(i))[0..8])`.
 - Máscaras nas posições altas do hash: `mask_s` com 19 bits altos, `mask_l` com 15 bits altos (corte quando `(fp & mask) == 0`).
-- Os valores exatos e o vetor de teste do chunker ficam para a F1-01; a F0-08 só exige que o **registro** (`Chunker.algorithm`) exista no manifesto.
+- Algoritmo exato (pseudocódigo) e vetores: [`sw-pack/testdata/README.md`](../sw-pack/testdata/README.md), **proposta pendente de aprovação do sênior**; a F0-08 só exige que o **registro** (`Chunker.algorithm`) exista no manifesto.
 
 Divergência assumida em relação ao rascunho anterior ("bloco 64–256 KB"): o limite rígido é `raw_size ≤ 256 KiB`; não há mínimo para o leitor (blocos de cauda e arquivos pequenos são menores), e o `avg` é configurável.
 
@@ -302,7 +302,7 @@ Peça: `size = 26000` ⇒ 2 folhas (16 384 + 9 616 bytes), 62 folhas ausentes (z
 | **`piece_hash`** | `cc5aced08754bb61cc287108a94d664a1d6b45cd7e0a1f607c8ea359fd76e1c2` |
 | `piece_hash` de peça de 1 byte `0x00` | `00ae8802da7a65746a6910e91fa8b0557ef1dc2e1be91e502985c019da71f051` |
 
-**Ainda não existem** vetores de: envelope assinado completo (precisa de chave Ed25519 de teste e do `flatc`), frames Zstd/LZ4 e chunker. São entregáveis do primeiro PR do `sw-pack`: o implementador gera, e o revisor confere contra este documento. Critério de conformidade mínimo do `sw-pack` v0: reproduzir os valores acima e passar nas validações da [§8](#8-validações-do-leitor) com um manifesto gerado e depois adulterado (um byte do payload, um byte do hash, assinatura trocada) — os três casos DEVEM ser recusados.
+Vetores de **envelope assinado, Zstd/LZ4 e chunker** estão em [`sw-pack/testdata/vectors-v0.json`](../sw-pack/testdata/README.md), gerados por `gen_vectors.py` e conferidos por implementação independente (`verify_vectors.py`; OpenSSL reproduz a assinatura byte a byte). Pendentes: payload FlatBuffers real no envelope (precisa de `flatc`/`sw-pack`) e aprovação do sênior para a definição do chunker. Critério de conformidade mínimo do `sw-pack` v0: reproduzir os valores acima e os do JSON e passar nas validações da [§8](#8-validações-do-leitor) com um manifesto gerado e depois adulterado (um byte do payload, um byte do hash, assinatura trocada) — os três casos DEVEM ser recusados.
 
 ## 13. Decisões provisórias que dependem de ADR
 
