@@ -80,7 +80,7 @@ As trilhas só se tocam pelos **contratos** de [02-arquitetura.md](02-arquitetur
 **Entregáveis:** demo do mapa de teste em modo compacto, relatório de métricas por perfil de rede, medições de tamanho de bloco (64/128/256 KB).
 
 ### ◆ Portão 1 — a ideia funciona no lado do jogo?
-Seguir se, em `cabo_50`: taxa de falta < 1%, p99 de espera < 300 ms, stutter dentro de ±5% do baseline, pop-in aceitável na avaliação visual.
+Seguir se, em `cabo_50`: taxa de falta < 1%, p99 de espera < 300 ms, stutter dentro dos limites absolutos do baseline ([medicoes/baseline.md §3](medicoes/baseline.md): > 33 ms ≤ 2 e > 100 ms = 0 por rodada, p99 ≤ baseline + 2 ms), pop-in aceitável na avaliação visual.
 Se não: ajustar prefetch/`core` (mais 4 semanas) ou **repensar o produto** (ex.: focar só em instalação e patches via P2P, sem streaming em runtime).
 
 ---
