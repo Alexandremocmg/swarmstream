@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import struct
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -424,21 +425,31 @@ def minimal_flatbuffer(min_reader: int, ident: bytes = b"SWM0") -> bytes:
     return struct.pack("<I", table_at) + ident + vtable + b"\x00\x00" + table
 
 
-def build_payload_probe(signed: Any) -> dict[str, Any]:
+def build_payload_probe(signed: Callable[[bytes], bytes]) -> dict[str, Any]:
     """Manifestos assinados com payload FlatBuffers mínimo, para a sondagem do min_reader."""
-    cases = [
-        ("min_reader_0", minimal_flatbuffer(0), "ok", 0),
+    base = minimal_flatbuffer(0)
+    # tabela raiz sem nenhum campo (vtable de 4 bytes): min_reader assume o padrão 0
+    absent = (
+        struct.pack("<I", 16)
+        + b"SWM0"
+        + struct.pack("<HH", 4, 4)
+        + b"\x00" * 4
+        + struct.pack("<i", 16 - 8)
+    )
+    # raiz fora do buffer, e raiz dentro do cabeçalho (r < 8, proibido pela regra r >= 8)
+    root_far = struct.pack("<I", 4096) + base[4:]
+    root_in_header = struct.pack("<I", 4) + base[4:]
+    # slot do id 4 aponta para o offset 2 da tabela, por cima do soffset (proibido: fo >= 4)
+    overlap_vtable = struct.pack("<HH5H", 14, 8, 0, 0, 0, 0, 2)
+    field_over_soffset = base[:8] + overlap_vtable + base[22:]
+    cases: list[tuple[str, bytes, str, int | None]] = [
+        ("min_reader_0", base, "ok", 0),
         ("min_reader_1", minimal_flatbuffer(1), "unsupported", 1),
-        # tabela raiz sem nenhum campo (vtable de 4 bytes): min_reader assume o padrão 0
-        ("min_reader_absent", struct.pack("<I", 16) + b"SWM0" + struct.pack("<HH", 4, 4)
-         + b"\x00" * 4 + struct.pack("<i", 16 - 8), "ok", 0),
+        ("min_reader_absent", absent, "ok", 0),
         ("wrong_file_identifier", minimal_flatbuffer(0, b"XXXX"), "invalid", None),
-        ("root_offset_out_of_range", struct.pack("<I", 4096) + minimal_flatbuffer(0)[4:], "invalid", None),
-        # raiz dentro do cabeçalho (r < 8): proibido pela regra r >= 8
-        ("root_inside_header", struct.pack("<I", 4) + minimal_flatbuffer(0)[4:], "invalid", None),
-        # slot do id 4 aponta para o offset 2 da tabela, por cima do soffset: proibido por fo >= 4
-        ("field_overlaps_soffset", minimal_flatbuffer(0)[:8] + struct.pack("<HH5H", 14, 8, 0, 0, 0, 0, 2)
-         + minimal_flatbuffer(0)[22:], "invalid", None),
+        ("root_offset_out_of_range", root_far, "invalid", None),
+        ("root_inside_header", root_in_header, "invalid", None),
+        ("field_overlaps_soffset", field_over_soffset, "invalid", None),
     ]
     return {
         "supported_payload_revision": 0,
