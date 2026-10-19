@@ -140,7 +140,8 @@ manifest_id = SHA-256( envelope inteiro [0..104) ‖ payload )     // identifica
 - A compatibilidade do **payload** é dada pelo campo `min_reader` do payload (§7.2): a menor **revisão de payload** que um leitor precisa suportar para entender aquele conteúdo. Um leitor v0 suporta a revisão `0`.
 
 Ordem obrigatória no leitor (o código de erro entre parênteses é o de [`swarmstream.h`](../sw-core/include/swarmstream.h)):
-1. Conferir `magic`, `hash_alg`, `sig_alg`, reservados e `payload_len` (arquivo total = 104 + `payload_len`; `payload_len` ≤ 256 MiB); qualquer falha ⇒ recusar (`SW_E_MANIFEST_INVALID`). `format_version ≠ 0` ⇒ recusar (`SW_E_MANIFEST_UNSUPPORTED`: o envelope é de um formato que este leitor não conhece).
+1. Conferir o cabeçalho **nesta ordem**: (a) `magic` (e tamanho mínimo de 104 bytes); errado ⇒ `SW_E_MANIFEST_INVALID`. (b) `format_version`; diferente de `0` ⇒ `SW_E_MANIFEST_UNSUPPORTED` (o envelope é de um formato que este leitor não conhece), **sem olhar o resto**, porque com versão desconhecida o layout dos campos seguintes nem é confiável. (c) `hash_alg`, `sig_alg`, reservados e `payload_len` (arquivo total = 104 + `payload_len`; `payload_len` ≤ 256 MiB); qualquer falha ⇒ `SW_E_MANIFEST_INVALID`.
+   - Este `UNSUPPORTED` vem **antes** da assinatura, então **não é autenticado**: qualquer um pode forjá-lo trocando dois bytes. O efeito é só uma mensagem "atualize o cliente" num arquivo que seria recusado de qualquer forma; o cliente não deve tomar nenhuma ação automática (como baixar uma atualização) só por causa dele. O `UNSUPPORTED` do passo 4, ao contrário, é autenticado.
 2. Localizar a chave pública pelo `key_id` na lista embutida; desconhecida ⇒ recusar (`SW_E_SIGNATURE_INVALID`).
 3. **Verificar a assinatura antes de ler o payload.** Falha ⇒ recusar (`SW_E_SIGNATURE_INVALID`). Nada do payload é usado antes.
 4. **Sondar o payload**, sem o verificador completo: conferir o `file_identifier` (`"SWM0"`) e ler só o campo `min_reader` da tabela raiz, conferindo cada limite (algoritmo abaixo). Identificador errado ou limite violado ⇒ recusar (`SW_E_MANIFEST_INVALID`). `min_reader` maior que a revisão de payload suportada ⇒ recusar (`SW_E_MANIFEST_UNSUPPORTED`, "atualize o cliente").
@@ -151,14 +152,15 @@ O passo 4 vem **antes** do verificador de propósito: um payload de revisão nov
 Sondagem do `min_reader` (todos os inteiros little-endian; `P` = payload, `n = len(P)`):
 ```text
 n ≥ 8 e P[4..8) == "SWM0"                          senão INVALID
-r = u32(P, 0);   r % 4 == 0 e r + 4 ≤ n            senão INVALID   // tabela raiz
+r = u32(P, 0);   r ≥ 8, r % 4 == 0 e r + 4 ≤ n     senão INVALID   // tabela raiz, depois do uoffset e do identificador
 v = r − i32(P, r);  v ≥ 0, v % 2 == 0, v + 4 ≤ n   senão INVALID   // vtable
 vs = u16(P, v); ts = u16(P, v+2)
 vs ≥ 4, vs % 2 == 0, v + vs ≤ n, ts ≥ 4, r + ts ≤ n  senão INVALID
 slot = 4 + 2·4                                      // min_reader é o campo de id 4
 fo = (slot + 2 ≤ vs) ? u16(P, v + slot) : 0
-min_reader = (fo == 0) ? 0 : (fo + 2 ≤ ts ? u16(P, r + fo) : INVALID)
+min_reader = (fo == 0) ? 0 : (fo ≥ 4 e fo + 2 ≤ ts ? u16(P, r + fo) : INVALID)   // fo ≥ 4: o campo não sobrepõe o soffset
 ```
+Os dois limites `r ≥ 8` e `fo ≥ 4` importam no caminho `UNSUPPORTED`: nele o `Verifier` não roda depois, e sem eles bytes assinados malformados poderiam dar um "atualize o cliente" falso. Todo leitor do manifesto (o `sw-core` e o serviço de manifestos em Go, [ADR-0010](adr/0010-linguagem-dos-servicos-de-backend.md)) usa os casos `payload_probe` de [`sw-pack/testdata`](../sw-pack/testdata/README.md) como teste de conformidade desta sondagem.
 
 ### 7.2 Payload (schema FlatBuffers v0)
 

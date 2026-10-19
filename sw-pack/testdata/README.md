@@ -6,8 +6,8 @@
 | --- | --- |
 | `chunker` | tabela gear, FastCDC 2020 com os parâmetros do §11.1 (32 KiB / 128 KiB / 256 KiB) e um caso com parâmetros pequenos; vazio, 1 byte, nos limites min/max, 1 MiB, 4 MiB e zeros |
 | `codecs` | frames Zstd e LZ4 (block format) de 6 entradas, com a regra "não reduziu ⇒ `NONE`"; Zstd com `Frame_Content_Size` presente e `Dictionary_ID = 0` |
-| `envelope` | envelope do §7.1 assinado com **chave de teste** (seed `00..1f`), `MSG`, assinatura Ed25519, `manifest_id` e 7 casos que o leitor DEVE recusar (3 exigidos pela spec + cabeçalho/chave); mais 1 caso de `format_version` desconhecido, com assinatura válida (recusado por igualdade, `unsupported`) |
-| `envelope.payload_probe` | sondagem do `min_reader` (§7.1, passo 4): 5 manifestos assinados com payload FlatBuffers mínimo (`min_reader` 0, 1, ausente, identificador errado, raiz fora do buffer), com o resultado esperado (`ok`, `unsupported`, `invalid`) para um leitor da revisão 0 |
+| `envelope` | envelope do §7.1 assinado com **chave de teste** (seed `00..1f`), `MSG`, assinatura Ed25519, `manifest_id` e 7 casos que o leitor DEVE recusar (3 exigidos pela spec + cabeçalho/chave); mais 2 casos de `format_version` desconhecido, com assinatura válida (recusado por igualdade, `unsupported`; um deles também com `reserved ≠ 0`, para fixar que a versão é conferida antes) |
+| `envelope.payload_probe` | sondagem do `min_reader` (§7.1, passo 4): 7 manifestos assinados com payload FlatBuffers mínimo (`min_reader` 0, 1, ausente, identificador errado, raiz fora do buffer, raiz dentro do cabeçalho, campo por cima do `soffset`), com o resultado esperado (`ok`, `unsupported`, `invalid`) para um leitor da revisão 0 |
 
 ## Comandos
 ```bash
@@ -25,7 +25,7 @@ Precisa de `openssl` 3.x no PATH (no Windows, o Git for Windows traz em `usr/bin
 - **Chunker:** duas implementações escritas separadamente (`gen_vectors.py` e `verify_vectors.py`), comparadas em 150 entradas aleatórias (`test_properties.py`). Uma terceira, de **outro autor** (R1), escrita só a partir do pseudocódigo abaixo e da spec, sem ler as outras duas: `verify_chunker_r1.py`. Reproduz os 10 casos do chunker e a tabela gear.
 - **Limites:** `gen_vectors.py` e `verify_vectors.py` foram escritas pela mesma pessoa a partir da spec. Para o chunker, `verify_chunker_r1.py` dá independência de autoria. Envelope, LZ4 e cabeçalho Zstd ainda têm só independência de código, até existirem o `sw-pack` e o `sw-core` em C++ (ver "Aprovação").
 - **Payload do envelope é sintético** (bytes opacos, não FlatBuffers): falta `flatc` / `sw-pack`. O envelope (§7.1) está completo; o payload real será um vetor novo.
-- **Sondagem do `min_reader`:** o gerador monta os payloads mínimos à mão e o verificador tem a sua própria leitura com limites. Os dois foram conferidos contra o runtime oficial do FlatBuffers para Python (25.12.19): ele lê os payloads mínimos com os mesmos valores, e a sondagem lê buffers feitos pelo `Builder` oficial. O `Verifier` do FlatBuffers não foi rodado (não há `flatc` aqui); os payloads mínimos só cobrem o passo 4, não o 5.
+- **Sondagem do `min_reader`:** o gerador monta os payloads mínimos à mão e o verificador tem a sua própria leitura com limites. Os dois foram conferidos contra o runtime oficial do FlatBuffers para Python (25.12.19): ele lê os payloads mínimos com os mesmos valores, e a sondagem lê buffers feitos pelo `Builder` oficial. O `Verifier` do FlatBuffers não foi rodado (não há `flatc` aqui); os payloads mínimos só cobrem o passo 4, não o 5. **Teste de conformidade:** todo leitor do manifesto, inclusive o serviço em Go ([ADR-0010](../../docs/adr/0010-linguagem-dos-servicos-de-backend.md)), precisa reproduzir os casos de `payload_probe`.
 
 ## Definição do chunker usada nos vetores (§11.1, aprovada)
 ```

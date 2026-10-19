@@ -354,6 +354,9 @@ def build_envelope() -> dict[str, Any]:
 
     # Envelope de versão desconhecida, com assinatura válida: recusado por igualdade (§7.1 passo 1).
     future_envelope = signed(payload, version=1)
+    # Versão desconhecida E reservado != 0: a versão é conferida antes do resto (§7.1 passo 1b).
+    future_and_reserved = bytearray(future_envelope)
+    future_and_reserved[12] = 1
 
     return {
         "test_key_seed_hex": KEY_SEED.hex(),
@@ -395,6 +398,11 @@ def build_envelope() -> dict[str, Any]:
                 "expect": "unsupported",
                 "manifest_hex": future_envelope.hex(),
             },
+            {
+                "label": "format_version_unknown_and_reserved_nonzero",
+                "expect": "unsupported",
+                "manifest_hex": bytes(future_and_reserved).hex(),
+            },
         ],
         "payload_probe": build_payload_probe(signed),
     }
@@ -418,6 +426,11 @@ def build_payload_probe(signed: Any) -> dict[str, Any]:
          + b"\x00" * 4 + struct.pack("<i", 16 - 8), "ok", 0),
         ("wrong_file_identifier", minimal_flatbuffer(0, b"XXXX"), "invalid", None),
         ("root_offset_out_of_range", struct.pack("<I", 4096) + minimal_flatbuffer(0)[4:], "invalid", None),
+        # raiz dentro do cabeçalho (r < 8): proibido pela regra r >= 8
+        ("root_inside_header", struct.pack("<I", 4) + minimal_flatbuffer(0)[4:], "invalid", None),
+        # slot do id 4 aponta para o offset 2 da tabela, por cima do soffset: proibido por fo >= 4
+        ("field_overlaps_soffset", minimal_flatbuffer(0)[:8] + struct.pack("<HH5H", 14, 8, 0, 0, 0, 0, 2)
+         + minimal_flatbuffer(0)[22:], "invalid", None),
     ]
     return {
         "supported_payload_revision": 0,

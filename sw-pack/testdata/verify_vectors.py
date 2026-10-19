@@ -233,10 +233,10 @@ def read_envelope(blob: bytes, trusted: dict[bytes, bytes]) -> str:
     version, hash_alg, sig_alg, reserved, payload_len, key_id, reserved2 = struct.unpack(
         "<HBBIQ8sQ", blob[8:40]
     )
+    if version != 0:  # versão do envelope, por igualdade, antes do resto (§7.1 passo 1b)
+        return "unsupported"
     if (hash_alg, sig_alg, reserved, reserved2) != (1, 1, 0, 0):
         return "header"
-    if version != 0:  # versão do envelope: igualdade (§7.1 passo 1)
-        return "unsupported"
     if payload_len > 256 * 2**20 or len(blob) != 104 + payload_len:
         return "header"
     pub = trusted.get(key_id)
@@ -252,7 +252,7 @@ def probe_min_reader(p: bytes) -> int | None:
     if n < 8 or p[4:8] != b"SWM0":
         return None
     (root,) = struct.unpack_from("<I", p, 0)
-    if root % 4 or root + 4 > n:
+    if root < 8 or root % 4 or root + 4 > n:
         return None
     (soff,) = struct.unpack_from("<i", p, root)
     vt = root - soff
@@ -265,7 +265,7 @@ def probe_min_reader(p: bytes) -> int | None:
     field = struct.unpack_from("<H", p, vt + slot)[0] if slot + 2 <= vt_size else 0
     if field == 0:
         return 0
-    if field + 2 > tbl_size:
+    if field < 4 or field + 2 > tbl_size:
         return None
     return int(struct.unpack_from("<H", p, root + field)[0])
 
