@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 0 | 0 | 41 | 1 |
+| 0 | 0 | 0 | 0 | 40 | 2 |
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -36,7 +36,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-33](cartoes/F1-33.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Script de relatório da rodada (métricas por perfil) |
 | [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33, F1-43 | Rodadas semanais nos 3 perfis + comparação com o baseline |
 | [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
-| [F1-39](cartoes/F1-39.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Ampliar o lint do CI para as ferramentas do baseline e os vetores |
 | [F1-41](cartoes/F1-41.md) | R1 | Sonnet 5.5, esforço alto | não | sim | Alinhar a spec 03 (§7.1, §7.2, §8) ao ADR-0012: format_version só do envelope, min_reader no payload |
 | [F1-42](cartoes/F1-42.md) | R1 | Sonnet 5.5, esforço alto | não | sim | Alinhar o doc 04 ao ADR-0013: checksum XXH3 por bloco, não por peça, no índice |
 | [F1-43](cartoes/F1-43.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Definir no doc 08 a espera numa falta como no swarmstream.h |
@@ -57,3 +56,4 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 ## Feitas
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
+- [F1-39](cartoes/F1-39.md): Ampliar o lint do CI para as ferramentas do baseline e os vetores
