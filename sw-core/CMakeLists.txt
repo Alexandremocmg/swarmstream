@@ -51,6 +51,28 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     # Teste pendurado deve falhar, não travar o CI.
     set_tests_properties(sw-core-tests PROPERTIES TIMEOUT 120)
 
+    # SW_CHECK (tests/check.hpp) não pode sumir com NDEBUG. Estes testes provam isso em
+    # qualquer tipo de build (Debug e Release): se alguém trocar SW_CHECK por assert, o
+    # caso "effect" e as falhas esperadas deixam de falhar/aparecer no build Release.
+    add_executable(sw-core-check-selftest tests/check_selftest.cpp)
+    target_link_libraries(sw-core-check-selftest PRIVATE sw-core)
+    if(NOT MSVC)
+        target_link_libraries(sw-core-check-selftest PRIVATE pthread)
+    endif()
+    add_test(NAME check-selftest-ok COMMAND sw-core-check-selftest ok)
+    add_test(NAME check-selftest-evaluates-condition COMMAND sw-core-check-selftest effect)
+    # Falha esperada: o processo tem de terminar com erro...
+    add_test(NAME check-selftest-fails COMMAND sw-core-check-selftest fail)
+    add_test(NAME check-selftest-fails-in-thread COMMAND sw-core-check-selftest thread)
+    set_tests_properties(check-selftest-fails check-selftest-fails-in-thread PROPERTIES WILL_FAIL TRUE)
+    # ...e dizer arquivo, linha e condição (a regex vale no lugar do código de saída).
+    add_test(NAME check-selftest-message COMMAND sw-core-check-selftest fail)
+    set_tests_properties(check-selftest-message PROPERTIES
+        PASS_REGULAR_EXPRESSION "check_selftest\\.cpp:[0-9]+: falhou: 1 \\+ 1 == 3")
+    set_tests_properties(check-selftest-ok check-selftest-evaluates-condition
+        check-selftest-fails check-selftest-fails-in-thread check-selftest-message
+        PROPERTIES TIMEOUT 60)
+
     # Contrato swarmstream.h v0 (ADR-0014): layout (sizeof/offsetof) e stub.
     # Teste que quebra aqui = mudança de contrato, que exige ADR.
     add_executable(sw-core-api-v0-tests

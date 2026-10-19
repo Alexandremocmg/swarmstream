@@ -13,7 +13,8 @@ void run_content_source_tests();
 void run_cache_store_tests();
 void run_pipeline_integration_tests();
 
-// Em Debug, o `assert` do MSVC abre uma caixa de diálogo e espera alguém clicar:
+// Os testes verificam com SW_CHECK (check.hpp), que não some com NDEBUG. Ainda assim, no MSVC
+// em Debug, avisos do CRT/STL abrem uma caixa de diálogo e esperam alguém clicar:
 // no CI o teste ficaria pendurado em vez de falhar. Mandamos a mensagem para o
 // stderr e abortamos com código de erro.
 static void make_assert_fail_instead_of_hang()
