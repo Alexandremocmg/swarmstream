@@ -39,6 +39,39 @@ jobs:
         shell: bash
         run: ctest --test-dir build --build-config Debug --output-on-failure --timeout 120
 
+  # F1-46: build com NDEBUG. O `assert` some nesse build; os testes usam SW_CHECK (tests/check.hpp),
+  # então este job pega teste que só passaria "por não verificar nada".
+  release-tests:
+    name: release tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Release, vcpkg toolchain)
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            windows-*) VCPKG_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake' ;;
+            *)         VCPKG_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ;;
+          esac
+          cmake -S . -B build             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=ON             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_FILE"
+
+      - name: Confirma que Release define NDEBUG
+        shell: bash
+        run: grep -E 'CMAKE_CXX_FLAGS_RELEASE:STRING=.*NDEBUG' build/CMakeCache.txt
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        shell: bash
+        run: ctest --test-dir build --build-config Release --output-on-failure --timeout 120
+
   sanitizers:
     name: ASan+UBSan (ubuntu-latest)
     runs-on: ubuntu-latest
