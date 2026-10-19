@@ -26,6 +26,12 @@ jobs:
           python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-pack/testdata/gen_vectors.py sw-pack/testdata/verify_vectors.py sw-pack/testdata/verify_chunker_r1.py sw-pack/testdata/test_properties.py
       - name: Baseline check tests (F1-36)
         run: python -m unittest discover -s sw-godot/tools -p test_baseline.py -v
+      - name: Round report lint and tests (F1-33)
+        run: |
+          python -m black --config sw-netlab/pyproject.toml --check sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
+          python -m ruff check --config sw-netlab/pyproject.toml sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
+          python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
+          python -m unittest discover -s sw-godot/tools -p test_round_report.py -v
       - name: Install clang analysis tools
         run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy cmake g++
       - name: C++ format
