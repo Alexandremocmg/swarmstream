@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 0 | 0 | 0 | 37 | 4 |
+| 1 | 0 | 0 | 0 | 40 | 4 |
 
 ## EM_ANDAMENTO
 - [F1-33](cartoes/F1-33.md) (R3, sessão: Pleno): Script de relatório da rodada (métricas por perfil)
@@ -40,6 +40,9 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
 | [F1-43](cartoes/F1-43.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Definir no doc 08 a espera numa falta como no swarmstream.h |
 | [F1-44](cartoes/F1-44.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra |
+| [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
+| [F1-46](cartoes/F1-46.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-10 | Trocar assert por verificação que não some com NDEBUG nos testes do sw-core |
+| [F1-47](cartoes/F1-47.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-27, F1-20 | Validar a bancada com uma mudança conhecida (rede mais lenta tem de piorar a espera) |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
