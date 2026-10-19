@@ -32,6 +32,10 @@ jobs:
           python -m ruff check --config sw-netlab/pyproject.toml sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
           python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
           python -m unittest discover -s sw-godot/tools -p test_round_report.py -v
+      - name: Known-change comparison lint and tests (F1-47)
+        run: |
+          python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-godot/tools/compare_profiles.py sw-godot/tools/test_compare_profiles.py
+          python -m unittest discover -s sw-godot/tools -p test_compare_profiles.py -v
       - name: Install clang analysis tools
         run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy cmake g++
       - name: C++ format
