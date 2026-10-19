@@ -37,3 +37,8 @@ endif()
 # Submodules
 add_subdirectory(sw-core)
 add_subdirectory(sw-pack)
+
+# Parte da GDExtension do Godot que roda sem o Godot (F1-20)
+if(BUILD_TESTING)
+    add_subdirectory(sw-godot/extension/tests)
+endif()

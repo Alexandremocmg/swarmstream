@@ -2,3 +2,5 @@
 project/assets/regions/*/
 project/user://
 *.tmp
+project/.swarm_gate/
+project/addons/swarmstream/
