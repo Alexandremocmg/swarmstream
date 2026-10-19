@@ -69,9 +69,10 @@ def stream(label: str, n: int) -> bytes:
 
 def check(vectors: dict[str, object]) -> bool:
     chunker = vectors["chunker"]
-    assert isinstance(chunker, dict)
+    if not isinstance(chunker, dict):
+        raise TypeError("vectors-v0.json: 'chunker' must be an object")
     table = b"".join(struct.pack("<Q", g) for g in GEAR)
-    ok = hashlib.sha256(table).hexdigest() == chunker["gear_table_sha256"]
+    ok = bool(hashlib.sha256(table).hexdigest() == chunker["gear_table_sha256"])
     ok &= [f"{g:016x}" for g in GEAR[:4]] == chunker["gear_first4_hex"]
     print("gear:", "ok" if ok else "DIVERGE")
     for case in chunker["cases"]:
@@ -89,7 +90,7 @@ def check(vectors: dict[str, object]) -> bool:
         same = got == expected
         print(case["label"], "ok" if same else "DIVERGE")
         ok &= same
-    return ok
+    return bool(ok)
 
 
 def stats() -> None:
