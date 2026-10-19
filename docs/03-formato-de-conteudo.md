@@ -121,7 +121,7 @@ O manifesto é um arquivo `manifest.bin`: um **envelope fixo** seguido do **payl
 ```text
 offset  tam  campo
 0       8    magic            = "SWMANIF\0"  (53 57 4D 41 4E 49 46 00)
-8       2    format_version   = 0   (v0; 1 = primeira versão congelada)
+8       2    format_version   = 0   (versão do ENVELOPE, conferida por igualdade; ver abaixo)
 10      1    hash_alg         = 1   (SHA-256)
 11      1    sig_alg          = 1   (Ed25519)
 12      4    reserved         = 0   (leitor v0 DEVE recusar se ≠ 0)
@@ -135,11 +135,32 @@ MSG = "SWARMSTREAM-MANIFEST-V0\0" (24 bytes ASCII) ‖ envelope[0..40) ‖ paylo
 manifest_id = SHA-256( envelope inteiro [0..104) ‖ payload )     // identifica a versão; usado por serviços e no cache
 ```
 
-Ordem obrigatória no leitor:
-1. Conferir `magic`, `format_version`, `hash_alg`, `sig_alg`, reservados e `payload_len` (arquivo total = 104 + `payload_len`; `payload_len` ≤ 256 MiB).
-2. Localizar a chave pública pelo `key_id` na lista embutida; desconhecida ⇒ recusar.
-3. **Verificar a assinatura antes de parsear o payload.** Falha ⇒ recusar. Nada do payload é usado antes.
-4. Rodar o verificador do serializador (FlatBuffers `Verifier`) e as validações da [§8](#8-validações-do-leitor).
+**Versões, em dois níveis** ([ADR-0012](adr/0012-serializacao-do-manifesto.md), item 5):
+- `format_version` versiona **só o envelope** (a tabela acima, o `MSG` e o `manifest_id`). O leitor o confere por **igualdade**: v0 aceita só `0`. Ele só muda se o layout do envelope mudar, por ADR. Mudança no payload **não** mexe nele.
+- A compatibilidade do **payload** é dada pelo campo `min_reader` do payload (§7.2): a menor **revisão de payload** que um leitor precisa suportar para entender aquele conteúdo. Um leitor v0 suporta a revisão `0`.
+
+Ordem obrigatória no leitor (o código de erro entre parênteses é o de [`swarmstream.h`](../sw-core/include/swarmstream.h)):
+1. Conferir o cabeçalho **nesta ordem**: (a) `magic` (e tamanho mínimo de 104 bytes); errado ⇒ `SW_E_MANIFEST_INVALID`. (b) `format_version`; diferente de `0` ⇒ `SW_E_MANIFEST_UNSUPPORTED` (o envelope é de um formato que este leitor não conhece), **sem olhar o resto**, porque com versão desconhecida o layout dos campos seguintes nem é confiável. (c) `hash_alg`, `sig_alg`, reservados e `payload_len` (arquivo total = 104 + `payload_len`; `payload_len` ≤ 256 MiB); qualquer falha ⇒ `SW_E_MANIFEST_INVALID`.
+   - Este `UNSUPPORTED` vem **antes** da assinatura, então **não é autenticado**: qualquer um pode forjá-lo trocando dois bytes. O efeito é só uma mensagem "atualize o cliente" num arquivo que seria recusado de qualquer forma; o cliente não deve tomar nenhuma ação automática (como baixar uma atualização) só por causa dele. O `UNSUPPORTED` do passo 4, ao contrário, é autenticado.
+2. Localizar a chave pública pelo `key_id` na lista embutida; desconhecida ⇒ recusar (`SW_E_SIGNATURE_INVALID`).
+3. **Verificar a assinatura antes de ler o payload.** Falha ⇒ recusar (`SW_E_SIGNATURE_INVALID`). Nada do payload é usado antes.
+4. **Sondar o payload**, sem o verificador completo: conferir o `file_identifier` (`"SWM0"`) e ler só o campo `min_reader` da tabela raiz, conferindo cada limite (algoritmo abaixo). Identificador errado ou limite violado ⇒ recusar (`SW_E_MANIFEST_INVALID`). `min_reader` maior que a revisão de payload suportada ⇒ recusar (`SW_E_MANIFEST_UNSUPPORTED`, "atualize o cliente").
+5. Rodar o verificador do serializador (FlatBuffers `Verifier`) e as validações da [§8](#8-validações-do-leitor) (`SW_E_MANIFEST_INVALID`; anti-rollback ⇒ `SW_E_MANIFEST_ROLLBACK`).
+
+O passo 4 vem **antes** do verificador de propósito: um payload de revisão nova pode ter mudado de forma incompatível (por exemplo, um `struct` alterado), e o verificador com o esquema antigo o recusaria como inválido. Sondar antes dá o erro certo (`UNSUPPORTED`, não `INVALID`). A sondagem só confia em bytes já autenticados pela assinatura, mas confere cada limite mesmo assim, porque a chave da publisher pode ter sido usada por um build com defeito.
+
+Sondagem do `min_reader` (todos os inteiros little-endian; `P` = payload, `n = len(P)`):
+```text
+n ≥ 8 e P[4..8) == "SWM0"                          senão INVALID
+r = u32(P, 0);   r ≥ 8, r % 4 == 0 e r + 4 ≤ n     senão INVALID   // tabela raiz, depois do uoffset e do identificador
+v = r − i32(P, r);  v ≥ 0, v % 2 == 0, v + 4 ≤ n   senão INVALID   // vtable
+vs = u16(P, v); ts = u16(P, v+2)
+vs ≥ 4, vs % 2 == 0, v + vs ≤ n, ts ≥ 4, r + ts ≤ n  senão INVALID
+slot = 4 + 2·4                                      // min_reader é o campo de id 4
+fo = (slot + 2 ≤ vs) ? u16(P, v + slot) : 0
+min_reader = (fo == 0) ? 0 : (fo ≥ 4 e fo + 2 ≤ ts ? u16(P, r + fo) : INVALID)   // fo ≥ 4: o campo não sobrepõe o soffset
+```
+Os dois limites `r ≥ 8` e `fo ≥ 4` importam no caminho `UNSUPPORTED`: nele o `Verifier` não roda depois, e sem eles bytes assinados malformados poderiam dar um "atualize o cliente" falso. Todo leitor do manifesto (o `sw-core` e o serviço de manifestos em Go, [ADR-0010](adr/0010-linguagem-dos-servicos-de-backend.md)) usa os casos `payload_probe` de [`sw-pack/testdata`](../sw-pack/testdata/README.md) como teste de conformidade desta sondagem.
 
 ### 7.2 Payload (schema FlatBuffers v0)
 
@@ -203,7 +224,7 @@ table ManifestPayload {
   build_id:    string;         // ex.: "1.3.0+4521"; texto livre para humanos
   build_seq:   uint64;         // inteiro estritamente crescente por game_id (anti-rollback)
   created_at:  int64;          // segundos Unix UTC
-  min_reader:  uint16;         // menor format_version que sabe ler (v0: 0)
+  min_reader:  uint16;         // menor revisão de payload que o leitor precisa suportar (v0: 0). Campo de id 4, uint16: id e tipo FIXOS PARA SEMPRE (sondagem do §7.1, passo 4)
   chunker:     Chunker;
   blocks:      Blocks;
   pieces:      Pieces;
@@ -218,7 +239,10 @@ root_type ManifestPayload;
 file_identifier "SWM0";
 ```
 
-Campos novos DEVEM entrar só no fim das tabelas (regra de evolução do FlatBuffers); remover ou reordenar campo exige `format_version` novo.
+Evolução do payload (o envelope e o `format_version` não mudam por causa dela):
+- Campo novo **no fim** de uma tabela: compatível; **não** muda `min_reader`. Leitores antigos ignoram o campo.
+- Mudança de `struct`, de tipo, remoção ou reordenação de campo: incompatível; o escritor **sobe** `min_reader` para a nova revisão, e a mudança exige ADR. Leitores antigos recusam no passo 4 com `SW_E_MANIFEST_UNSUPPORTED`, em vez de lerem errado.
+- Ficam fixos para sempre, porque a sondagem depende deles: `root_type ManifestPayload`, `file_identifier "SWM0"` e o campo `min_reader` (id 4, `uint16`).
 
 ### 7.3 Orçamento de tamanho (meta: < 50 MB para 150 GB de jogo)
 
@@ -231,11 +255,11 @@ Por bloco: hash 32 + raw 4 + packed 4 + codec 1 + ref de arquivo 4 = **45 B**; m
 | 150 GB | 192 KiB | ~0,8 M | ~36 MB |
 | 150 GB | 256 KiB | ~0,6 M | ~27 MB |
 
-A meta de 50 MB **não** é cumprida em 150 GB com o bloco médio de 128 KiB. Medir no mapa da F0-09 e, se confirmado, usar uma destas saídas na F1 (decidir por ADR): (a) média de 192 KiB para grupos de assets grandes; (b) cortar `block_hash` para 16 bytes no manifesto (colisão em 2^64, aceitável porque a assinatura já impede adulteração e a integridade de transporte vem da Merkle da peça); (c) dividir o manifesto em raiz + tabela de blocos por grupo, carregada sob demanda. O formato acima **não impede** (c): é só mover `Blocks` para segmentos por grupo em `format_version` 1.
+A meta de 50 MB **não** é cumprida em 150 GB com o bloco médio de 128 KiB. Medir no mapa da F0-09 e, se confirmado, usar uma destas saídas na F1 (decidir por ADR): (a) média de 192 KiB para grupos de assets grandes; (b) cortar `block_hash` para 16 bytes no manifesto (colisão em 2^64, aceitável porque a assinatura já impede adulteração e a integridade de transporte vem da Merkle da peça); (c) dividir o manifesto em raiz + tabela de blocos por grupo, carregada sob demanda. O formato acima **não impede** (c): é só mover `Blocks` para segmentos por grupo num payload de revisão 1 (`min_reader = 1`); o envelope não muda.
 
 ## 8. Validações do leitor
 
-Após assinatura e verificador do serializador, o `sw-core` DEVE recusar o manifesto se qualquer item falhar (nada é "corrigido" silenciosamente):
+Estas validações são o passo 5 do [§7.1](#71-envelope-cabeçalho-fixo--payload): rodam depois da assinatura, da sondagem do `min_reader` (passo 4; `SW_E_MANIFEST_UNSUPPORTED` se for maior que a revisão suportada) e do verificador do serializador. O `sw-core` DEVE recusar o manifesto se qualquer item falhar (nada é "corrigido" silenciosamente); o erro é `SW_E_MANIFEST_INVALID`, exceto o item 10 (`SW_E_MANIFEST_ROLLBACK`):
 
 1. `groups[0].name == "core"`; nomes de grupo únicos e válidos; `group` de arquivo e peça `< len(groups)`.
 2. Vetores de cada tabela colunar têm o mesmo comprimento.
@@ -247,7 +271,8 @@ Após assinatura e verificador do serializador, o `sw-core` DEVE recusar o manif
 8. Fechamento de dependências: o grupo de cada bloco referenciado por um arquivo é `core` ou o grupo do arquivo. Arquivo `CORE` só referencia blocos do grupo 0.
 9. Limites de sanidade (anti-DoS): ≤ 16 M blocos, ≤ 4 M arquivos, ≤ 4096 grupos, strings ≤ 1024 bytes.
 10. Anti-rollback: `build_seq` ≥ o `build_seq` do manifesto instalado para o mesmo `game_id` (o launcher pode permitir downgrade explícito do usuário; o `sw-core` não decide isso).
-11. `min_reader ≤ versão suportada`; senão, recusar com erro explícito "atualize o launcher".
+
+O `min_reader` não é mais um item desta lista: ele é conferido no passo 4 do §7.1, antes do verificador, porque depois dele já seria tarde para dar o erro certo.
 
 ## 9. Sigilo (reservado, fora do v0)
 
