@@ -113,7 +113,7 @@ def lz4_block_decode(src: bytes, cap: int) -> bytes:
     return bytes(out)
 
 
-# ------------------------------------------------------------------ Zstd frame header (RFC 8878 §3.1.1)
+# ------------------------------------------------------------------ Zstd frame header (RFC 8878)
 
 
 def zstd_header(frame: bytes) -> dict[str, int | None]:
@@ -139,7 +139,7 @@ def zstd_decompress(frame: bytes) -> bytes:
     try:
         from compression import zstd
 
-        return zstd.decompress(frame)
+        return bytes(zstd.decompress(frame))
     except ImportError:
         pass
     try:
@@ -149,7 +149,7 @@ def zstd_decompress(frame: bytes) -> bytes:
             "no Zstd decoder: use Python 3.14+, or `pip install zstandard`, "
             "or pass --skip-zstd (then Zstd is NOT fully verified)"
         ) from None
-    return zstandard.ZstdDecompressor().decompress(frame)
+    return bytes(zstandard.ZstdDecompressor().decompress(frame))
 
 
 # ------------------------------------------------------------------ OpenSSL Ed25519
@@ -223,7 +223,7 @@ def openssl_verify(pub: bytes, msg: bytes, sig: bytes) -> bool:
         return r.returncode == 0
 
 
-# ------------------------------------------------------------------ manifest reader (spec §7.1 order)
+# ------------------------------------------------------------------ manifest reader (spec 7.1)
 
 
 def read_envelope(blob: bytes, trusted: dict[bytes, bytes]) -> str:
