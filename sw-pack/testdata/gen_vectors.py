@@ -19,13 +19,13 @@ try:  # Python 3.14+
     from compression import zstd as _zstd
 
     def zstd_compress(data: bytes) -> bytes:
-        return _zstd.compress(data, level=3)
+        return bytes(_zstd.compress(data, level=3))
 
 except ImportError:  # pragma: no cover - fallback for older interpreters
     import zstandard
 
     def zstd_compress(data: bytes) -> bytes:
-        return zstandard.ZstdCompressor(level=3, write_content_size=True).compress(data)
+        return bytes(zstandard.ZstdCompressor(level=3, write_content_size=True).compress(data))
 
 
 OUT = Path(__file__).with_name("vectors-v0.json")
@@ -121,7 +121,10 @@ def ed25519_sign(seed: bytes, msg: bytes) -> bytes:
 
 
 def lz4_block_compress(src: bytes) -> bytes:
-    """Valid LZ4 *block* encoding. Not optimal; conformance is 'decodes to src', not byte equality."""
+    """Valid LZ4 *block* encoding.
+
+    Not optimal; conformance is 'decodes to src', not byte equality.
+    """
     n = len(src)
     out = bytearray()
     table: dict[bytes, int] = {}
@@ -166,7 +169,7 @@ def lz4_block_compress(src: bytes) -> bytes:
     return bytes(out)
 
 
-# ---------------------------------------------------------------- FastCDC chunker (spec 03 §11.1 + definition below)
+# ---------------------------------------------------------------- FastCDC chunker (spec 03 §11.1)
 
 
 def gear_table() -> list[int]:
@@ -178,8 +181,11 @@ def gear_table() -> list[int]:
 
 def _masks(avg: int) -> tuple[int, int]:
     bits = avg.bit_length() - 1
-    hi = lambda b: ((1 << b) - 1) << (64 - b)  # noqa: E731 - tiny local helper
-    return hi(bits + 2), hi(bits - 2)  # mask_s (stricter), mask_l (looser)
+
+    def high_bits(count: int) -> int:
+        return ((1 << count) - 1) << (64 - count)
+
+    return high_bits(bits + 2), high_bits(bits - 2)  # mask_s (stricter), mask_l (looser)
 
 
 def chunk_lengths(data: bytes, mn: int, avg: int, mx: int) -> list[int]:
@@ -328,9 +334,9 @@ def build_envelope() -> dict[str, Any]:
         )
 
     head = envelope_head(len(payload))
-    assert len(head) == 40
+    if len(head) != 40:
+        raise RuntimeError("envelope head must be 40 bytes")
     msg = b"SWARMSTREAM-MANIFEST-V0\x00" + head + payload
-    assert len(b"SWARMSTREAM-MANIFEST-V0\x00") == 24
     sig = ed25519_sign(KEY_SEED, msg)
     manifest = head + sig + payload
     manifest_id = sha256(manifest[:104] + payload)
@@ -362,7 +368,9 @@ def build_envelope() -> dict[str, Any]:
         "test_key_seed_hex": KEY_SEED.hex(),
         "test_public_key_hex": pub.hex(),
         "key_id_hex": key_id.hex(),
-        "payload_note": "synthetic opaque payload; a real FlatBuffers payload needs flatc / sw-pack (pending)",
+        "payload_note": (
+            "synthetic opaque payload; a real FlatBuffers payload needs flatc / sw-pack (pending)"
+        ),
         "payload_hex": payload.hex(),
         "envelope_head_hex": head.hex(),
         "msg_hex": msg.hex(),
@@ -451,10 +459,12 @@ def build_payload_probe(signed: Any) -> dict[str, Any]:
 def main() -> None:
     # self-check: RFC 8032 section 7.1, TEST 1 (empty message)
     seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
-    assert ed25519_sign(seed, b"").hex() == (
+    rfc8032_test1 = (
         "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
         "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
-    ), "Ed25519 self-check failed"
+    )
+    if ed25519_sign(seed, b"").hex() != rfc8032_test1:
+        raise RuntimeError("Ed25519 self-check failed")
     doc = {
         "version": 0,
         "spec": "docs/03-formato-de-conteudo.md",

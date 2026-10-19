@@ -50,7 +50,7 @@ class ChunkerProperties(unittest.TestCase):
         self.assertEqual(gen.chunk_lengths(data, *SMALL), gen.chunk_lengths(data, *SMALL))
 
     def test_one_byte_insertion_changes_few_chunks(self) -> None:
-        """F1-01 acceptance in miniature: one inserted byte alters at most 3 chunks (1 MiB, spec params)."""
+        """F1-01 in miniature: one inserted byte alters at most 3 chunks (1 MiB, spec params)."""
         worst = 0
         for seed in range(8):
             rng = random.Random(seed)

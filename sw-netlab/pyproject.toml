@@ -12,8 +12,25 @@ select = ["E", "F", "I", "B", "UP", "ANN", "S", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # benchmark.py constructs URLs from the ephemeral localhost server created in that process.
 "benchmark.py" = ["S310"]
+# baseline.py runs the Godot binary the developer passes on the command line and fixed
+# `powershell` to read the boot time; both use argument lists (no shell) and no network data.
+"baseline.py" = ["S603", "S607"]
+# test_baseline.py re-runs baseline.py with sys.executable and temporary files it just wrote.
+"test_baseline.py" = ["S603"]
+# verify_vectors.py calls the `openssl` CLI by name with argument lists on test-key material only.
+"verify_vectors.py" = ["S603", "S607"]
+# Property tests and the R1 check use seeded random.Random on purpose (reproducible inputs);
+# nothing here is cryptographic, so S311 does not apply.
+"test_properties.py" = ["S311"]
+"verify_chunker_r1.py" = ["S311"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 files = ["server.py", "benchmark.py"]
+
+# `compression.zstd` exists only on Python 3.14+ and `zstandard` is optional; both imports are
+# guarded by try/except in sw-pack/testdata, so mypy (3.11) must not treat them as missing.
+[[tool.mypy.overrides]]
+module = ["compression", "compression.*", "zstandard"]
+ignore_missing_imports = true
