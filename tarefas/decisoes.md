@@ -32,3 +32,6 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | Decidir quando o repositório deixa de ser privado (recomendado: depois do Portão 1 e de consulta jurídica rápida) | 2026-10-17 |
 | Plano de preços do backend hospedado (depois do Portão 2) | 2026-10-17 |
 | Mover o Godot 4.7.2 para uma pasta fixa (hoje está em uma pasta temporária do Windows) | 2026-10-18 |
+| Destino da alteração solta em `docs/medicoes/guia-1h.md` na pasta compartilhada: um pré-teste do guia feito por um agente Hermes em contêiner Docker (Ubuntu 22.04). Não é da sessão Pleno; autor não identificado pela gestão. A própria nota diz que **não vale** como resultado do critério. Sugestão: revisar e, se útil, entrar por PR; senão descartar | 2026-10-18 |
+| Dizer se a sessão "Hermez Agent utilização" faz parte do projeto (hoje só Arquiteto, Sênior e Pleno recebem avisos da gestão) | 2026-10-18 |
+| Incluir os cartões F1-37 a F1-40 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |

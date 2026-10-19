@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 0 | 0 | 33 | 1 |
+| 0 | 0 | 0 | 0 | 37 | 1 |
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -35,6 +35,8 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-32](cartoes/F1-32.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Teste de disco cheio e de erro de escrita |
 | [F1-33](cartoes/F1-33.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Script de relatório da rodada (métricas por perfil) |
 | [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33 | Rodadas semanais nos 3 perfis + comparação com o baseline |
+| [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
+| [F1-39](cartoes/F1-39.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Ampliar o lint do CI para as ferramentas do baseline e os vetores |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -46,6 +48,8 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-25](cartoes/F1-25.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Gravação de traces de leitura (posição, tempo, peça) |
 | [F1-26](cartoes/F1-26.md) | R1 | Opus 5.5, esforço alto | não | espera F1-25 | Índice espacial dos traces e `sw_hint_position` |
 | [F1-35](cartoes/F1-35.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-33 | Experimento: blocos de 64, 128 e 256 KB |
+| [F1-38](cartoes/F1-38.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-03 | Segunda implementação independente de Zstd nos vetores |
+| [F1-40](cartoes/F1-40.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Carga fria de verdade, depois de reiniciar o Windows |
 
 ## Feitas
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
