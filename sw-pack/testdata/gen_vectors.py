@@ -316,10 +316,10 @@ def build_envelope() -> dict[str, Any]:
     key_id = sha256(pub)[:8]
     payload = b"SWM0-synthetic-payload-v0:" + stream("envelope/payload", 70)
 
-    def envelope_head(payload_len: int, key: bytes = key_id) -> bytes:
+    def envelope_head(payload_len: int, key: bytes = key_id, version: int = 0) -> bytes:
         return (
             b"SWMANIF\x00"
-            + struct.pack("<H", 0)  # format_version
+            + struct.pack("<H", version)  # format_version (versão do envelope)
             + bytes([1, 1])  # hash_alg SHA-256, sig_alg Ed25519
             + struct.pack("<I", 0)  # reserved
             + struct.pack("<Q", payload_len)
@@ -347,6 +347,13 @@ def build_envelope() -> dict[str, Any]:
     truncated = manifest[:-1]
     unknown_key = bytearray(manifest)
     unknown_key[24] ^= 0xFF
+
+    def signed(body: bytes, version: int = 0) -> bytes:
+        h = envelope_head(len(body), version=version)
+        return h + ed25519_sign(KEY_SEED, b"SWARMSTREAM-MANIFEST-V0\x00" + h + body) + body
+
+    # Envelope de versão desconhecida, com assinatura válida: recusado por igualdade (§7.1 passo 1).
+    future_envelope = signed(payload, version=1)
 
     return {
         "test_key_seed_hex": KEY_SEED.hex(),
@@ -383,6 +390,47 @@ def build_envelope() -> dict[str, Any]:
             },
             {"label": "truncated_by_one_byte", "expect": "header", "manifest_hex": truncated.hex()},
             {"label": "unknown_key_id", "expect": "key", "manifest_hex": bytes(unknown_key).hex()},
+            {
+                "label": "format_version_unknown",
+                "expect": "unsupported",
+                "manifest_hex": future_envelope.hex(),
+            },
+        ],
+        "payload_probe": build_payload_probe(signed),
+    }
+
+
+def minimal_flatbuffer(min_reader: int, ident: bytes = b"SWM0") -> bytes:
+    """ManifestPayload só com min_reader (id 4): o mínimo para a sondagem do §7.1, passo 4."""
+    vtable = struct.pack("<HH5H", 14, 8, 0, 0, 0, 0, 4)  # 4 + 2*5 bytes; tabela de 8 bytes
+    table_at = 8 + len(vtable) + 2  # 24: alinhado a 4
+    table = struct.pack("<iHH", table_at - 8, min_reader, 0)  # soffset até a vtable; campo; padding
+    return struct.pack("<I", table_at) + ident + vtable + b"\x00\x00" + table
+
+
+def build_payload_probe(signed: Any) -> dict[str, Any]:
+    """Manifestos assinados com payload FlatBuffers mínimo, para a sondagem do min_reader."""
+    cases = [
+        ("min_reader_0", minimal_flatbuffer(0), "ok", 0),
+        ("min_reader_1", minimal_flatbuffer(1), "unsupported", 1),
+        # tabela raiz sem nenhum campo (vtable de 4 bytes): min_reader assume o padrão 0
+        ("min_reader_absent", struct.pack("<I", 16) + b"SWM0" + struct.pack("<HH", 4, 4)
+         + b"\x00" * 4 + struct.pack("<i", 16 - 8), "ok", 0),
+        ("wrong_file_identifier", minimal_flatbuffer(0, b"XXXX"), "invalid", None),
+        ("root_offset_out_of_range", struct.pack("<I", 4096) + minimal_flatbuffer(0)[4:], "invalid", None),
+    ]
+    return {
+        "supported_payload_revision": 0,
+        "note": "payload FlatBuffers mínimo (só min_reader, id 4); exercita só o passo 4 do §7.1",
+        "cases": [
+            {
+                "label": label,
+                "payload_hex": body.hex(),
+                "manifest_hex": signed(body).hex(),
+                "expect": expect,
+                "min_reader": value,
+            }
+            for label, body, expect, value in cases
         ],
     }
 

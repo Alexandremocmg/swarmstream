@@ -227,14 +227,16 @@ def openssl_verify(pub: bytes, msg: bytes, sig: bytes) -> bool:
 
 
 def read_envelope(blob: bytes, trusted: dict[bytes, bytes]) -> str:
-    """Return 'ok' or the class of the first failed step: header | key | signature."""
+    """Return 'ok' or the class of the first failed step: header | unsupported | key | signature."""
     if len(blob) < 104 or blob[:8] != b"SWMANIF\x00":
         return "header"
     version, hash_alg, sig_alg, reserved, payload_len, key_id, reserved2 = struct.unpack(
         "<HBBIQ8sQ", blob[8:40]
     )
-    if (version, hash_alg, sig_alg, reserved, reserved2) != (0, 1, 1, 0, 0):
+    if (hash_alg, sig_alg, reserved, reserved2) != (1, 1, 0, 0):
         return "header"
+    if version != 0:  # versão do envelope: igualdade (§7.1 passo 1)
+        return "unsupported"
     if payload_len > 256 * 2**20 or len(blob) != 104 + payload_len:
         return "header"
     pub = trusted.get(key_id)
@@ -242,6 +244,41 @@ def read_envelope(blob: bytes, trusted: dict[bytes, bytes]) -> str:
         return "key"
     msg = b"SWARMSTREAM-MANIFEST-V0\x00" + blob[:40] + blob[104:]
     return "ok" if openssl_verify(pub, msg, blob[40:104]) else "signature"
+
+
+def probe_min_reader(p: bytes) -> int | None:
+    """§7.1 passo 4: lê só o min_reader (id 4) com limites conferidos; None = inválido."""
+    n = len(p)
+    if n < 8 or p[4:8] != b"SWM0":
+        return None
+    (root,) = struct.unpack_from("<I", p, 0)
+    if root % 4 or root + 4 > n:
+        return None
+    (soff,) = struct.unpack_from("<i", p, root)
+    vt = root - soff
+    if vt < 0 or vt % 2 or vt + 4 > n:
+        return None
+    vt_size, tbl_size = struct.unpack_from("<HH", p, vt)
+    if vt_size < 4 or vt_size % 2 or vt + vt_size > n or tbl_size < 4 or root + tbl_size > n:
+        return None
+    slot = 4 + 2 * 4
+    field = struct.unpack_from("<H", p, vt + slot)[0] if slot + 2 <= vt_size else 0
+    if field == 0:
+        return 0
+    if field + 2 > tbl_size:
+        return None
+    return int(struct.unpack_from("<H", p, root + field)[0])
+
+
+def read_manifest_head(blob: bytes, trusted: dict[bytes, bytes], supported: int) -> str:
+    """§7.1 passos 1 a 4: 'ok' | header | unsupported | key | signature | invalid."""
+    step = read_envelope(blob, trusted)
+    if step != "ok":
+        return step
+    value = probe_min_reader(blob[104:])
+    if value is None:
+        return "invalid"
+    return "unsupported" if value > supported else "ok"
 
 
 # ------------------------------------------------------------------ checks
@@ -349,6 +386,18 @@ def verify_envelope(doc: dict[str, Any], rep: Report) -> None:
         got = read_envelope(bytes.fromhex(case["manifest_hex"]), trusted)
         rep.check(
             got == case["expect"], f"reject/{case['label']}: expected {case['expect']}, got {got}"
+        )
+    probe = doc["payload_probe"]
+    for case in probe["cases"]:
+        blob = bytes.fromhex(case["manifest_hex"])
+        rep.check(blob[104:].hex() == case["payload_hex"], f"probe/{case['label']}: payload bytes")
+        rep.check(
+            probe_min_reader(bytes.fromhex(case["payload_hex"])) == case["min_reader"],
+            f"probe/{case['label']}: min_reader",
+        )
+        got = read_manifest_head(blob, trusted, probe["supported_payload_revision"])
+        rep.check(
+            got == case["expect"], f"probe/{case['label']}: expected {case['expect']}, got {got}"
         )
 
 
