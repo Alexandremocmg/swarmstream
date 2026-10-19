@@ -43,7 +43,15 @@ Definição igual à do [`swarmstream.h`](../sw-core/include/swarmstream.h) (com
 
 **Janela da medição.** A janela é a **rota do robô com `SW_GAME_STATE_PLAYING`**: do início ao fim da rota, depois da carga inicial (o critério do Portão 1 é "jogando", [16](16-briefing-fase-1a.md)). A carga inicial é reportada à parte e **não entra** na taxa de falta nem no p99. Taxa de falta e p99 são calculados **por rodada**; o relatório traz também o valor das rodadas juntas.
 
-> **Pendente do dono do produto:** no Portão 1, passam só se **todas** as rodadas cumprirem o critério, ou vale o valor das rodadas juntas? Isso toca o critério fixado no doc 16 e **não está decidido aqui**. Até a decisão, o relatório mostra os dois e só dá `passou` quando os dois critérios concordam.
+**Regra do Portão 1** (decidida pelo dono do produto em 2026-10-19; critério em [16](16-briefing-fase-1a.md#critério-do-portão-1-definido-agora-para-ninguém-ajustar-depois)), no perfil `cabo_50`:
+- **Taxa de falta: < 1% em cada rodada.** Uma rodada acima do limite reprova, mesmo que a média das rodadas fique abaixo.
+- **Zero faltas em lógica e colisão.** Medido como zero faltas em arquivos do grupo `core`, onde por regra ficam lógica e colisão ([06](06-integracao-engine-sdk.md)). Como contar exatamente (por exemplo, pela flag do arquivo `core`) é parte do F1-48.
+- **Espera p99 < 300 ms sobre os eventos individuais reunidos** de pelo menos **3 rodadas completas e comparáveis**: junta-se a espera de cada falta concluída de todas as rodadas e calcula-se um p99 só. **Não se usa a média dos p99 das rodadas.**
+- **Ausência de faltas não é p99 = 0.** Com zero faltas, o p99 da rodada é `n/d`. Se o total reunido não atingir o mínimo de amostras, o p99 agregado é `incompleto`, nunca `passou`.
+- **Método do percentil e mínimo de amostras:** hoje o relatório usa o posto mais próximo (abaixo). A confirmação do método, o número mínimo de faltas reunidas e o que torna rodadas comparáveis são a proposta técnica do R1 no cartão **F1-48**, que precisa estar aceita **antes das medições finais**.
+- **Registro obrigatório:** por rodada, o número de leituras, de faltas e o p99; e o resultado agregado com o número de amostras.
+- Stutter e carga seguem os limites já aprovados ([baseline.md](medicoes/baseline.md)).
+- **Métricas automáticas não aprovam sozinhas o Portão 1:** a avaliação visual registrada de pop-in continua obrigatória.
 
 **Taxa de falta (uma fonte só, com conferência)**
 - Taxa = `Δread_misses / Δreads`, entre dois `sw_get_stats` (um no início e outro no fim da janela), porque os contadores de `sw_stats` são acumulados desde o `sw_init`.
