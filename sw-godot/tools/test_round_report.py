@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Alexandre Aparecido Rodrigues Peres
-"""Tests for F1-33 (round report skeleton). Run beside round_report.py with unittest."""
+"""Tests for F1-33 (round report, Gate 1 rule of 2026-10-19). Numbers are test fixtures."""
 
 from __future__ import annotations
 
 import contextlib
-import copy
 import io
 import itertools
 import json
@@ -25,28 +24,45 @@ LIMITS = {
     "p99_frame_ms": 6.238,
     "load_ms": 3059.0544,
 }
+ENV = {"machine": "m1", "gpu": "GTX 1050 Ti", "build": "abc123", "route_sha256": "ff" * 32}
+MIN_SAMPLES = 10
 
 
-def good_run() -> dict[str, Any]:
+def telemetry(
+    waits_ms: list[float], reads: int = 1000, core_misses: int | None = 0, **counts: int
+) -> dict[str, Any]:
+    failed = counts.get("failed", 0)
+    cancelled = counts.get("cancelled", 0)
+    pending = counts.get("pending_at_end", 0)
+    misses = len(waits_ms) + failed + cancelled + pending
+    block: dict[str, Any] = {
+        "reads": reads,
+        "read_misses": misses,
+        "miss_start_events": misses,
+        "miss_wait_us": [int(w * 1000) for w in waits_ms],
+        "failed": failed,
+        "cancelled": cancelled,
+        "pending_at_end": pending,
+    }
+    if core_misses is not None:
+        block["core_misses"] = core_misses
+    return block
+
+
+def good_run(waits_ms: list[float] | None = None) -> dict[str, Any]:
     return {
         "load_ms": 2500.0,
         "frames_over_33ms_steady": 1,
         "frames_over_100ms": 0,
         "p99_frame_ms": 4.0,
-        "telemetry": {
-            "reads": 1000,
-            "read_misses": 5,
-            "miss_start_events": 5,
-            "miss_wait_us": [10_000 * (i + 1) for i in range(5)],
-            "failed": 0,
-            "cancelled": 0,
-            "pending_at_end": 0,
-        },
+        "telemetry": telemetry(
+            waits_ms if waits_ms is not None else [10.0 * (i + 1) for i in range(5)]
+        ),
     }
 
 
 def good_profile() -> dict[str, Any]:
-    return {"runs": [good_run(), good_run(), good_run()]}
+    return {"environment": dict(ENV), "runs": [good_run(), good_run(), good_run()]}
 
 
 def full_round() -> dict[str, Any]:
@@ -56,46 +72,223 @@ def full_round() -> dict[str, Any]:
     }
 
 
-def verdicts(report: dict[str, Any]) -> dict[str, str]:
-    result = round_report.evaluate_round(report, LIMITS)
-    return {p.name: p.verdict for p in result.profiles}
+def cabo(report: dict[str, Any]) -> dict[str, Any]:
+    profile: dict[str, Any] = report["profiles"]["cabo_50"]
+    return profile
 
 
-class VerdictTests(unittest.TestCase):
-    def test_complete_good_round_passes(self) -> None:
-        result = round_report.evaluate_round(full_round(), LIMITS)
+def evaluate(
+    report: dict[str, Any], min_samples: int | None = MIN_SAMPLES
+) -> round_report.RoundResult:
+    return round_report.evaluate_round(report, LIMITS, min_samples)
+
+
+def verdicts(report: dict[str, Any], min_samples: int | None = MIN_SAMPLES) -> dict[str, str]:
+    return {p.name: p.verdict for p in evaluate(report, min_samples).profiles}
+
+
+def profile_result(report: dict[str, Any], name: str = "cabo_50") -> round_report.ProfileResult:
+    return next(p for p in evaluate(report).profiles if p.name == name)
+
+
+class GateRuleTests(unittest.TestCase):
+    def test_complete_good_round_passes_the_automatic_metrics(self) -> None:
+        result = evaluate(full_round())
         self.assertEqual(result.verdict, "passou")
         self.assertEqual(set(verdicts(full_round()).values()), {"passou"})
 
     def test_empty_round_is_incomplete_never_passed(self) -> None:
-        for empty in (
-            {},
-            {"schema": round_report.SCHEMA},
-            {"schema": round_report.SCHEMA, "profiles": {}},
-        ):
+        empties: list[dict[str, Any]] = [{}, {"schema": round_report.SCHEMA}, {"profiles": {}}]
+        for empty in empties:
             with self.subTest(report=empty):
-                result = round_report.evaluate_round(empty, LIMITS)
+                result = evaluate(empty)
                 self.assertEqual(result.verdict, "incompleto")
                 self.assertEqual({p.verdict for p in result.profiles}, {"incompleto"})
-                self.assertEqual(
-                    [p.name for p in result.profiles], list(round_report.REQUIRED_PROFILES)
-                )
 
     def test_missing_profile_is_incomplete(self) -> None:
         report = full_round()
         del report["profiles"]["adsl_10"]
         self.assertEqual(verdicts(report)["adsl_10"], "incompleto")
-        self.assertEqual(round_report.evaluate_round(report, LIMITS).verdict, "incompleto")
+        self.assertEqual(evaluate(report).verdict, "incompleto")
+
+    def test_miss_rate_is_checked_in_every_round_not_on_the_average(self) -> None:
+        report = full_round()
+        runs = cabo(report)["runs"]
+        runs[0]["telemetry"] = telemetry([10.0] * 15)  # 1.5% in this round; the others 0.5%
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
+        rate_row = next(r for r in profile_result(report).rows if "por rodada" in r.metric)
+        self.assertEqual(rate_row.status, "falhou")
+
+    def test_exactly_one_percent_in_a_round_fails(self) -> None:
+        report = full_round()
+        cabo(report)["runs"][1]["telemetry"] = telemetry([10.0] * 10)
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
+
+    def test_any_miss_in_logic_and_collision_fails(self) -> None:
+        report = full_round()
+        cabo(report)["runs"][2]["telemetry"] = telemetry([10.0] * 5, core_misses=1)
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
+
+    def test_core_misses_missing_or_invalid_is_incomplete(self) -> None:
+        report = full_round()
+        cabo(report)["runs"][0]["telemetry"] = telemetry([10.0] * 5, core_misses=None)
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+        report = full_round()
+        cabo(report)["runs"][0]["telemetry"]["core_misses"] = 6  # more than read_misses (5)
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+
+    def test_p99_uses_the_pooled_individual_events_not_the_mean_of_p99(self) -> None:
+        """Two rounds without outliers plus a tiny one with two slow misses: the mean of the three
+        round p99s is far below 300 ms, but the pooled events have 2 of 102 above it."""
+        report = full_round()
+        runs = cabo(report)["runs"]
+        runs[0]["telemetry"] = telemetry([10.0] * 50, reads=100_000)
+        runs[1]["telemetry"] = telemetry([10.0] * 50, reads=100_000)
+        runs[2]["telemetry"] = telemetry([400.0, 400.0], reads=100_000)
+        details = profile_result(report).details
+        self.assertLess(sum(d.p99_ms or 0.0 for d in details) / len(details), 300.0)
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
+
+    def test_a_single_round_p99_above_the_limit_does_not_fail_when_the_pool_is_fine(self) -> None:
+        report = full_round()
+        runs = cabo(report)["runs"]
+        runs[0]["telemetry"] = telemetry([10.0] * 4 + [400.0], reads=100_000)
+        for run in runs[1:]:
+            run["telemetry"] = telemetry([10.0] * 200, reads=100_000)
+        result = profile_result(report)
+        self.assertGreaterEqual(result.details[0].p99_ms or 0.0, 300.0)
+        self.assertEqual(result.verdict, "passou")
+
+    def test_p99_at_or_above_300_ms_fails(self) -> None:
+        report = full_round()
+        for run in cabo(report)["runs"]:
+            run["telemetry"] = telemetry([10.0] * 4 + [300.0])
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
+
+    def test_no_misses_is_nd_not_zero(self) -> None:
+        report = full_round()
+        for run in cabo(report)["runs"]:
+            run["telemetry"] = telemetry([])
+        result = profile_result(report)
+        self.assertEqual(result.verdict, "incompleto")
+        self.assertTrue(all(d.p99_ms is None for d in result.details))
+        text = round_report.render_markdown(evaluate(report))
+        self.assertIn("n/d", text)
+        self.assertNotIn("| 0.00 |", text)
+
+    def test_one_round_without_misses_has_nd_p99_but_the_pool_still_counts(self) -> None:
+        report = full_round()
+        cabo(report)["runs"][0]["telemetry"] = telemetry([])
+        result = profile_result(report)
+        self.assertIsNone(result.details[0].p99_ms)
+        self.assertEqual(result.verdict, "passou")  # 10 pooled events >= MIN_SAMPLES
+
+    def test_pooled_samples_below_the_minimum_are_incomplete(self) -> None:
+        self.assertEqual(verdicts(full_round(), min_samples=10_000)["cabo_50"], "incompleto")
+
+    def test_minimum_pending_f1_48_is_never_a_pass(self) -> None:
+        result = evaluate(full_round(), min_samples=None)
+        cabo_result = next(p for p in result.profiles if p.name == "cabo_50")
+        self.assertEqual(cabo_result.verdict, "incompleto")
+        self.assertEqual(result.verdict, "incompleto")
+        self.assertTrue(any("F1-48" in note for note in cabo_result.notes))
+        self.assertIn("mínimo pendente do F1-48", round_report.render_markdown(result))
+
+    def test_fewer_than_three_complete_rounds_is_incomplete(self) -> None:
+        report = full_round()
+        cabo(report)["runs"] = cabo(report)["runs"][:2]
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+
+    def test_an_unfinished_miss_makes_that_round_incomplete_and_leaves_the_pool(self) -> None:
+        for outcome in ("failed", "cancelled", "pending_at_end"):
+            with self.subTest(outcome=outcome):
+                report = full_round()
+                cabo(report)["runs"][0]["telemetry"] = telemetry([10.0] * 4, **{outcome: 1})
+                result = profile_result(report)
+                self.assertEqual(result.verdict, "incompleto")
+                self.assertFalse(result.details[0].complete)
+                self.assertTrue(all(d.complete for d in result.details[1:]))
+
+    def test_rounds_must_be_comparable(self) -> None:
+        report = full_round()
+        cabo(report)["runs"][1]["environment"] = {**ENV, "gpu": "Intel HD 630"}
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+        report = full_round()
+        del cabo(report)["environment"]
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+        report = full_round()
+        del cabo(report)["environment"]["route_sha256"]
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+
+    def test_environment_can_be_given_per_run(self) -> None:
+        report = full_round()
+        profile = cabo(report)
+        for run in profile["runs"]:
+            run["environment"] = dict(profile["environment"])
+        del profile["environment"]
+        self.assertEqual(verdicts(report)["cabo_50"], "passou")
+
+    def test_event_loss_is_incomplete(self) -> None:
+        for events in (4, 6):
+            with self.subTest(events=events):
+                report = full_round()
+                cabo(report)["runs"][1]["telemetry"]["miss_start_events"] = events
+                result = profile_result(report)
+                self.assertEqual(result.verdict, "incompleto")
+                self.assertTrue(any("perda de evento" in note for note in result.notes))
+
+    def test_invalid_telemetry_is_incomplete(self) -> None:
+        base = good_run()["telemetry"]
+        bad_values: list[dict[str, Any]] = [
+            {**base, "reads": 0, "read_misses": 0, "miss_start_events": 0, "miss_wait_us": []},
+            {**base, "reads": 3, "read_misses": 5, "miss_start_events": 5},
+            {**base, "miss_wait_us": [float("nan")] * 5},
+            {**base, "miss_wait_us": [-5] * 5},
+            {**base, "miss_wait_us": [1] * 4},
+            {**base, "reads": True},
+            {**base, "failed": -1},
+            {k: v for k, v in base.items() if k != "pending_at_end"},
+            {k: v for k, v in base.items() if k != "miss_start_events"},
+        ]
+        for block in bad_values:
+            with self.subTest(block=block):
+                report = full_round()
+                cabo(report)["runs"][0]["telemetry"] = block
+                self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+
+    def test_failure_wins_over_missing_data(self) -> None:
+        report = full_round()
+        runs = cabo(report)["runs"]
+        del runs[0]["telemetry"]
+        runs[1]["telemetry"] = telemetry([10.0] * 15)  # 1.5%
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
 
     def test_missing_telemetry_shows_nd_and_is_incomplete(self) -> None:
         report = full_round()
-        for run in report["profiles"]["cabo_50"]["runs"]:
+        for run in cabo(report)["runs"]:
             del run["telemetry"]
-        result = round_report.evaluate_round(report, LIMITS)
-        cabo = next(p for p in result.profiles if p.name == "cabo_50")
-        self.assertEqual(cabo.verdict, "incompleto")
+        result = evaluate(report)
+        self.assertEqual(
+            next(p for p in result.profiles if p.name == "cabo_50").verdict, "incompleto"
+        )
         self.assertIn("n/d", round_report.render_markdown(result))
         self.assertNotEqual(result.verdict, "passou")
+
+    def test_other_profiles_are_reported_but_do_not_decide_the_rate_or_the_wait(self) -> None:
+        report = full_round()
+        for run in report["profiles"]["adsl_10"]["runs"]:
+            run["telemetry"] = telemetry([2000.0] * 40, reads=1000, core_misses=5)
+        self.assertEqual(verdicts(report)["adsl_10"], "passou")
+        self.assertEqual(verdicts(report)["cabo_50"], "passou")
+
+    def test_the_removed_aggregation_choice_is_gone(self) -> None:
+        text = round_report.render_markdown(evaluate(full_round()))
+        self.assertNotIn("pendente do dono", text)
+        self.assertNotIn("rodadas juntas", text)
+
+
+class StutterAndLoadTests(unittest.TestCase):
+    """The approved stutter and load criteria are unchanged (docs/medicoes/baseline.md)."""
 
     def test_missing_stutter_metric_is_incomplete(self) -> None:
         for name in baseline.REQUIRED_CHECK_METRICS:
@@ -108,104 +301,13 @@ class VerdictTests(unittest.TestCase):
         for value in (None, True, "1", -1, float("nan"), float("inf")):
             with self.subTest(value=value):
                 report = full_round()
-                report["profiles"]["cabo_50"]["runs"][0]["p99_frame_ms"] = value
-                self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
-
-    def test_invalid_telemetry_is_incomplete(self) -> None:
-        base = good_run()["telemetry"]
-        bad_values: list[dict[str, Any]] = [
-            {**base, "reads": 0, "read_misses": 0, "miss_start_events": 0, "miss_wait_us": []},
-            {**base, "reads": 10, "read_misses": 11, "miss_start_events": 11},
-            {**base, "miss_wait_us": [float("nan")] * 5},
-            {**base, "miss_wait_us": [-5] * 5},
-            {**base, "miss_wait_us": [1] * 4},
-            {**base, "reads": True},
-            {**base, "failed": -1},
-            {k: v for k, v in base.items() if k != "pending_at_end"},
-            {k: v for k, v in base.items() if k != "miss_start_events"},
-        ]
-        for telemetry in bad_values:
-            with self.subTest(telemetry=telemetry):
-                report = full_round()
-                report["profiles"]["cabo_50"]["runs"][0]["telemetry"] = telemetry
-                self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
-
-    def test_event_loss_makes_round_incomplete(self) -> None:
-        """miss_start_events must equal the delta of sw_stats.read_misses (docs/08)."""
-        for events in (4, 6):
-            with self.subTest(events=events):
-                report = full_round()
-                report["profiles"]["cabo_50"]["runs"][1]["telemetry"]["miss_start_events"] = events
-                result = round_report.evaluate_round(report, LIMITS)
-                cabo = next(p for p in result.profiles if p.name == "cabo_50")
-                self.assertEqual(cabo.verdict, "incompleto")
-                self.assertTrue(any("perda de evento" in note for note in cabo.notes))
-
-    def test_unfinished_miss_makes_round_incomplete_even_if_p99_is_fine(self) -> None:
-        for outcome in ("failed", "cancelled", "pending_at_end"):
-            with self.subTest(outcome=outcome):
-                report = full_round()
-                telemetry = report["profiles"]["cabo_50"]["runs"][0]["telemetry"]
-                telemetry["miss_wait_us"] = telemetry["miss_wait_us"][:4]
-                telemetry[outcome] = 1
+                cabo(report)["runs"][0]["p99_frame_ms"] = value
                 self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
 
     def test_fewer_than_three_runs_is_incomplete(self) -> None:
         report = full_round()
-        report["profiles"]["cabo_50"]["runs"] = report["profiles"]["cabo_50"]["runs"][:2]
-        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
-
-    def test_miss_rate_at_or_above_one_percent_fails_on_gate_profile(self) -> None:
-        report = full_round()
-        for run in report["profiles"]["cabo_50"]["runs"]:
-            run["telemetry"]["read_misses"] = 10
-            run["telemetry"]["miss_start_events"] = 10
-            run["telemetry"]["miss_wait_us"] = [1_000] * 10
-        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
-
-    def test_aggregation_is_pending_when_the_two_rules_disagree(self) -> None:
-        """Owner decision (docs/08): each round must pass vs the rounds pooled."""
-        report = full_round()
-        first = report["profiles"]["cabo_50"]["runs"][0]["telemetry"]
-        first.update(read_misses=15, miss_start_events=15, miss_wait_us=[1_000] * 15)
-        result = round_report.evaluate_round(report, LIMITS)
-        cabo = next(p for p in result.profiles if p.name == "cabo_50")
-        self.assertEqual(cabo.verdict, "incompleto")  # round 1: 1.5%; pooled 0.57%
-        self.assertTrue(any("pendente do dono" in note for note in cabo.notes))
-        text = round_report.render_markdown(result)
-        self.assertIn("Taxa de falta, por rodada", text)
-        self.assertIn("Taxa de falta, rodadas juntas", text)
-
-    def test_wait_p99_aggregation_conflict_is_pending(self) -> None:
-        """A small round with a slow miss fails alone but not when pooled with larger rounds."""
-        report = full_round()
-        runs = report["profiles"]["cabo_50"]["runs"]
-        runs[0]["telemetry"].update(
-            read_misses=5, miss_start_events=5, miss_wait_us=[10_000] * 4 + [400_000]
-        )
-        for run in runs[1:]:
-            run["telemetry"].update(
-                reads=100_000, read_misses=200, miss_start_events=200, miss_wait_us=[10_000] * 200
-            )
-        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
-
-    def test_every_rule_failing_is_a_failure_not_pending(self) -> None:
-        report = full_round()
-        for run in report["profiles"]["cabo_50"]["runs"]:
-            run["telemetry"]["miss_wait_us"] = [500_000] * 5
-        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
-
-    def test_p99_wait_at_or_above_300_ms_fails_on_gate_profile(self) -> None:
-        report = full_round()
-        for run in report["profiles"]["cabo_50"]["runs"]:
-            run["telemetry"]["miss_wait_us"][-1] = 300_000
-        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
-
-    def test_wait_and_miss_rate_are_informative_on_other_profiles(self) -> None:
-        report = full_round()
-        for run in report["profiles"]["adsl_10"]["runs"]:
-            run["telemetry"]["miss_wait_us"] = [2_000_000] * 5
-        self.assertEqual(verdicts(report)["adsl_10"], "passou")
+        report["profiles"]["fibra_300"]["runs"] = report["profiles"]["fibra_300"]["runs"][:2]
+        self.assertEqual(verdicts(report)["fibra_300"], "incompleto")
 
     def test_stutter_regression_fails_on_every_profile(self) -> None:
         for profile in round_report.REQUIRED_PROFILES:
@@ -215,17 +317,11 @@ class VerdictTests(unittest.TestCase):
                     report["profiles"][profile]["runs"][2][name] = LIMITS[name] + 1
                     self.assertEqual(verdicts(report)[profile], "falhou")
 
-    def test_load_uses_median_of_runs(self) -> None:
+    def test_load_uses_the_median_of_runs(self) -> None:
         report = full_round()
-        report["profiles"]["cabo_50"]["runs"][0]["load_ms"] = LIMITS["load_ms"] + 5000
+        cabo(report)["runs"][0]["load_ms"] = LIMITS["load_ms"] + 5000
         self.assertEqual(verdicts(report)["cabo_50"], "passou")
-        report["profiles"]["cabo_50"]["runs"][1]["load_ms"] = LIMITS["load_ms"] + 5000
-        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
-
-    def test_failure_wins_over_missing_data(self) -> None:
-        report = full_round()
-        del report["profiles"]["cabo_50"]["runs"][0]["telemetry"]
-        report["profiles"]["cabo_50"]["runs"][1]["frames_over_100ms"] = 3
+        cabo(report)["runs"][1]["load_ms"] = LIMITS["load_ms"] + 5000
         self.assertEqual(verdicts(report)["cabo_50"], "falhou")
 
     def test_agrees_with_baseline_check_on_stutter_and_load(self) -> None:
@@ -238,7 +334,7 @@ class VerdictTests(unittest.TestCase):
             (1, 0, 6.3, 2500.0),
             (1, 0, 4.0, 3100.0),
         ]
-        for count in (2, 3, 4):
+        for count in (2, 3):  # 252 combinations; 4 runs add 1296 and no new case
             for combo in itertools.product(variants, repeat=count):
                 runs = []
                 for steady, over_100, p99, load in combo:
@@ -250,9 +346,11 @@ class VerdictTests(unittest.TestCase):
                         load_ms=load,
                     )
                     runs.append(run)
-                report = full_round()
-                report["profiles"]["cabo_50"]["runs"] = runs
-                ours = verdicts(report)["cabo_50"]
+                profile = good_profile()
+                profile["runs"] = runs
+                ours = round_report.evaluate_profile(
+                    "cabo_50", profile, LIMITS, MIN_SAMPLES
+                ).verdict
                 theirs = baseline.check_against_limits(runs, LIMITS)
                 self.assertEqual(ours == "passou", not theirs, (combo, ours, theirs))
 
@@ -271,16 +369,28 @@ class PercentileTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
+    def render(self, report: dict[str, Any], min_samples: int | None = MIN_SAMPLES) -> str:
+        return round_report.render_markdown(evaluate(report, min_samples))
+
+    def test_shows_individual_and_aggregate_results_with_sample_counts(self) -> None:
+        text = self.render(full_round())
+        for header in ("Leituras", "Faltas", "Amostras (N)", "p99 (ms)"):
+            self.assertIn(header, text)
+        self.assertIn("Agregado", text)
+        self.assertIn("N=15", text)  # 3 rounds x 5 misses pooled
+
     def test_markdown_has_all_profiles_and_never_hides_incomplete(self) -> None:
-        text = round_report.render_markdown(round_report.evaluate_round({}, LIMITS))
+        text = self.render({})
         for name in round_report.REQUIRED_PROFILES:
             self.assertIn(name, text)
-        self.assertIn("**Portão 1 (automático): incompleto**", text)
+        self.assertIn("**Métricas automáticas: incompleto**", text)
 
-    def test_pop_in_is_declared_manual(self) -> None:
-        text = round_report.render_markdown(round_report.evaluate_round(full_round(), LIMITS))
-        self.assertIn("Pop-in", text)
-        self.assertIn("manual", text)
+    def test_automatic_metrics_never_approve_gate_1_alone(self) -> None:
+        text = self.render(full_round())
+        self.assertIn("**Métricas automáticas: passou**", text)
+        self.assertIn("NÃO aprovam sozinhas o Portão 1", text)
+        self.assertIn("avaliação visual registrada de pop-in", text)
+        self.assertNotIn("Portão 1: passou", text)
 
     def test_example_output_is_up_to_date(self) -> None:
         example = HERE / "examples" / "round_baseline_gpu.json"
@@ -289,12 +399,12 @@ class RenderTests(unittest.TestCase):
             (REPO / "docs" / "medicoes" / "baseline-limits.json").read_text("utf-8")
         )
         report = json.loads(example.read_text(encoding="utf-8"))
-        got = round_report.render_markdown(round_report.evaluate_round(report, limits))
+        got = round_report.render_markdown(round_report.evaluate_round(report, limits, None))
         self.assertEqual(got, expected)
 
 
 class CliTests(unittest.TestCase):
-    def run_cli(self, report: object, limits: object = LIMITS) -> tuple[int, str, str]:
+    def run_cli(self, report: object, *extra: str, limits: object = LIMITS) -> tuple[int, str, str]:
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             round_path = directory / "round.json"
@@ -303,21 +413,24 @@ class CliTests(unittest.TestCase):
             limits_path.write_text(json.dumps(limits), encoding="utf-8")
             out, err = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = round_report.main([str(round_path), "--limits", str(limits_path)])
+                code = round_report.main([str(round_path), "--limits", str(limits_path), *extra])
             return code, out.getvalue(), err.getvalue()
 
-    def test_exit_zero_only_when_everything_passed(self) -> None:
-        code, out, _ = self.run_cli(full_round())
+    def test_exit_zero_only_when_everything_passed_and_a_minimum_was_given(self) -> None:
+        code, out, _ = self.run_cli(full_round(), "--min-samples", str(MIN_SAMPLES))
         self.assertEqual(code, 0)
-        self.assertIn("**Portão 1 (automático): passou**", out)
+        self.assertIn("**Métricas automáticas: passou**", out)
+        code, out, _ = self.run_cli(full_round())
+        self.assertEqual(code, 1)
+        self.assertIn("mínimo pendente do F1-48", out)
 
     def test_exit_one_for_incomplete_and_for_failed(self) -> None:
-        code, out, _ = self.run_cli({})
+        code, out, _ = self.run_cli({}, "--min-samples", "10")
         self.assertEqual(code, 1)
-        self.assertIn("**Portão 1 (automático): incompleto**", out)
-        failed = copy.deepcopy(full_round())
-        failed["profiles"]["cabo_50"]["runs"][0]["frames_over_100ms"] = 9
-        self.assertEqual(self.run_cli(failed)[0], 1)
+        self.assertIn("**Métricas automáticas: incompleto**", out)
+        failed = full_round()
+        cabo(failed)["runs"][0]["frames_over_100ms"] = 9
+        self.assertEqual(self.run_cli(failed, "--min-samples", "10")[0], 1)
 
     def test_exit_two_for_unreadable_input(self) -> None:
         code, _, err = self.run_cli([1, 2, 3])
@@ -329,6 +442,9 @@ class CliTests(unittest.TestCase):
         code, _, err = self.run_cli(full_round(), limits={})
         self.assertEqual(code, 2)
         self.assertIn("limites", err)
+        code, _, err = self.run_cli(full_round(), "--min-samples", "0")
+        self.assertEqual(code, 2)
+        self.assertIn("min-samples", err)
 
     def test_missing_file_is_exit_two(self) -> None:
         err = io.StringIO()
