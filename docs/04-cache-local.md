@@ -44,22 +44,25 @@ offset  tam  campo          descrição
 ```
 
 #### Registros de Transação (Record Entry)
-Cada mutação no cache gera um registro append-only de tamanho fixo ou delimitado com soma de verificação:
+Cada mutação no cache gera um registro append-only com soma de verificação. O `COMMIT_PIECE` carrega o checksum XXH3-64 de **cada bloco** da peça ([ADR-0013](adr/0013-hash-dos-blocos.md)); os outros tipos têm tamanho fixo:
 ```text
-offset  tam  campo          descrição
-0       4    record_magic   = 0x57414C52 ("WALR")
-4       2    record_type    = COMMIT_PIECE (1) | FREE_SLOT (2) | CHECKPOINT (3)
-6       2    flags          = flags adicionais (ex.: 0x01 = fixo/pinned)
-8       8    lsn            = Log Sequence Number (estritamente monotônico crescente)
-16      8    timestamp_utc  = época em microssegundos
-24      32   piece_hash     = SHA-256 raiz Merkle da peça (zeros para CHECKPOINT)
-56      4    store_file_id  = índice do arquivo store (ex.: 0 para store-000.bin)
-60      4    slot_id        = índice do slot no arquivo store
-64      4    piece_size     = tamanho gravado da peça (bytes)
-68      4    reserved       = 0
-72      8    record_crc     = XXH3-64 do registro [0..72)
-Total: 80 bytes por registro (compacto e alinhável a 8 bytes).
+offset    tam  campo          descrição
+0         4    record_magic   = 0x57414C52 ("WALR")
+4         2    record_type    = COMMIT_PIECE (1) | FREE_SLOT (2) | CHECKPOINT (3)
+6         2    flags          = flags adicionais (ex.: 0x01 = fixo/pinned)
+8         8    lsn            = Log Sequence Number (estritamente monotônico crescente)
+16        8    timestamp_utc  = época em microssegundos
+24        32   piece_hash     = SHA-256 raiz Merkle da peça (zeros para CHECKPOINT)
+56        4    store_file_id  = índice do arquivo store (ex.: 0 para store-000.bin)
+60        4    slot_id        = índice do slot no arquivo store
+64        4    piece_size     = tamanho gravado da peça (bytes)
+68        4    block_count    = n, blocos da peça (COMMIT_PIECE: ≥ 1; FREE_SLOT e CHECKPOINT: 0)
+72        8·n  block_xxh3[n]  = XXH3-64 dos bytes GRAVADOS de cada bloco, na ordem da peça
+72+8·n    8    record_crc     = XXH3-64 do registro [0..72+8·n)
+Total: 80 + 8·n bytes (FREE_SLOT e CHECKPOINT: 80). Sempre múltiplo de 8.
 ```
+- **De onde vêm os checksums:** calculados pelo cliente sobre os bytes da peça **em memória, depois de a peça passar na verificação Merkle** e antes do passo 2 da escrita (abaixo), usando os limites de bloco do manifesto (`offset_in_piece`, `packed_size`, 03 §5). Nunca vêm da rede e nunca são calculados relendo o disco (isso abençoaria uma escrita corrompida).
+- `n` tem de ser igual ao `block_count` da peça no manifesto em uso; a spec não limita `n` além de `n ≤ piece_size` (cada bloco tem pelo menos 1 byte), então o registro tem tamanho variável.
 
 ### 3. Protocolo de Escrita ACID (Durabilidade e Atomicidade)
 Para prevenir dados corrompidos ou leituras de zeros em crashes repentinos (falha de energia ou kernel panic), a escrita segue ordem rígida com barreiras de E/S (`fsync` / `FlushFileBuffers`):
@@ -73,13 +76,38 @@ Para prevenir dados corrompidos ou leituras de zeros em crashes repentinos (falh
 [6. Publicação]    atualiza entrada no índice em memória e acorda leitores
 ```
 
+- O registro do passo 4 já leva os checksums por bloco; o passo 6 copia a lista para o índice em memória.
 - **Por que esta ordem (Data-First, then WAL Commit)?**
   - Se a máquina travar antes do Passo 5: o journal **não** contém o commit. Na inicialização, a transação não existe; o slot é considerado lixo e reutilizado. O engine **nunca** lerá dados parciais nem zeros.
   - Se travar após o Passo 5: o journal contém o registro válido e com checksum correto. A recuperação do Passo 3 já garante que os dados físicos foram persistidos no slot antes do journal. O registro é reexecutado com 100% de integridade.
 
 ### 4. Formato do Índice (`index.bin`) e Checkpoints
-- O `index.bin` armazena uma tabela hash ou densa dos slots:
-  - `piece_hash` (32 B) → `(store_file_id: u16, slot_id: u32, size: u32, state: u8, flags: u8, access_counter: u32, checksum_xxh3: u64)`.
+- O `index.bin` tem três partes: cabeçalho, **tabela de entradas** (uma por slot ocupado) e **região de checksums** (`u64`, os XXH3-64 por bloco de todas as peças, contíguos por peça).
+- Entrada, 56 bytes, alinhada a 8:
+  ```text
+  offset  tam  campo
+  0       32   piece_hash      raiz Merkle da peça
+  32      4    slot_id
+  36      4    size            bytes gravados da peça
+  40      4    access_counter
+  44      4    cks_first       índice, em u64, do 1º checksum da peça na região de checksums
+  48      4    block_count     n; os checksums são cks[cks_first .. cks_first + n)
+  52      2    store_file_id
+  54      1    state
+  55      1    flags
+  ```
+  Antes havia um `checksum_xxh3: u64` por peça; ele saiu. A entrada continua com 56 bytes, porque `cks_first` e `block_count` ocupam o lugar do checksum único e o espaço de alinhamento.
+- O cabeçalho guarda o número de entradas, o tamanho da região de checksums, o `lsn` do checkpoint e um XXH3-64 de todo o arquivo. No checkpoint, a região é regravada compacta (sem buracos de peças removidas).
+- **Custo** (estimativa; os valores reais saem da F1-11):
+
+  | Item | Antes (1 checksum por peça) | Agora (1 por bloco) |
+  | --- | --- | --- |
+  | RAM e disco do índice, por slot | 56 B | 56 B + 8 B × blocos da peça |
+  | Cache de 20 GB (20 480 slots), blocos gravados de ~74 KiB em média* | 1,1 MB | 1,1 MB + 2,3 MB (≈ 283 mil blocos) = **≈ 3,4 MB** |
+  | Registro `COMMIT_PIECE` de uma peça de 1 MiB com 14 blocos | 80 B | 192 B |
+
+  \* Média do chunker ≈ 148 KiB crus ([03 §11.1](03-formato-de-conteudo.md#111-chunker-determinismo)) com compressão de ~2:1, a confirmar na F1-03. O custo cresce com o número de blocos, não com o tamanho: conteúdo muito comprimível (blocos de poucos bytes) aumenta a região de checksums, até 8 B por bloco.
+- Em RAM, o arranjo exato (tabela de entradas + arena de checksums) é decisão da F1-11, com duas regras: achar o checksum do bloco *b* de uma peça em O(1) e nenhuma alocação no caminho de leitura (a lista é reservada no passo 6 da escrita, na thread dona).
 - **Checkpointing periódico em background**:
   1. A thread de I/O descarrega o estado atual do índice para `index.bin.tmp`.
   2. Executa `fsync(index.bin.tmp)`.
@@ -88,14 +116,15 @@ Para prevenir dados corrompidos ou leituras de zeros em crashes repentinos (falh
 
 ### 5. Algoritmo de Recuperação de Falhas (Crash Recovery)
 Ao inicializar o subsistema de cache:
-1. Lê o cabeçalho de `journal.bin` e verifica integridade do checksum. Se corrompido, utiliza backup ou reconstrói verificando hashes nas stores.
+1. Lê o cabeçalho de `journal.bin` e verifica integridade do checksum. Se corrompido, utiliza backup ou reconstrói verificando hashes nas stores. O mesmo vale para o `index.bin` (XXH3-64 do arquivo no cabeçalho): se não bater, o índice é descartado e reconstruído re-verificando a raiz Merkle (SHA-256) de cada slot ocupado contra o manifesto e recalculando os checksums por bloco dos slots aprovados. É lento (lê o cache inteiro), mas não confia em nada não verificado.
 2. Posiciona no último checkpoint válido.
 3. Percorre sequencialmente os registros de transação:
-   - Valida `record_magic` e `record_crc` (XXH3-64).
-   - Ao encontrar o primeiro registro truncado (escrita incompleta durante queda / torn write): interrompe a leitura imediatamente, truncando o log naquele ponto.
-   - Aplica os registros válidos: adiciona entradas de `COMMIT_PIECE` e remove entradas de `FREE_SLOT` da tabela do índice.
+   - Valida `record_magic` e `record_type`; para `COMMIT_PIECE`, confere `1 ≤ block_count ≤ piece_size` e que o fim do registro (`72 + 8·block_count + 8`) cabe no arquivo **antes** de ler os checksums; para os outros tipos, `block_count == 0`. Depois valida `record_crc` (XXH3-64 do registro inteiro, incluindo os checksums).
+   - Ao encontrar o primeiro registro truncado ou inválido (escrita incompleta durante queda / torn write): interrompe a leitura imediatamente, truncando o log naquele ponto.
+   - Aplica os registros válidos: `COMMIT_PIECE` adiciona a entrada **com a sua lista de checksums por bloco**; `FREE_SLOT` remove a entrada e a lista.
+   - Depois de aplicar, toda entrada cujo `block_count` difere do `block_count` da peça no manifesto em uso é descartada e o slot fica livre (a peça é de um manifesto com outros limites de bloco).
 4. Identifica slots ocupados no store que não constam no índice reconstruído: marca-os como livres para reutilização imediata.
-5. **Verificação de leitura subsequente**: todo bloco lido é conferido com checksum rápido XXH3-64 antes de ser entregue à memória do jogo; peças com checksum inválido são marcadas para re-download.
+5. **Verificação de leitura subsequente**: todo bloco lido é conferido com **o XXH3-64 do próprio bloco** (`cks[cks_first + i]` para o *i*-ésimo bloco da peça), calculado sobre os bytes gravados desse bloco (até 256 KiB), antes de ser entregue à memória do jogo; não é preciso ler a peça inteira (até 1 MiB). Bloco com checksum inválido invalida a **peça inteira** (o slot é liberado e a peça é pedida de novo), porque o defeito de disco pode atingir outros blocos do mesmo slot.
 
 ## Concorrência
 
