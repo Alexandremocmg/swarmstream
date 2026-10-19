@@ -34,4 +34,6 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | Mover o Godot 4.7.2 para uma pasta fixa (hoje está em uma pasta temporária do Windows) | 2026-10-18 |
 | Destino da alteração solta em `docs/medicoes/guia-1h.md` na pasta compartilhada: um pré-teste do guia feito por um agente Hermes em contêiner Docker (Ubuntu 22.04). Não é da sessão Pleno; autor não identificado pela gestão. A própria nota diz que **não vale** como resultado do critério. Sugestão: revisar e, se útil, entrar por PR; senão descartar | 2026-10-18 |
 | Dizer se a sessão "Hermez Agent utilização" faz parte do projeto (hoje só Arquiteto, Sênior e Pleno recebem avisos da gestão) | 2026-10-18 |
-| Incluir os cartões F1-37 a F1-40 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |
+| Incluir os cartões F1-37 a F1-44 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |
+| Apagar os branches já incorporados no GitHub, se quiser (ex.: `baseline/limites-aprovados-r1` e `feat/F0-08-vetores-de-teste`; o `test/ci-vermelho` convém manter, é a evidência do CI vermelho). Ninguém apagou sem a sua ordem | 2026-10-18 |
+| Quem fica com a pasta compartilhada (hoje no branch `feat/F0-08-vetores-de-teste`, que nenhuma sessão assume ter trocado): voltar para a `main` quando ninguém a usar | 2026-10-18 |
