@@ -30,6 +30,9 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-19 | F1-01 parte **apenas da especificação**; a sessão não recebe os scripts Python de referência nem o conteúdo deles. Se for preciso, sessão nova sem esses scripts no contexto |
 | 2026-10-19 | F1-44: preparar o procedimento (sessões a pausar, onde gravar os resultados). **Não medir nem pausar sessões** antes de o dono confirmar o horário |
 | 2026-10-19 | **Manter todos os branches**, inclusive `test/ci-vermelho` |
+| 2026-10-19 | F1-01: independência confirmada pela sessão Sênior e conferida pela gestão no histórico das sessões; o F1-01 segue com a Sênior, depois da F1-46, com checkout esparso sem os scripts Python |
+| 2026-10-19 | **F1-27** (fonte HTTP) fica com a **Sênior (R2), depois do F1-01** |
+| 2026-10-19 | PR #20 aceito: regra do Portão 1 registrada nos docs 16 e 08 |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_a1345bc0-fcb0-4aa8-a986-e4bff85c6932`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto

@@ -10,11 +10,13 @@ Medido na bancada, perfil `cabo_50` (50 Mbps, 25 ms), no mapa de teste, com a ro
 
 | Métrica | Meta |
 | --- | --- |
-| Taxa de falta (leituras sem dado local / total) | < 1% jogando; 0% em lógica e colisão |
-| Espera do jogo numa falta, p99 | < 300 ms |
+| Taxa de falta (leituras sem dado local / total) | **< 1% em cada rodada** (não vale a média das rodadas); **zero faltas em lógica e colisão** |
+| Espera do jogo numa falta, p99 | **< 300 ms, calculado sobre os eventos individuais reunidos de pelo menos 3 rodadas completas e comparáveis** (não é a média dos p99 das rodadas). Sem faltas suficientes o resultado é `incompleto`: **ausência de faltas não vira p99 = 0**. Método do percentil e mínimo de amostras: proposta do R1 no cartão F1-48, aceita antes das medições finais |
 | Stutter | Dentro dos **limites absolutos aprovados** em [baseline.md](medicoes/baseline.md): quadros > 33 ms ≤ 2 por rodada de 60 s, > 100 ms = 0, p99 ≤ 6,24 ms, carga ≤ 3,06 s pela mediana de 3 rodadas |
 | Pop-in | Avaliação visual registrada, com o tempo médio em mip ou LOD rebaixado |
 | Perfis `fibra_300` e `adsl_10` | Medidos e reportados; `adsl_10` pode ter pop-in maior, mas **sem travar o frame** |
+
+Regra decidida pelo dono do produto em 2026-10-19 ([tarefas/decisoes.md](../tarefas/decisoes.md)). O relatório da rodada registra, **por rodada**, o número de leituras, de faltas e o p99, e também o **resultado agregado** com o número de amostras. **Métricas automáticas aprovadas não aprovam sozinhas o Portão 1:** é obrigatória a avaliação visual registrada de pop-in.
 
 Se falhar: ajustar prefetch e `core` (até +4 semanas) ou **repensar o produto** (por exemplo, usar o P2P só para instalação e patches).
 
