@@ -1,0 +1,40 @@
+{
+  "schema": "swarmstream-round-v0",
+  "round_id": "exemplo-baseline-gpu-ssd-local",
+  "profiles": {
+    "ssd_local": {
+      "runs": [
+        {
+          "load_ms": 2296.361,
+          "frames_over_33ms_steady": 0,
+          "frames_over_100ms": 0,
+          "p99_frame_ms": 3.696
+        },
+        {
+          "load_ms": 2410.887,
+          "frames_over_33ms_steady": 0,
+          "frames_over_100ms": 0,
+          "p99_frame_ms": 3.832
+        },
+        {
+          "load_ms": 2719.26,
+          "frames_over_33ms_steady": 1,
+          "frames_over_100ms": 0,
+          "p99_frame_ms": 3.951
+        },
+        {
+          "load_ms": 2819.249,
+          "frames_over_33ms_steady": 0,
+          "frames_over_100ms": 0,
+          "p99_frame_ms": 3.862
+        },
+        {
+          "load_ms": 2549.515,
+          "frames_over_33ms_steady": 0,
+          "frames_over_100ms": 0,
+          "p99_frame_ms": 4.238
+        }
+      ]
+    }
+  }
+}
