@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 2 | 0 | 1 | 0 | 39 | 6 |
+| 2 | 0 | 1 | 0 | 40 | 6 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -46,6 +46,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-48](cartoes/F1-48.md) | R1 | Opus 5.5, esforço alto | não | sim | Método do percentil e mínimo de amostras para o p99 da espera no Portão 1 |
 | [F1-49](cartoes/F1-49.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-20 | CI compila a extensão do Godot (loader) e roda o portão sem janela |
 | [F1-50](cartoes/F1-50.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-20 | Trocar uma thread por peça e por ensure por um pool de threads (loader e mock) |
+| [F1-51](cartoes/F1-51.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-01 | Vetor de bordas do chunker e esclarecimentos da spec 03 §11.1 e do README dos vetores |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
