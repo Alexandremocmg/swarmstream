@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 0 | 0 | 0 | 39 | 5 |
+| 1 | 0 | 0 | 0 | 40 | 5 |
 
 ## EM_ANDAMENTO
 - [F1-33](cartoes/F1-33.md) (R3, sessão: Pleno): Script de relatório da rodada (métricas por perfil)
@@ -19,7 +19,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-05](cartoes/F1-05.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-04 | Classificação core/grupo/opcional por regras de pasta |
 | [F1-07](cartoes/F1-07.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-05 | Mips/LODs baixos sempre no core |
 | [F1-08](cartoes/F1-08.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-04 | Relatório da CLI: tamanho por grupo, nº de peças, taxa de compressão |
-| [F1-10](cartoes/F1-10.md) | R1 | Opus 5.5, esforço alto | sim | sim | Arquivos de store pré-alocados e slots |
+| [F1-10](cartoes/F1-10.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-46 | Arquivos de store pré-alocados e slots |
 | [F1-11](cartoes/F1-11.md) | R1 | Opus 5.5, esforço muito alto | sim | espera F1-10 | Índice + journal com ordem dados → flush → journal → flush |
 | [F1-12](cartoes/F1-12.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-10 | Thread dona do cache e fila MPSC de pedidos |
 | [F1-13](cartoes/F1-13.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-12 | Leases com contagem de referência |
@@ -42,6 +42,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
 | [F1-46](cartoes/F1-46.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-10 | Trocar assert por verificação que não some com NDEBUG nos testes do sw-core |
 | [F1-47](cartoes/F1-47.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-27, F1-20 | Validar a bancada com uma mudança conhecida (rede mais lenta tem de piorar a espera) |
+| [F1-48](cartoes/F1-48.md) | R1 | Opus 5.5, esforço alto | não | sim | Método do percentil e mínimo de amostras para o p99 da espera no Portão 1 |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
