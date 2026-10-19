@@ -36,8 +36,11 @@ def good_run() -> dict[str, Any]:
         "telemetry": {
             "reads": 1000,
             "read_misses": 5,
+            "miss_start_events": 5,
             "miss_wait_us": [10_000 * (i + 1) for i in range(5)],
-            "unfinished_misses": 0,
+            "failed": 0,
+            "cancelled": 0,
+            "pending_at_end": 0,
         },
     }
 
@@ -109,14 +112,17 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
 
     def test_invalid_telemetry_is_incomplete(self) -> None:
+        base = good_run()["telemetry"]
         bad_values: list[dict[str, Any]] = [
-            {"reads": 0, "read_misses": 0, "miss_wait_us": [], "unfinished_misses": 0},
-            {"reads": 10, "read_misses": 11, "miss_wait_us": [], "unfinished_misses": 0},
-            {"reads": 10, "read_misses": 1, "miss_wait_us": [float("nan")], "unfinished_misses": 0},
-            {"reads": 10, "read_misses": 1, "miss_wait_us": [-5], "unfinished_misses": 0},
-            {"reads": 10, "read_misses": 2, "miss_wait_us": [1], "unfinished_misses": 0},
-            {"reads": 10, "read_misses": 1, "miss_wait_us": [1]},
-            {"reads": True, "read_misses": 1, "miss_wait_us": [1], "unfinished_misses": 0},
+            {**base, "reads": 0, "read_misses": 0, "miss_start_events": 0, "miss_wait_us": []},
+            {**base, "reads": 10, "read_misses": 11, "miss_start_events": 11},
+            {**base, "miss_wait_us": [float("nan")] * 5},
+            {**base, "miss_wait_us": [-5] * 5},
+            {**base, "miss_wait_us": [1] * 4},
+            {**base, "reads": True},
+            {**base, "failed": -1},
+            {k: v for k, v in base.items() if k != "pending_at_end"},
+            {k: v for k, v in base.items() if k != "miss_start_events"},
         ]
         for telemetry in bad_values:
             with self.subTest(telemetry=telemetry):
@@ -124,10 +130,25 @@ class VerdictTests(unittest.TestCase):
                 report["profiles"]["cabo_50"]["runs"][0]["telemetry"] = telemetry
                 self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
 
+    def test_event_loss_makes_round_incomplete(self) -> None:
+        """miss_start_events must equal the delta of sw_stats.read_misses (docs/08)."""
+        for events in (4, 6):
+            with self.subTest(events=events):
+                report = full_round()
+                report["profiles"]["cabo_50"]["runs"][1]["telemetry"]["miss_start_events"] = events
+                result = round_report.evaluate_round(report, LIMITS)
+                cabo = next(p for p in result.profiles if p.name == "cabo_50")
+                self.assertEqual(cabo.verdict, "incompleto")
+                self.assertTrue(any("perda de evento" in note for note in cabo.notes))
+
     def test_unfinished_miss_makes_round_incomplete_even_if_p99_is_fine(self) -> None:
-        report = full_round()
-        report["profiles"]["cabo_50"]["runs"][0]["telemetry"]["unfinished_misses"] = 1
-        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+        for outcome in ("failed", "cancelled", "pending_at_end"):
+            with self.subTest(outcome=outcome):
+                report = full_round()
+                telemetry = report["profiles"]["cabo_50"]["runs"][0]["telemetry"]
+                telemetry["miss_wait_us"] = telemetry["miss_wait_us"][:4]
+                telemetry[outcome] = 1
+                self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
 
     def test_fewer_than_three_runs_is_incomplete(self) -> None:
         report = full_round()
@@ -138,12 +159,46 @@ class VerdictTests(unittest.TestCase):
         report = full_round()
         for run in report["profiles"]["cabo_50"]["runs"]:
             run["telemetry"]["read_misses"] = 10
+            run["telemetry"]["miss_start_events"] = 10
             run["telemetry"]["miss_wait_us"] = [1_000] * 10
+        self.assertEqual(verdicts(report)["cabo_50"], "falhou")
+
+    def test_aggregation_is_pending_when_the_two_rules_disagree(self) -> None:
+        """Owner decision (docs/08): each round must pass vs the rounds pooled."""
+        report = full_round()
+        first = report["profiles"]["cabo_50"]["runs"][0]["telemetry"]
+        first.update(read_misses=15, miss_start_events=15, miss_wait_us=[1_000] * 15)
+        result = round_report.evaluate_round(report, LIMITS)
+        cabo = next(p for p in result.profiles if p.name == "cabo_50")
+        self.assertEqual(cabo.verdict, "incompleto")  # round 1: 1.5%; pooled 0.57%
+        self.assertTrue(any("pendente do dono" in note for note in cabo.notes))
+        text = round_report.render_markdown(result)
+        self.assertIn("Taxa de falta, por rodada", text)
+        self.assertIn("Taxa de falta, rodadas juntas", text)
+
+    def test_wait_p99_aggregation_conflict_is_pending(self) -> None:
+        """A small round with a slow miss fails alone but not when pooled with larger rounds."""
+        report = full_round()
+        runs = report["profiles"]["cabo_50"]["runs"]
+        runs[0]["telemetry"].update(
+            read_misses=5, miss_start_events=5, miss_wait_us=[10_000] * 4 + [400_000]
+        )
+        for run in runs[1:]:
+            run["telemetry"].update(
+                reads=100_000, read_misses=200, miss_start_events=200, miss_wait_us=[10_000] * 200
+            )
+        self.assertEqual(verdicts(report)["cabo_50"], "incompleto")
+
+    def test_every_rule_failing_is_a_failure_not_pending(self) -> None:
+        report = full_round()
+        for run in report["profiles"]["cabo_50"]["runs"]:
+            run["telemetry"]["miss_wait_us"] = [500_000] * 5
         self.assertEqual(verdicts(report)["cabo_50"], "falhou")
 
     def test_p99_wait_at_or_above_300_ms_fails_on_gate_profile(self) -> None:
         report = full_round()
-        report["profiles"]["cabo_50"]["runs"][0]["telemetry"]["miss_wait_us"][-1] = 300_000
+        for run in report["profiles"]["cabo_50"]["runs"]:
+            run["telemetry"]["miss_wait_us"][-1] = 300_000
         self.assertEqual(verdicts(report)["cabo_50"], "falhou")
 
     def test_wait_and_miss_rate_are_informative_on_other_profiles(self) -> None:

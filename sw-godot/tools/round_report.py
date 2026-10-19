@@ -19,10 +19,15 @@ Round file (schema ``swarmstream-round-v0``)::
               "frames_over_100ms": 0,             #   frames_over_100ms, p99_frame_ms
               "p99_frame_ms": 3.7,
               "telemetry": {                      # optional until F1-30 exists; absent = "n/d"
-                "reads": 1200,                    # reads asked by the game
-                "read_misses": 7,                 # reads with no local data (docs/08)
-                "miss_wait_us": [12000, 80000],   # waits of the COMPLETED misses (docs/08)
-                "unfinished_misses": 5            # read_miss_start without read_miss
+                                                  # window = robot route, SW_GAME_STATE_PLAYING
+                "reads": 1200,                    # delta of sw_stats.reads over the window
+                "read_misses": 7,                 # delta of sw_stats.read_misses over the window
+                "miss_start_events": 7,           # read_miss_start with t0 in the window; must
+                                                  #   equal read_misses (else event loss)
+                "miss_wait_us": [12000, 80000],   # miss_wait_us of read_miss, outcome=completed
+                "failed": 0,                      # outcome=failed
+                "cancelled": 0,                   # outcome=cancelled
+                "pending_at_end": 0               # outcome=pending_at_end (after the 30 s drain)
               }
             }
           ]
@@ -62,6 +67,14 @@ OK = "ok"
 FAIL = "falhou"
 INFO = "info"
 PENDING = "incompleto"
+CUMPRE = "cumpre"  # flags on the per-round / pooled rows; the Portão 1 row decides
+NAO_CUMPRE = "não cumpre"
+AGG_NOTE = (
+    "agregacao das rodadas no Portao 1 pendente do dono do produto (docs/08): "
+    "todas as rodadas passam, ou vale o valor conjunto? As duas regras discordam"
+)
+UNFINISHED_KEYS = ("failed", "cancelled", "pending_at_end")
+COUNT_KEYS = ("reads", "read_misses", "miss_start_events", *UNFINISHED_KEYS)
 
 
 @dataclass
@@ -112,7 +125,7 @@ def validate_telemetry(telemetry: object, label: str) -> list[str]:
     if not isinstance(telemetry, Mapping):
         return [f"{label}: telemetria ausente"]
     reasons = []
-    for key in ("reads", "read_misses", "unfinished_misses"):
+    for key in COUNT_KEYS:
         if not _is_count(telemetry.get(key)):
             reasons.append(f"{label}: telemetria.{key}: esperado inteiro nao negativo")
     waits = telemetry.get("miss_wait_us")
@@ -126,10 +139,16 @@ def validate_telemetry(telemetry: object, label: str) -> list[str]:
         reasons.append(f"{label}: telemetria.reads = 0 (sem leituras nao ha taxa de falta)")
     if misses > reads:
         reasons.append(f"{label}: telemetria.read_misses > reads")
-    if len(wait_list) + telemetry["unfinished_misses"] != misses:
+    unfinished = sum(telemetry[key] for key in UNFINISHED_KEYS)
+    if len(wait_list) + unfinished != misses:
         reasons.append(
-            f"{label}: telemetria: len(miss_wait_us) + unfinished_misses"
+            f"{label}: telemetria: len(miss_wait_us) + failed + cancelled + pending_at_end"
             " deve ser igual a read_misses"
+        )
+    if telemetry["miss_start_events"] != misses:
+        reasons.append(
+            f"{label}: perda de evento: miss_start_events ({telemetry['miss_start_events']})"
+            f" difere de read_misses ({misses})"
         )
     return reasons
 
@@ -169,14 +188,27 @@ def _stutter_rows(
     return rows
 
 
+def _aggregate_status(per_round_ok: Sequence[bool], pooled_ok: bool, notes: list[str]) -> str:
+    """Gate 1 aggregation is the owner's decision (docs/08): pass only when both rules agree."""
+    if all(per_round_ok) and pooled_ok:
+        return OK
+    if not all(per_round_ok) and not pooled_ok:
+        return FAIL
+    if AGG_NOTE not in notes:
+        notes.append(AGG_NOTE)
+    return PENDING
+
+
 def _telemetry_rows(name: str, runs: Sequence[Any], notes: list[str]) -> list[Row]:
     is_gate = name == GATE_PROFILE
     rate_criterion = f"< {MISS_RATE_LIMIT_PERCENT:g}%" if is_gate else "informativo"
     wait_criterion = f"p99 < {WAIT_P99_LIMIT_MS:g} ms" if is_gate else "informativo"
     nd_rows = [
-        Row("Taxa de falta", ND, rate_criterion, ND),
-        Row("Espera numa falta p50/p95/p99 (ms)", ND, wait_criterion, ND),
-        Row("Faltas não concluídas", ND, "= 0", ND),
+        Row("Taxa de falta, por rodada", ND, rate_criterion, ND),
+        Row("Taxa de falta, rodadas juntas", ND, rate_criterion, ND),
+        Row("Espera numa falta p99 por rodada (ms)", ND, wait_criterion, ND),
+        Row("Espera numa falta p50/p95/p99, rodadas juntas (ms)", ND, wait_criterion, ND),
+        Row("Faltas não concluídas (failed / cancelled / pending_at_end)", ND, "= 0", ND),
     ]
     blocks = [run.get("telemetry") if isinstance(run, Mapping) else None for run in runs]
     reasons = [
@@ -188,29 +220,89 @@ def _telemetry_rows(name: str, runs: Sequence[Any], notes: list[str]) -> list[Ro
         notes.extend(reasons)
         return nd_rows
     valid: list[Mapping[str, Any]] = [block for block in blocks if isinstance(block, Mapping)]
-    reads = sum(block["reads"] for block in valid)
-    misses = sum(block["read_misses"] for block in valid)
-    unfinished = sum(block["unfinished_misses"] for block in valid)
-    waits = [float(w) / 1000.0 for block in valid for w in block["miss_wait_us"]]
-    rate = 100.0 * misses / reads
+    rates = [100.0 * b["read_misses"] / b["reads"] for b in valid]
+    reads = sum(b["reads"] for b in valid)
+    misses = sum(b["read_misses"] for b in valid)
+    pooled_rate = 100.0 * misses / reads
+    round_waits = [[float(w) / 1000.0 for w in b["miss_wait_us"]] for b in valid]
+    all_waits = [w for waits in round_waits for w in waits]
+    p99s = [nearest_rank(w, 0.99) if w else 0.0 for w in round_waits]
+    pooled_p99 = nearest_rank(all_waits, 0.99) if all_waits else 0.0
+    rate_flags = [rate < MISS_RATE_LIMIT_PERCENT for rate in rates]
+    wait_flags = [p99 < WAIT_P99_LIMIT_MS for p99 in p99s]
+    rate_pooled_ok = pooled_rate < MISS_RATE_LIMIT_PERCENT
+    wait_pooled_ok = pooled_p99 < WAIT_P99_LIMIT_MS
+
+    def flag(ok: bool) -> str:
+        return (CUMPRE if ok else NAO_CUMPRE) if is_gate else INFO
+
+    if all_waits:
+        p50, p95 = nearest_rank(all_waits, 0.50), nearest_rank(all_waits, 0.95)
+        pooled_value = (
+            f"{_format_ms(p50)} / {_format_ms(p95)} / {_format_ms(pooled_p99)} (N={len(all_waits)})"
+        )
+    else:
+        pooled_value = "sem faltas concluídas (N=0)"
     rows = [
         Row(
-            "Taxa de falta",
-            f"{rate:.3f}% ({misses}/{reads})",
+            "Taxa de falta, por rodada",
+            " · ".join(f"{rate:.3f}%" for rate in rates),
+            f"{rate_criterion} em cada rodada" if is_gate else rate_criterion,
+            flag(all(rate_flags)),
+        ),
+        Row(
+            "Taxa de falta, rodadas juntas",
+            f"{pooled_rate:.3f}% ({misses}/{reads})",
             rate_criterion,
-            (FAIL if rate >= MISS_RATE_LIMIT_PERCENT else OK) if is_gate else INFO,
-        )
+            flag(rate_pooled_ok),
+        ),
     ]
-    if waits:
-        p50, p95, p99 = (nearest_rank(waits, p) for p in (0.50, 0.95, 0.99))
-        wait_value = f"{_format_ms(p50)} / {_format_ms(p95)} / {_format_ms(p99)} (N={len(waits)})"
-        wait_status = (FAIL if p99 >= WAIT_P99_LIMIT_MS else OK) if is_gate else INFO
-    else:
-        wait_value, wait_status = "sem faltas concluídas (N=0)", ND
-    rows.append(Row("Espera numa falta p50/p95/p99 (ms)", wait_value, wait_criterion, wait_status))
-    if unfinished:
-        notes.append(f"{unfinished} falta(s) não concluída(s): a rodada não passa no p99 (docs/08)")
-    rows.append(Row("Faltas não concluídas", str(unfinished), "= 0", PENDING if unfinished else OK))
+    if is_gate:
+        rows.append(
+            Row(
+                "Taxa de falta (Portão 1)",
+                "—",
+                "as duas regras concordam",
+                _aggregate_status(rate_flags, rate_pooled_ok, notes),
+            )
+        )
+    rows += [
+        Row(
+            "Espera numa falta p99 por rodada (ms)",
+            " · ".join(_format_ms(p99) for p99 in p99s),
+            f"{wait_criterion} em cada rodada" if is_gate else wait_criterion,
+            flag(all(wait_flags)),
+        ),
+        Row(
+            "Espera numa falta p50/p95/p99, rodadas juntas (ms)",
+            pooled_value,
+            wait_criterion,
+            flag(wait_pooled_ok),
+        ),
+    ]
+    if is_gate:
+        rows.append(
+            Row(
+                "Espera numa falta p99 (Portão 1)",
+                "—",
+                "as duas regras concordam",
+                _aggregate_status(wait_flags, wait_pooled_ok, notes),
+            )
+        )
+    counts = [sum(b[key] for b in valid) for key in UNFINISHED_KEYS]
+    if any(counts):
+        notes.append(
+            f"{sum(counts)} falta(s) não concluída(s) na janela (failed/cancelled/pending_at_end):"
+            " a rodada fica incompleta (docs/08)"
+        )
+    rows.append(
+        Row(
+            "Faltas não concluídas (failed / cancelled / pending_at_end)",
+            " / ".join(str(c) for c in counts),
+            "= 0",
+            PENDING if any(counts) else OK,
+        )
+    )
     return rows
 
 
@@ -239,7 +331,7 @@ def evaluate_profile(name: str, profile: object, limits: Mapping[str, Any]) -> P
     statuses = {row.status for row in result.rows}
     if FAIL in statuses:
         result.verdict = FAIL
-    elif statuses <= {OK, INFO}:
+    elif statuses - {CUMPRE, NAO_CUMPRE} <= {OK, INFO}:
         result.verdict = "passou"
     else:
         result.verdict = PENDING
@@ -276,6 +368,10 @@ def render_markdown(result: RoundResult) -> str:
         "Critérios: taxa de falta < 1% e espera numa falta p99 < 300 ms (decididos em `cabo_50`); "
         "stutter e carga dentro dos limites absolutos aprovados em todos os perfis. "
         "`n/d` = métrica ausente ou inválida; a rodada fica `incompleto`, nunca `passou`.",
+        "",
+        "Janela da telemetria: rota do robô com `SW_GAME_STATE_PLAYING`, carga inicial à parte; "
+        "taxa e p99 por rodada e com as rodadas juntas (docs/08). Agregação no Portão 1: "
+        "**pendente do dono do produto**; só dá `passou` quando as duas regras concordam.",
         "",
         "Pop-in: avaliação visual manual, fora deste relatório (registrar à parte).",
         "",
