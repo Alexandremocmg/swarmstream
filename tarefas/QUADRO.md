@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 0 | 0 | 0 | 40 | 4 |
+| 1 | 0 | 0 | 0 | 39 | 5 |
 
 ## EM_ANDAMENTO
 - [F1-33](cartoes/F1-33.md) (R3, sessão: Pleno): Script de relatório da rodada (métricas por perfil)
@@ -36,9 +36,8 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-30](cartoes/F1-30.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-12 | Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo |
 | [F1-31](cartoes/F1-31.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-11 | Teste de queda: matar o processo em pontos aleatórios da escrita |
 | [F1-32](cartoes/F1-32.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Teste de disco cheio e de erro de escrita |
-| [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33, F1-43 | Rodadas semanais nos 3 perfis + comparação com o baseline |
+| [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33 | Rodadas semanais nos 3 perfis + comparação com o baseline |
 | [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
-| [F1-43](cartoes/F1-43.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Definir no doc 08 a espera numa falta como no swarmstream.h |
 | [F1-44](cartoes/F1-44.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra |
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
 | [F1-46](cartoes/F1-46.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-10 | Trocar assert por verificação que não some com NDEBUG nos testes do sw-core |
@@ -62,3 +61,4 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-39](cartoes/F1-39.md): Ampliar o lint do CI para as ferramentas do baseline e os vetores
 - [F1-41](cartoes/F1-41.md): Alinhar a spec 03 (§7.1, §7.2, §8) ao ADR-0012: format_version só do envelope, min_reader no payload
 - [F1-42](cartoes/F1-42.md): Alinhar o doc 04 ao ADR-0013: checksum XXH3 por bloco, não por peça, no índice
+- [F1-43](cartoes/F1-43.md): Definir no doc 08 a espera numa falta como no swarmstream.h
