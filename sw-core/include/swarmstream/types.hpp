@@ -114,7 +114,8 @@ enum class CacheErrorCode {
     InvalidSize,
     PieceNotFound,
     CorruptedChecksum,
-    IoError
+    IoError,
+    DiskFull // sem espaço no disco (pré-alocação ou escrita); F1-10
 };
 
 [[nodiscard]] constexpr std::string_view to_string(CacheErrorCode code) noexcept
@@ -129,6 +130,7 @@ enum class CacheErrorCode {
     case CacheErrorCode::PieceNotFound: return "PieceNotFound";
     case CacheErrorCode::CorruptedChecksum: return "CorruptedChecksum";
     case CacheErrorCode::IoError: return "IoError";
+    case CacheErrorCode::DiskFull: return "DiskFull";
     }
     return "UnknownCacheError";
 }
