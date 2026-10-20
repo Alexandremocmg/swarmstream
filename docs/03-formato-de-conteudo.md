@@ -306,6 +306,9 @@ O leitor não depende do chunker, mas **dois builds só compartilham blocos se o
 - Tabela gear de 256 entradas de 64 bits: `gear[i] = LE64(SHA-256("swarmstream-gear-v0" ‖ byte(i))[0..8])`.
 - Máscaras: `mask_s` = os `log2(avg)+2` bits **mais significativos** de 64 em 1 (19 bits para 128 KiB); `mask_l` = os `log2(avg)−2` mais significativos (15 bits). `mask_s` vale para posições `i < normal`, `mask_l` a partir daí; corte quando `(fp & mask) == 0`.
 - O hash começa em `fp = 0` na posição `min` (as primeiras `min` posições não entram no hash), e o bloco **inclui** o byte que disparou o corte (`retorne i+1`). Sem corte até `min(restante, max)`, o bloco termina ali.
+- **Valores válidos de `avg` (esclarecimento, F1-51):** `avg` DEVE ser **potência de 2** e ter **mínimo 8**. Outros valores são inválidos e o chunker recusa a configuração (com `avg < 8` o `log2(avg)−2` cairia abaixo de 1 bit de máscara). Isso já era o comportamento do código; passa a ser regra escrita.
+- **Corte em fluxo (esclarecimento, F1-51):** a decisão de corte olha até `max` bytes à frente. Quem corta um arquivo em fluxo (sem o arquivo inteiro na memória) precisa de uma janela de **pelo menos `max` bytes** antes de decidir, ou do fim do arquivo. Uma janela menor pode mudar o corte, então não é um corte válido.
+Os dois esclarecimentos não mudam nenhum corte e por isso dispensam ADR (avaliação do R1, F1-51).
 - Algoritmo exato (pseudocódigo) e vetores: [`sw-pack/testdata/README.md`](../sw-pack/testdata/README.md). **Aprovado pelo R1 em 2026-10-18**; faz parte do formato e só muda por ADR.
 - Tamanho real, medido em 64 MiB pseudoaleatórios: **média ≈ 148 KiB** (mediana 148 KiB; 1,1% dos blocos no máximo; 17% até 128 KiB). `avg` é o ponto de normalização, não a média. Inserir 1 byte no meio mudou 1 bloco. O orçamento de [§7.3](#73-orçamento-de-tamanho-meta--50-mb-para-150-gb-de-jogo) deve usar a média medida nos assets reais (F1-04), não 128 KiB.
 
