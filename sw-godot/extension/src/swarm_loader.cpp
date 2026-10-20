@@ -347,7 +347,10 @@ Variant SwarmLoader::_load(const String& path, const String&, bool, int32_t) con
                     callable_mp(gate, &SwarmGate::apply_texture)
                         .call_deferred(tex, full_img, path, eid, t_req);
                 });
-            if (id == 0) SwarmGate::pending_add(-1);
+            if (id == 0) {
+                // Pedido recusado: o recurso fica no nível do core. Nunca em silêncio.
+                gate->report_failure(path, SW_E_INTERNAL, 0);
+            }
         }
         result = tex;
     } else if (path.ends_with(".swmesh")) {
@@ -379,7 +382,10 @@ Variant SwarmLoader::_load(const String& path, const String&, bool, int32_t) con
                     callable_mp(gate, &SwarmGate::apply_mesh)
                         .call_deferred(mesh, arrays, path, eid, t_req);
                 });
-            if (id == 0) SwarmGate::pending_add(-1);
+            if (id == 0) {
+                // Pedido recusado: o recurso fica no nível do core. Nunca em silêncio.
+                gate->report_failure(path, SW_E_INTERNAL, 0);
+            }
         }
         result = mesh;
     } else if (path.ends_with(".ogg")) {
@@ -419,7 +425,10 @@ Variant SwarmLoader::_load(const String& path, const String&, bool, int32_t) con
                     callable_mp(gate, &SwarmGate::apply_audio)
                         .call_deferred(stream, loaded, path, eid, t_req);
                 });
-            if (id == 0) SwarmGate::pending_add(-1);
+            if (id == 0) {
+                // Pedido recusado: o recurso fica no nível do core. Nunca em silêncio.
+                gate->report_failure(path, SW_E_INTERNAL, 0);
+            }
         }
         result = stream;
     } else {
