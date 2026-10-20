@@ -64,7 +64,7 @@ Definição igual à do [`swarmstream.h`](../sw-core/include/swarmstream.h) (com
 
 **Percentis**
 - `miss_wait_p50_us`, `miss_wait_p95_us` e `miss_wait_p99_us` de `sw_stats` valem sobre os **últimos 60 s**, contados pelo instante t1 da falta. É o único instante em que a espera é conhecida; efeito aceito: uma falta presa não aparece no p99 enquanto não termina, então o overlay mostra `pending_requests` ao lado.
-- Os relatórios da bancada (F1-33, F1-34) calculam os percentis sobre as faltas da **janela da medição** (por t0), a partir dos eventos, por rodada e juntando as rodadas, pelo método do posto mais próximo (índice `ceil(p × N)` das esperas ordenadas). Com menos de 100 faltas concluídas o p99 é só o máximo: o relatório informa `N` ao lado do percentil.
+- Os relatórios da bancada (F1-33, F1-34) calculam os percentis sobre as faltas da **janela da medição** (por t0), a partir dos eventos, por rodada e juntando as rodadas, pelo método do posto mais próximo (índice `ceil(p × N)` das esperas ordenadas), com o mínimo de amostras e a cota superior de 95% definidos [abaixo](#método-do-percentil-amostras-e-rodadas-comparáveis-f1-48). O relatório informa `N` ao lado do percentil.
 
 **Como medir (eventos)**
 
@@ -77,6 +77,73 @@ Campos em ASCII, `snake_case`, em inglês: os eventos são o protocolo aberto de
 
 - Os dois eventos se casam por `request_id`. O de `sw_read` vem do **mesmo contador** dos ids de `sw_read_async`, para nunca repetir na mesma rodada. Um `read_miss_start` sem `read_miss` no fim da drenagem recebe `outcome = pending_at_end` na gravação final; sem isso, o relatório trata como perda de evento.
 - Emitir evento no caminho da leitura **não pode alocar nem bloquear** (regra do header). Requisito da F1-30: buffer circular pré-alocado, gravado por outra thread.
+
+### Método do percentil, amostras e rodadas comparáveis (F1-48)
+
+**Estado: proposta técnica do R1, aguardando revisão independente e o aceite do dono do produto. Vale para as medições finais do Portão 1.** A regra do portão está nos docs [16](16-briefing-fase-1a.md) e acima: p99 < 300 ms sobre os eventos individuais reunidos de pelo menos 3 rodadas completas e comparáveis. Esta seção define como calcular esse p99, quantas faltas são necessárias e quando rodadas podem ser reunidas. As contas são reproduzíveis com `python sw-godot/tools/p99_bounds.py`.
+
+**1. Método do percentil: posto mais próximo (confirmado).** Ordenam-se as esperas das faltas concluídas e o percentil `p` é o valor de posto `k = ⌈p × N⌉` (contando a partir de 1). Para o p99: `k = ⌈0,99 × N⌉`. Fica este método, e não uma interpolação, por três motivos:
+- o resultado é sempre uma espera que aconteceu, nunca um valor entre duas;
+- é igual em qualquer linguagem e biblioteca: as interpolações têm pelo menos nove variantes, e cada ferramenta usa uma por padrão;
+- não suaviza a cauda, que é o que o portão quer ver.
+
+O `round_report.py` já implementa assim (`nearest_rank`).
+
+**2. Mínimo: N ≥ 300 faltas concluídas, reunidas de pelo menos 3 rodadas.** As contas abaixo não supõem nenhuma distribuição: o número de esperas abaixo do p99 verdadeiro segue uma Binomial(N; 0,99).
+
+| N | posto do p99 | esperas acima do p99 | cota superior de 95% do p99 verdadeiro |
+| --- | --- | --- | --- |
+| 100 | 99 | 1 | não existe |
+| 200 | 198 | 2 | não existe |
+| 299 | 297 | 2 | posto 299 (o máximo) |
+| **300** | **297** | **3** | posto 300 (o máximo) |
+| 1000 | 990 | 10 | posto 996 (percentil amostral 99,6) |
+| 2000 | 1980 | 20 | posto 1988 (percentil amostral 99,4) |
+
+Por que 300:
+- **(a)** Abaixo de 299 não existe nenhuma cota superior de 95% para o p99: nem a maior espera observada garante, com 95% de confiança, que o p99 verdadeiro está abaixo dela. Com menos de 299 faltas, o dado não sustenta nenhuma afirmação sobre o p99.
+- **(b)** Com 300, ficam 3 esperas acima do posto do p99, que deixa de ser a maior espera: um caso isolado (uma pausa do sistema operacional, por exemplo) não decide o portão sozinho.
+- **(c)** Mesmo com N grande, o p99 amostral fica abaixo do verdadeiro em cerca de metade das vezes (de 54% a 65% nos valores da tabela, por `p99_bounds.py`). Por isso o relatório mostra, ao lado do p99, a **cota superior de 95%** e o N.
+
+**Regra de decisão proposta (opção A, recomendada):** o critério do portão é o p99 por posto mais próximo < 300 ms com N ≥ 300, como o dono decidiu. A cota de 95% é informativa. Quando o p99 passa e a cota não (cota ≥ 300 ms), o relatório escreve `passou (margem não demonstrada)`, e isso vai para o dono na reunião do portão.
+
+**Opção B, mais estrita, para o dono escolher:** exigir também a cota de 95% < 300 ms. O custo: com N = 300 a cota é a própria maior espera, então uma única falta lenta reprova. A opção B só faz sentido com N ≥ 1000, ou seja, mais rodadas.
+
+**3. O que torna rodadas comparáveis.** Rodadas só são reunidas quando todas valem ao mesmo tempo:
+- **Ambiente idêntico**, conferido pelo relatório (`environment`):
+  - os campos que o `round_report.py` já confere (`machine`, `gpu`, `build` = `git rev-parse HEAD`, `route_sha256`);
+  - mais a versão do Godot (`godot`), o perfil de rede e a sua configuração no `sw-netlab` (`network_profile`), e o hash do `assets.lock.json` (`assets`).
+
+  Os campos novos entram no formato da rodada pela F1-33.
+- **Mesmo procedimento:**
+  - cache no mesmo estado inicial (só o grupo `core`, e o resto vazio, apagado antes de cada rodada);
+  - uma rodada de aquecimento descartada por sessão de medição;
+  - a mesma duração de rota;
+  - a máquina na tomada;
+  - sem outras sessões, builds ou benchmarks rodando, com a CPU registrada nos 30 s antes de cada rodada. A máquina parada é a regra do CLAUDE.md.
+- **Rodada completa:** drenagem feita; nenhuma falta `failed`, `cancelled` ou `pending_at_end`; e `read_miss_start` com t0 na janela igual a `Δread_misses`, ou seja, sem perda de evento ([acima](#espera-do-jogo-numa-falta)).
+- **Sem escolher rodadas:** o número de rodadas é declarado antes de medir, e **todas** as rodadas completas daquela sessão entram. Uma rodada incompleta é refeita, e o motivo é registrado; ela nunca é simplesmente descartada.
+
+Não proponho agora um teste estatístico de homogeneidade entre rodadas, como uma variação máxima do p50 entre elas. Ainda não há uma única medição real da espera, e um limite escolhido sem dados seria arbitrário. Ele entra, se fizer falta, depois das primeiras rodadas da F1-34.
+
+**4. Menos amostras que o mínimo.**
+- Com N < 300, o p99 agregado é `incompleto`, nunca `passou`. Sem nenhuma falta concluída, ele é `n/d` com N = 0, nunca p99 = 0.
+- Taxa de falta e p99 são critérios separados: uma rodada pode passar na taxa (< 1%) e o p99 agregado continuar `incompleto`.
+- Para chegar a 300, acrescentam-se rodadas comparáveis, todas contadas, até o limite de **10 rodadas** por sessão de medição.
+- Se mesmo assim N < 300, o resultado é `incompleto por poucas faltas`, e a decisão vai para o dono. Poucas faltas é uma boa notícia para a taxa, mas não certifica a espera.
+- A saída que proponho para esse caso, se o dono aceitar, é uma **rodada de faltas forçadas**: mesma rota, cache frio e prefetch desligado, só para medir a distribuição da espera no caminho da falta. Ela não entra na taxa de falta.
+
+**5. Limiares da comparação entre perfis (`compare_profiles.py`, F1-47).**
+
+| Limiar | Proposta da F1-47 | R1 | Motivo |
+| --- | --- | --- | --- |
+| Razão da espera p50 (lento/rápido) | ≥ 2,0× | **confirmo** | A razão esperada só da rede é ≈ 4,66× ([protocolo](medicoes/protocolo-mudanca-conhecida.md)); a metade dela deixa folga para o prefetch esconder parte da espera e ainda detecta uma bancada que não acompanha a rede |
+| Razão da carga (mediana de 3 rodadas) | ≥ 1,2× | **confirmo** | Entra como "e/ou" com a espera; na cena atual, a leitura é só uma parte da carga ([baseline.md](medicoes/baseline.md) §4) |
+| Ruído tolerado (`--noise`) | 10% | **trocar por 20%** | A carga variou **20,4%** entre rodadas quentes no baseline (§2). Com 10%, uma diferença dentro do ruído medido daria `incoerente` falso |
+| Mínimo de amostras (`--min-samples`) | não definido | **300 por perfil** | O relatório compara também p95 e p99; com o mesmo mínimo do portão, o p99 de cada perfil tem a mesma garantia. Para o p50 bastariam 100 (intervalo de 95% entre os percentis 40 e 61) |
+| Aviso de surpresa | razão > 3× a esperada | **confirmo** | Sinaliza sem reprovar |
+
+Depois do aceite, a F1-33 (`round_report.py`) e a F1-47 (`compare_profiles.py`) passam a usar esses valores por padrão. Até lá, o mínimo é passado na linha de comando e registrado no relatório.
 
 ## Bancada de testes `sw-netlab`
 
