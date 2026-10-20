@@ -33,6 +33,9 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-19 | F1-01: independência confirmada pela sessão Sênior e conferida pela gestão no histórico das sessões; o F1-01 segue com a Sênior, depois da F1-46, com checkout esparso sem os scripts Python |
 | 2026-10-19 | **F1-27** (fonte HTTP) fica com a **Sênior (R2), depois do F1-01** |
 | 2026-10-19 | PR #20 aceito: regra do Portão 1 registrada nos docs 16 e 08 |
+| 2026-10-20 | **F1-48 aceito (PR #29). Opção A:** o critério do Portão 1 é o p99 pontual (posto mais próximo) < 300 ms com **N >= 300 faltas concluídas por perfil**; a cota superior de 95% é **só informativa**. Rodadas comparáveis com os campos exatos de ambiente do doc 08; K declarado antes de medir (3 a 10, com uma extensão); sessões diferentes não se reúnem. Ruído da validação da bancada mantido em 10% |
+| 2026-10-20 | **Rodada de faltas forçadas aceita**: se, com K = 10, o perfil não chegar a 300 faltas, faz-se uma rodada com cache frio e prefetch desligado, só para medir a espera; ela não entra na taxa de falta |
+| 2026-10-20 | PRs #25 (F1-01), #26 (portão do F1-20), #27 (F1-51) e #29 (F1-48) aceitos |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_a1345bc0-fcb0-4aa8-a986-e4bff85c6932`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto

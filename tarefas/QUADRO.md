@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 38 | 8 |
+| 3 | 0 | 1 | 0 | 37 | 9 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -42,7 +42,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33 | Rodadas semanais nos 3 perfis + comparação com o baseline |
 | [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
-| [F1-48](cartoes/F1-48.md) | R1 | Opus 5.5, esforço alto | não | sim | Método do percentil e mínimo de amostras para o p99 da espera no Portão 1 |
 | [F1-49](cartoes/F1-49.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-20 | CI compila a extensão do Godot (loader) e roda o portão sem janela |
 | [F1-50](cartoes/F1-50.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-20 | Trocar uma thread por peça e por ensure por um pool de threads (loader e mock) |
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
@@ -68,4 +67,5 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-42](cartoes/F1-42.md): Alinhar o doc 04 ao ADR-0013: checksum XXH3 por bloco, não por peça, no índice
 - [F1-43](cartoes/F1-43.md): Definir no doc 08 a espera numa falta como no swarmstream.h
 - [F1-46](cartoes/F1-46.md): Trocar assert por verificação que não some com NDEBUG nos testes do sw-core
+- [F1-48](cartoes/F1-48.md): Método do percentil e mínimo de amostras para o p99 da espera no Portão 1
 - [F1-51](cartoes/F1-51.md): Vetor de bordas do chunker e esclarecimentos da spec 03 §11.1 e do README dos vetores
