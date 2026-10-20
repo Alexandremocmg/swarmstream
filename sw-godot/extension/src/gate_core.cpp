@@ -87,6 +87,7 @@ struct GateCore::Impl
     }
 
     // Grava uma peça vinda da fonte no cache (dados -> commit, como no ADR-0005).
+    // Roda SEM mu: só toca o MemoryCacheStore, que tem os próprios mutexes, e um atômico.
     bool store_piece(const PieceId& piece, const std::vector<uint8_t>& data)
     {
         auto slot = cache->alloc_slot();

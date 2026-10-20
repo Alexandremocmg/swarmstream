@@ -270,6 +270,27 @@ def build_chunker() -> dict[str, Any]:
             ],
         }
     )
+    # Vetor de bordas (F1-51, aditivo): parâmetros pequenos, ~16 KiB. Pega as duas mutações
+    # achadas no F1-01: máscara pequena também em i == avg, e hash começando antes de min.
+    edges_n = 16 * 1024
+    edges = stream("chunker/edges", edges_n)
+    edges_params = (64, 256, 1024)
+    offs, edge_chunks = 0, []
+    for length in chunk_lengths(edges, *edges_params):
+        edge_chunks.append({"len": length, "sha256": sha256(edges[offs : offs + length]).hex()})
+        offs += length
+    cases.append(
+        {
+            "label": "edges_small_params",
+            "stream": "chunker/edges",
+            "size": edges_n,
+            "min": edges_params[0],
+            "avg": edges_params[1],
+            "max": edges_params[2],
+            "data_sha256": sha256(edges).hex(),
+            "chunks": edge_chunks,
+        }
+    )
     return {
         "algorithm": "swarmstream-fastcdc-v0",
         "gear_first4_hex": [format(g, "016x") for g in gear[:4]],
