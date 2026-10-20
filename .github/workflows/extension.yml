@@ -59,7 +59,11 @@ jobs:
             -DGODOT_CPP_DIR="$GODOT_CPP_DIR"
 
       - name: Compilar a extensão
-        run: cmake --build build-godot --config Release --parallel
+        # Ubuntu: 2 jobs de compilação. Com --parallel total, o runner de 4 CPUs/~16 GB foi
+        # encerrado pelo runner ("received a shutdown signal") no meio do godot-cpp (hipótese: pico de memória).
+        env:
+          BUILD_JOBS: ${{ matrix.os == 'ubuntu-latest' && '2' || '4' }}
+        run: cmake --build build-godot --config Release --parallel "$BUILD_JOBS"
 
       - name: Conferir a saída (DLL ou .so)
         shell: bash
