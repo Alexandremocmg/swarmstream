@@ -130,7 +130,18 @@ O p99 de uma rodada isolada não tem mínimo; é só informação.
 | `network_profile` | objeto `{"name": "cabo_50", "bandwidth_mbps": 50.0, "latency_ms": 25.0, "loss_percent": 0.2}`, com os números do `PROFILES` de `sw-netlab/server.py` efetivamente usados | novo. Só o nome não basta: uma mudança no `PROFILES` passaria despercebida |
 | `assets` | SHA-256 dos bytes de `sw-godot/assets.lock.json` no commit `build` | novo |
 | `cache_state` | `"core-only"`: antes da rodada o cache foi apagado e deixado só com o grupo `core`, mais `cache_bytes_at_start` (bytes do cache na partida) | novo. Outro valor ⇒ rodada não comparável |
-| `cpu_busy_pct_30s` | média de uso total da CPU nos 30 s antes da rodada (Windows: `typeperf "\Processor(_Total)\% Processor Time" -si 1 -sc 30`) | novo. **Limite: < 5%**; acima ⇒ rodada não comparável |
+| `cpu_busy_pct_30s` | média de uso total da CPU nos 30 s antes da rodada: 30 amostras de 1 s, ver o método abaixo | novo. **Limite: < 5%**; acima ⇒ rodada não comparável |
+
+**Como medir `cpu_busy_pct_30s`.** O método não pode depender do idioma do Windows. O `typeperf` com o nome do contador em inglês (`\Processor(_Total)\% Processor Time`) **falha** num Windows em português: o nome do contador é traduzido. Por isso:
+- **Windows (qualquer idioma), sem privilégio de administrador:** a classe CIM `Win32_PerfFormattedData_PerfOS_Processor`, instância `_Total`, campo `PercentProcessorTime`, amostrada 30 vezes, uma por segundo, gravando a média:
+  ```powershell
+  $v = 1..30 | ForEach-Object { (Get-CimInstance -ClassName Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'").PercentProcessorTime; Start-Sleep -Seconds 1 }
+  ($v | Measure-Object -Average).Average
+  ```
+  Conferido em 2026-10-20 num Windows 11 em português: o `typeperf` com o contador em inglês falhou, e o CIM devolveu as amostras sem elevação de privilégio.
+- **Linux:** a diferença de `/proc/stat` (linha `cpu`) entre o início e o fim dos 30 s: `100 × (1 − Δidle/Δtotal)`, com `idle` = campos `idle` + `iowait`.
+
+O arquivo da rodada guarda a média e as 30 amostras.
 
 **Mesmo procedimento:** uma rodada de aquecimento descartada no início de cada sessão de medição; a mesma duração de rota; a máquina na tomada e sem outras sessões, builds ou benchmarks rodando (regra do CLAUDE.md, verificada pelo `cpu_busy_pct_30s`).
 
