@@ -1,0 +1,14 @@
+; SPDX-License-Identifier: Apache-2.0
+; Copyright 2026 Alexandre Aparecido Rodrigues Peres
+; GDExtension do Swarmstream (F1-20). O loader só reivindica swarm://gate/**;
+; os caminhos res:// do benchmark continuam com os loaders nativos.
+[configuration]
+entry_symbol = "swarmstream_godot_init"
+compatibility_minimum = "4.5"
+reloadable = false
+
+[libraries]
+windows.debug.x86_64 = "res://addons/swarmstream/bin/swarmstream_godot.dll"
+windows.release.x86_64 = "res://addons/swarmstream/bin/swarmstream_godot.dll"
+linux.debug.x86_64 = "res://addons/swarmstream/bin/libswarmstream_godot.so"
+linux.release.x86_64 = "res://addons/swarmstream/bin/libswarmstream_godot.so"

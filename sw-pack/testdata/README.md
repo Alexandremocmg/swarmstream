@@ -2,9 +2,15 @@
 
 `vectors-v0.json` guarda os valores que qualquer implementação (C++ no `sw-pack`/`sw-core`, Go nos serviços) precisa reproduzir. Valores em hexadecimal; `stream(label, n)` = `SHA-256("swarmstream-vec-v0|" ‖ label ‖ u32le(contador))` concatenado e cortado em `n` bytes.
 
+**Como ler os campos** (esclarecimentos do F1-51):
+- `stream(label, n)`: o contador começa em **0** e cresce de 1 em 1; cada bloco de 32 bytes é `SHA-256("swarmstream-vec-v0|" ‖ label ‖ u32le(contador))`, e o resultado é cortado em `n` bytes.
+- `chunker.gear_first4_hex`: cada entrada é o **valor** de 64 bits em **hexadecimal** (16 dígitos, big-endian como número), **não** os bytes little-endian. Ex.: `gear[0]` aparece como o número `gear[0]`, não como a sequência de bytes da tabela.
+- `chunker.gear_table_sha256`: SHA-256 da serialização das **256 entradas**, cada uma como **8 bytes little-endian** (2048 bytes no total, na ordem de `i` de 0 a 255).
+- `chunker.cases[*].chunks`: `len` é o tamanho do bloco em bytes; `sha256` é o SHA-256 dos bytes do bloco. Os blocos cobrem a entrada sem lacuna e sem sobreposição.
+
 | Seção | O que cobre |
 | --- | --- |
-| `chunker` | tabela gear, FastCDC 2020 com os parâmetros do §11.1 (32 KiB / 128 KiB / 256 KiB) e um caso com parâmetros pequenos; vazio, 1 byte, nos limites min/max, 1 MiB, 4 MiB e zeros |
+| `chunker` | tabela gear e algoritmo `swarmstream-fastcdc-v0` (§11.1) com os parâmetros do §11.1 (32 KiB / 128 KiB / 256 KiB); vazio, 1 byte, nos limites min/max, 1 MiB, 4 MiB e zeros; dois casos com parâmetros pequenos: `small_params_64k` (256/1024/4096) e **`edges_small_params`** (64/256/1024 sobre 16 KiB de `stream("chunker/edges")`, F1-51, adicionado depois sem mudar nenhum valor anterior; pega a máscara pequena em `i == avg` e o hash que começa antes de `min`) |
 | `codecs` | frames Zstd e LZ4 (block format) de 6 entradas, com a regra "não reduziu ⇒ `NONE`"; Zstd com `Frame_Content_Size` presente e `Dictionary_ID = 0` |
 | `envelope` | envelope do §7.1 assinado com **chave de teste** (seed `00..1f`), `MSG`, assinatura Ed25519, `manifest_id` e 7 casos que o leitor DEVE recusar (3 exigidos pela spec + cabeçalho/chave); mais 2 casos de `format_version` desconhecido, com assinatura válida (recusado por igualdade, `unsupported`; um deles também com `reserved ≠ 0`, para fixar que a versão é conferida antes) |
 | `envelope.payload_probe` | sondagem do `min_reader` (§7.1, passo 4): 7 manifestos assinados com payload FlatBuffers mínimo (`min_reader` 0, 1, ausente, identificador errado, raiz fora do buffer, raiz dentro do cabeçalho, campo por cima do `soffset`), com o resultado esperado (`ok`, `unsupported`, `invalid`) para um leitor da revisão 0 |
