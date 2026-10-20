@@ -80,7 +80,7 @@ Campos em ASCII, `snake_case`, em inglês: os eventos são o protocolo aberto de
 
 ### Método do percentil, amostras e rodadas comparáveis (F1-48)
 
-**Estado: proposta técnica do R1, aguardando revisão independente e o aceite do dono do produto. Vale para as medições finais do Portão 1.** A regra do portão está nos docs [16](16-briefing-fase-1a.md) e acima: p99 < 300 ms sobre os eventos individuais reunidos de pelo menos 3 rodadas completas e comparáveis. Esta seção define como calcular esse p99, quantas faltas são necessárias e quando rodadas podem ser reunidas. As contas são reproduzíveis com `python sw-godot/tools/p99_bounds.py`.
+**Estado: proposta técnica do R1, revisada pela sessão Pleno (aprovada com ajustes, já aplicados) e à espera do aceite do dono do produto. Vale para as medições finais do Portão 1.** A regra do portão está nos docs [16](16-briefing-fase-1a.md) e acima: p99 < 300 ms sobre os eventos individuais reunidos de pelo menos 3 rodadas completas e comparáveis. Esta seção define como calcular esse p99, quantas faltas são necessárias e quando rodadas podem ser reunidas. As contas são reproduzíveis com `python sw-godot/tools/p99_bounds.py`.
 
 **1. Método do percentil: posto mais próximo (confirmado).** Ordenam-se as esperas das faltas concluídas e o percentil `p` é o valor de posto `k = ⌈p × N⌉` (contando a partir de 1). Para o p99: `k = ⌈0,99 × N⌉`. Fica este método, e não uma interpolação, por três motivos:
 - o resultado é sempre uma espera que aconteceu, nunca um valor entre duas;
@@ -89,49 +89,62 @@ Campos em ASCII, `snake_case`, em inglês: os eventos são o protocolo aberto de
 
 O `round_report.py` já implementa assim (`nearest_rank`).
 
-**2. Mínimo: N ≥ 300 faltas concluídas, reunidas de pelo menos 3 rodadas.** As contas abaixo não supõem nenhuma distribuição: o número de esperas abaixo do p99 verdadeiro segue uma Binomial(N; 0,99).
+**2. Mínimo: N ≥ 300 faltas concluídas, reunidas de pelo menos 3 rodadas, por perfil.** As contas não supõem nenhuma distribuição: o número de esperas abaixo do p99 verdadeiro segue uma Binomial(N; 0,99).
 
-| N | posto do p99 | esperas acima do p99 | cota superior de 95% do p99 verdadeiro |
-| --- | --- | --- | --- |
-| 100 | 99 | 1 | não existe |
-| 200 | 198 | 2 | não existe |
-| 299 | 297 | 2 | posto 299 (o máximo) |
-| **300** | **297** | **3** | posto 300 (o máximo) |
-| 1000 | 990 | 10 | posto 996 (percentil amostral 99,6) |
-| 2000 | 1980 | 20 | posto 1988 (percentil amostral 99,4) |
+| N | posto do p99 | esperas acima do p99 | cota superior de 95% do p99 verdadeiro | p99 amostral abaixo do verdadeiro |
+| --- | --- | --- | --- | --- |
+| 100 | 99 | 1 | não existe | 74% das vezes |
+| 200 | 198 | 2 | não existe | 68% |
+| 299 | 297 | 2 | posto 299 (a maior espera) | 42% |
+| **300** | **297** | **3** | posto 300 (a maior espera) | 65% |
+| 500 | 495 | 5 | posto 499 | 62% |
+| 1000 | 990 | 10 | posto 996 (percentil amostral 99,6) | 58% |
+| 2000 | 1980 | 20 | posto 1988 (percentil amostral 99,4) | 56% |
 
 Por que 300:
-- **(a)** Abaixo de 299 não existe nenhuma cota superior de 95% para o p99: nem a maior espera observada garante, com 95% de confiança, que o p99 verdadeiro está abaixo dela. Com menos de 299 faltas, o dado não sustenta nenhuma afirmação sobre o p99.
-- **(b)** Com 300, ficam 3 esperas acima do posto do p99, que deixa de ser a maior espera: um caso isolado (uma pausa do sistema operacional, por exemplo) não decide o portão sozinho.
-- **(c)** Mesmo com N grande, o p99 amostral fica abaixo do verdadeiro em cerca de metade das vezes (de 54% a 65% nos valores da tabela, por `p99_bounds.py`). Por isso o relatório mostra, ao lado do p99, a **cota superior de 95%** e o N.
+- **(a) É o menor N redondo em que o dado sustenta alguma afirmação sobre o p99.** Abaixo de 299 não existe cota superior de 95% para o p99 verdadeiro: nem a maior espera observada garante, com 95% de confiança, que ele está abaixo dela (a cota existe quando `1 − 0,99^N ≥ 0,95`, isto é, N ≥ 299).
+- **(b) O p99 amostral é um estimador ruidoso da cauda.** Ele fica abaixo do p99 verdadeiro em 42% a 74% das vezes nos valores da tabela, perto da metade quando N cresce. Por isso o relatório mostra, ao lado do p99, a **cota superior de 95%** e o N.
 
 **Regra de decisão proposta (opção A, recomendada):** o critério do portão é o p99 por posto mais próximo < 300 ms com N ≥ 300, como o dono decidiu. A cota de 95% é informativa. Quando o p99 passa e a cota não (cota ≥ 300 ms), o relatório escreve `passou (margem não demonstrada)`, e isso vai para o dono na reunião do portão.
 
-**Opção B, mais estrita, para o dono escolher:** exigir também a cota de 95% < 300 ms. O custo: com N = 300 a cota é a própria maior espera, então uma única falta lenta reprova. A opção B só faz sentido com N ≥ 1000, ou seja, mais rodadas.
+**Opção B, mais estrita, para o dono escolher:** exigir também a cota de 95% < 300 ms. O custo está na tabela. Com N = 300, a cota de 95% é a própria maior espera (posto 300), enquanto o p99 tem 3 esperas acima dele. Uma única falta lenta decide a cota (opção B), mas não o p99 (opção A). A cota só sai da maior espera perto de N = 500 (posto 499) e fica no percentil amostral 99,6 com N = 1000 (posto 996). A opção B só faz sentido com N ≥ 1000, ou seja, mais rodadas.
 
-**3. O que torna rodadas comparáveis.** Rodadas só são reunidas quando todas valem ao mesmo tempo:
-- **Ambiente idêntico**, conferido pelo relatório (`environment`):
-  - os campos que o `round_report.py` já confere (`machine`, `gpu`, `build` = `git rev-parse HEAD`, `route_sha256`);
-  - mais a versão do Godot (`godot`), o perfil de rede e a sua configuração no `sw-netlab` (`network_profile`), e o hash do `assets.lock.json` (`assets`).
+**O mínimo vale por perfil**, sempre sobre as faltas reunidas das rodadas daquele perfil:
+- no portão, só o perfil `cabo_50`;
+- na comparação de perfis (`compare_profiles.py`), cada perfil comparado precisa de 300 faltas suas.
 
-  Os campos novos entram no formato da rodada pela F1-33.
-- **Mesmo procedimento:**
-  - cache no mesmo estado inicial (só o grupo `core`, e o resto vazio, apagado antes de cada rodada);
-  - uma rodada de aquecimento descartada por sessão de medição;
-  - a mesma duração de rota;
-  - a máquina na tomada;
-  - sem outras sessões, builds ou benchmarks rodando, com a CPU registrada nos 30 s antes de cada rodada. A máquina parada é a regra do CLAUDE.md.
-- **Rodada completa:** drenagem feita; nenhuma falta `failed`, `cancelled` ou `pending_at_end`; e `read_miss_start` com t0 na janela igual a `Δread_misses`, ou seja, sem perda de evento ([acima](#espera-do-jogo-numa-falta)).
-- **Sem escolher rodadas:** o número de rodadas é declarado antes de medir, e **todas** as rodadas completas daquela sessão entram. Uma rodada incompleta é refeita, e o motivo é registrado; ela nunca é simplesmente descartada.
+O p99 de uma rodada isolada não tem mínimo; é só informação.
+
+**3. O que torna rodadas comparáveis.** Rodadas só são reunidas quando todas as condições abaixo valem e estão gravadas no arquivo da rodada.
+
+**Ambiente idêntico** (objeto `environment` de cada rodada; qualquer diferença entre rodadas, ou campo ausente, torna a reunião `incompleto`):
+
+| Campo | Valor exato | De onde sai |
+| --- | --- | --- |
+| `machine` | nome da máquina | já existe |
+| `gpu` | `renderer` da rodada | já existe |
+| `build` | `git rev-parse HEAD` | já existe |
+| `build_clean` | `true`: `git status --porcelain --untracked-files=no` vazio antes de compilar | novo. Árvore suja ⇒ rodada não comparável |
+| `route_sha256` | SHA-256 do `route.log` | já existe |
+| `godot` | a linha impressa por `godot --version`, sem alteração (hoje `4.7.2.stable.official.ed1daf0bf`) | novo |
+| `network_profile` | objeto `{"name": "cabo_50", "bandwidth_mbps": 50.0, "latency_ms": 25.0, "loss_percent": 0.2}`, com os números do `PROFILES` de `sw-netlab/server.py` efetivamente usados | novo. Só o nome não basta: uma mudança no `PROFILES` passaria despercebida |
+| `assets` | SHA-256 dos bytes de `sw-godot/assets.lock.json` no commit `build` | novo |
+| `cache_state` | `"core-only"`: antes da rodada o cache foi apagado e deixado só com o grupo `core`, mais `cache_bytes_at_start` (bytes do cache na partida) | novo. Outro valor ⇒ rodada não comparável |
+| `cpu_busy_pct_30s` | média de uso total da CPU nos 30 s antes da rodada (Windows: `typeperf "\Processor(_Total)\% Processor Time" -si 1 -sc 30`) | novo. **Limite: < 5%**; acima ⇒ rodada não comparável |
+
+**Mesmo procedimento:** uma rodada de aquecimento descartada no início de cada sessão de medição; a mesma duração de rota; a máquina na tomada e sem outras sessões, builds ou benchmarks rodando (regra do CLAUDE.md, verificada pelo `cpu_busy_pct_30s`).
+
+**Rodada completa:** drenagem feita; nenhuma falta `failed`, `cancelled` ou `pending_at_end`; e `read_miss_start` com t0 na janela igual a `Δread_misses`, ou seja, sem perda de evento ([acima](#espera-do-jogo-numa-falta)).
+
+**Não se reúnem rodadas de sessões de medição diferentes.** Uma sessão de medição é uma sequência contínua de rodadas na mesma máquina, sem reinício, com o mesmo build e a mesma GPU. Rodadas de dois dias, ou de duas sessões com o mesmo build, não são reunidas: o estado da máquina muda (cache do sistema, temperatura, atualizações), e o ambiente gravado não captura tudo isso.
 
 Não proponho agora um teste estatístico de homogeneidade entre rodadas, como uma variação máxima do p50 entre elas. Ainda não há uma única medição real da espera, e um limite escolhido sem dados seria arbitrário. Ele entra, se fizer falta, depois das primeiras rodadas da F1-34.
 
-**4. Menos amostras que o mínimo.**
-- Com N < 300, o p99 agregado é `incompleto`, nunca `passou`. Sem nenhuma falta concluída, ele é `n/d` com N = 0, nunca p99 = 0.
-- Taxa de falta e p99 são critérios separados: uma rodada pode passar na taxa (< 1%) e o p99 agregado continuar `incompleto`.
-- Para chegar a 300, acrescentam-se rodadas comparáveis, todas contadas, até o limite de **10 rodadas** por sessão de medição.
-- Se mesmo assim N < 300, o resultado é `incompleto por poucas faltas`, e a decisão vai para o dono. Poucas faltas é uma boa notícia para a taxa, mas não certifica a espera.
-- A saída que proponho para esse caso, se o dono aceitar, é uma **rodada de faltas forçadas**: mesma rota, cache frio e prefetch desligado, só para medir a distribuição da espera no caminho da falta. Ela não entra na taxa de falta.
+**4. Regra de parada e o que fazer com menos amostras que o mínimo.**
+- **Antes de medir**, declara-se no arquivo da sessão o número de rodadas `K`, com 3 ≤ `K` ≤ 10. **Todas as `K` rodadas completas entram**; não se escolhe nenhuma. Uma rodada incompleta é refeita dentro da mesma sessão, com o motivo registrado; ela nunca é simplesmente descartada.
+- Se, depois das `K` rodadas, o perfil tiver N < 300, é permitida **uma** extensão: declara-se o novo total `K′` (com `K′` ≤ 10), antes de rodar as rodadas extras, e todas entram.
+- Com `K` = 10 e N < 300, o p99 agregado é `incompleto por poucas faltas`, e a decisão vai para o dono. Poucas faltas é uma boa notícia para a taxa, mas não certifica a espera. A saída que proponho para esse caso, se o dono aceitar, é uma **rodada de faltas forçadas**: mesma rota, cache frio e prefetch desligado, só para medir a distribuição da espera no caminho da falta. Ela não entra na taxa de falta.
+- Em qualquer caso, com N < 300 o p99 agregado é `incompleto`, nunca `passou`. Sem nenhuma falta concluída, ele é `n/d` com N = 0, nunca p99 = 0. Taxa de falta e p99 são critérios separados: uma rodada pode passar na taxa (< 1%) e o p99 agregado continuar `incompleto`.
 
 **5. Limiares da comparação entre perfis (`compare_profiles.py`, F1-47).**
 
@@ -139,11 +152,11 @@ Não proponho agora um teste estatístico de homogeneidade entre rodadas, como u
 | --- | --- | --- | --- |
 | Razão da espera p50 (lento/rápido) | ≥ 2,0× | **confirmo** | A razão esperada só da rede é ≈ 4,66× ([protocolo](medicoes/protocolo-mudanca-conhecida.md)); a metade dela deixa folga para o prefetch esconder parte da espera e ainda detecta uma bancada que não acompanha a rede |
 | Razão da carga (mediana de 3 rodadas) | ≥ 1,2× | **confirmo** | Entra como "e/ou" com a espera; na cena atual, a leitura é só uma parte da carga ([baseline.md](medicoes/baseline.md) §4) |
-| Ruído tolerado (`--noise`) | 10% | **trocar por 20%** | A carga variou **20,4%** entre rodadas quentes no baseline (§2). Com 10%, uma diferença dentro do ruído medido daria `incoerente` falso |
+| Ruído tolerado (`--noise`) | 10% | **confirmo 10%**, com uma condição: o ruído medido no controle A–A′ | É o mesmo limite de validade da bancada no `baseline.py`. Os 20,4% de variação da carga no baseline são o sinal de bancada fora da validade, não um ruído a aceitar. Alargar o limite esconderia a melhora do perfil lento que o protocolo procura. **Regra:** se, no controle A–A′, alguma métrica comparada variar mais de 10% (`|A′/A − 1| > 10%`), a comparação é `incompleto` (bancada não validada) |
 | Mínimo de amostras (`--min-samples`) | não definido | **300 por perfil** | O relatório compara também p95 e p99; com o mesmo mínimo do portão, o p99 de cada perfil tem a mesma garantia. Para o p50 bastariam 100 (intervalo de 95% entre os percentis 40 e 61) |
 | Aviso de surpresa | razão > 3× a esperada | **confirmo** | Sinaliza sem reprovar |
 
-Depois do aceite, a F1-33 (`round_report.py`) e a F1-47 (`compare_profiles.py`) passam a usar esses valores por padrão. Até lá, o mínimo é passado na linha de comando e registrado no relatório.
+Depois do aceite, a F1-33 (`round_report.py`, incluindo os campos novos de `environment`) e a F1-47 (`compare_profiles.py`, incluindo a regra do controle A–A′) passam a usar esses valores por padrão. Até lá, o mínimo é passado na linha de comando e registrado no relatório.
 
 ## Bancada de testes `sw-netlab`
 

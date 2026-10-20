@@ -47,13 +47,13 @@ def upper_bound_rank(n: int, q: float = 0.99, conf: float = 0.95) -> int | None:
 
 def main(argv: list[str]) -> int:
     sizes = [int(a) for a in argv] or [100, 200, 299, 300, 600, 1000, 2000, 5000]
-    print("N | posto do p99 | esperas acima | posto da cota de 95% | P(p99 amostral >= p99 real)")
+    print("N | posto do p99 | esperas acima | posto da cota de 95% | p99 amostral abaixo do real")
     for n in sizes:
         k = nearest_rank(n)
         ub = upper_bound_rank(n)
         p_over = binom_cdf(k - 1, n, 0.99)
         shown = "não existe" if ub is None else f"{ub} (percentil {100 * ub / n:.2f})"
-        print(f"{n} | {k} | {n - k} | {shown} | {p_over:.2f}")
+        print(f"{n} | {k} | {n - k} | {shown} | {100 * (1 - p_over):.0f}% das vezes")
     return 0
 
 

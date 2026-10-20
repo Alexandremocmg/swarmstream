@@ -66,7 +66,7 @@ O controle A–A′ **não** deve dar `incoerente`; o esperado é `nao_mede` (as
 
 **Limiares são propostas** (razão da espera ≥ 2,0×, da carga ≥ 1,2×; ruído tolerado de 10%, o mesmo limite de variação da bancada; aviso se a razão passa de 3× a esperada) e **precisam ser confirmados pelo R1 e pelo dono antes da medição final**. Estão como opções do script (`--min-wait-ratio`, `--min-load-ratio`, `--noise`).
 
-**Avaliação do R1 (F1-48):** razão da espera ≥ 2,0×, razão da carga ≥ 1,2× e aviso de surpresa em 3× ficam; o ruído passa para **20%** (a carga variou 20,4% no baseline) e o mínimo é **300 faltas por perfil**. Motivos em [docs/08](../08-metricas-e-testes.md#método-do-percentil-amostras-e-rodadas-comparáveis-f1-48). Valem depois do aceite do dono.
+**Avaliação do R1 (F1-48):** razão da espera ≥ 2,0×, razão da carga ≥ 1,2× e aviso de surpresa em 3× ficam; o ruído **continua 10%**, e se o controle A–A′ variar mais de 10% em alguma métrica comparada a comparação é `incompleto`; o mínimo é **300 faltas por perfil**. Motivos em [docs/08](../08-metricas-e-testes.md#método-do-percentil-amostras-e-rodadas-comparáveis-f1-48). Valem depois do aceite do dono.
 
 ## Registro
 Gravar em `docs/medicoes/`: o arquivo da rodada (`.json`), o relatório (`.md`), os comandos exatos usados, a máquina e a GPU, as versões (Godot, build) e a data. Sem o comando, a máquina e a data, o número não vale ([CLAUDE.md](../../CLAUDE.md)).
