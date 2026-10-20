@@ -54,6 +54,8 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     # F1-10: alocador de slots (1 milhão de slots) e arquivos de store pré-alocados.
     add_executable(sw-core-store-tests tests/test_store.cpp)
     target_link_libraries(sw-core-store-tests PRIVATE sw-core)
+    # src/: store_files_testing.hpp (ganchos de teste, fora da API instalada).
+    target_include_directories(sw-core-store-tests PRIVATE src)
     add_test(NAME sw-core-store COMMAND sw-core-store-tests)
     set_tests_properties(sw-core-store PROPERTIES TIMEOUT 300)
     # Teste pendurado deve falhar, não travar o CI.

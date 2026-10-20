@@ -8,13 +8,24 @@
 //   (s % slots_per_file) × slot_size, alinhado a 4 KiB.
 // - Os arquivos são criados SOB DEMANDA (o primeiro acesso a um slot cria o arquivo dele)
 //   e PRÉ-ALOCADOS de verdade, não esparsos: o espaço fica reservado no disco na criação,
-//   e o disco cheio aparece ali (DiskFull), nunca no meio de uma gravação de peça.
+//   e o disco cheio aparece ali (DiskFull), nunca no meio de uma gravação de peça. O espaço
+//   livre é conferido antes de pedir a reserva; se ela falhar, o que foi reservado volta ao
+//   disco e um arquivo recém-criado é apagado.
+// - Ao criar ou completar um arquivo, o tamanho dele e (POSIX) a entrada na pasta vão ao
+//   disco antes de o slot ser usado. Mesmo assim a F1-11 deve tratar store-XXX.bin ausente
+//   ou zerado como peças perdidas (o checksum por bloco não confere), nunca como erro fatal.
 // - Reabrir não trunca nem apaga nada. Um arquivo maior que o layout esperado é recusado
 //   (IoError), porque pode ser de outro layout; menor é completado até o tamanho certo.
-// - Todo retorno de I/O é conferido: escrita ou leitura parcial é repetida até o fim, e
-//   qualquer falha volta como erro (docs/04 §Estrutura em disco, regra "nada calado").
-// - flush() força os dados ao disco (FlushFileBuffers / fdatasync): é a "Barreira 1" do
-//   protocolo de escrita do 04 §3, que a F1-11 chama antes de gravar o journal.
+// - Todo retorno de I/O é conferido, inclusive o do fechamento: escrita ou leitura parcial é
+//   repetida até o fim, e qualquer falha volta como erro (docs/04, regra "nada calado").
+// - flush() PEDE ao SO e ao disco que gravem os dados (FlushFileBuffers / fdatasync): é a
+//   "Barreira 1" do protocolo de escrita do 04 §3, que a F1-11 chama antes de gravar o
+//   journal. Não há como provar a durabilidade: um disco que mente sobre o cache perde dado.
+// - FALHA DE SYNC É PEGAJOSA. Depois de um erro de fdatasync, o Linux pode descartar as
+//   páginas sujas e o sync seguinte devolver sucesso sem os dados no disco. Por isso, depois
+//   da primeira falha de sync (no flush ou na criação de arquivo), broken() fica true e toda
+//   operação devolve IoError até fechar e reabrir; quem reabre (F1-11) refaz a recuperação e
+//   confere os checksums. Nunca repita um flush que falhou esperando sucesso.
 //
 // Não sabe de peças, índice nem journal (F1-11) e não é thread-safe: o dono é a thread de
 // I/O do cache (ADR-0005, F1-12).
@@ -56,7 +67,10 @@ public:
     StoreFiles& operator=(StoreFiles&&) noexcept;
     StoreFiles(const StoreFiles&) = delete;
     StoreFiles& operator=(const StoreFiles&) = delete;
+    // Fecha sem relatar erro (último recurso). Para saber se o fechamento falhou, chame close().
     ~StoreFiles();
+
+    // Todas as operações abaixo devolvem IoError depois de close() ou com broken() true.
 
     // Garante que o arquivo do slot existe e está pré-alocado. SlotNotFound fora do teto;
     // DiskFull se não há espaço para pré-alocar; IoError nos outros casos.
@@ -68,8 +82,17 @@ public:
     [[nodiscard]] Result<void, CacheErrorCode> read(SlotId slot, size_t offset,
                                                     std::span<std::byte> out);
 
-    // Dados de todos os arquivos abertos no disco (Barreira 1 do 04 §3).
+    // Pede a gravação no disco dos dados de todos os arquivos abertos (Barreira 1 do 04 §3).
+    // Uma falha deixa o store quebrado (broken()); ver "falha de sync é pegajosa" acima.
     [[nodiscard]] Result<void, CacheErrorCode> flush();
+
+    // Fecha todos os arquivos conferindo o retorno (close/CloseHandle) e devolve o primeiro
+    // erro. Não faz flush: chame flush() antes se os dados precisam estar no disco. Depois de
+    // close(), o store só serve para ser destruído; chamar de novo devolve sucesso.
+    [[nodiscard]] Result<void, CacheErrorCode> close();
+
+    // true depois de uma falha de sync: o store precisa ser fechado e reaberto.
+    [[nodiscard]] bool broken() const noexcept;
 
     [[nodiscard]] uint32_t total_slots() const noexcept;
     [[nodiscard]] const StoreLayout& layout() const noexcept;
@@ -81,6 +104,7 @@ public:
     allocated_bytes(const std::filesystem::path& file);
 
 private:
+    friend struct StoreFilesTestHook; // src/store_files_testing.hpp, só para os testes
     struct Impl;
     explicit StoreFiles(std::unique_ptr<Impl> impl) noexcept;
     std::unique_ptr<Impl> impl_;

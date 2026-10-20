@@ -12,12 +12,14 @@
 //   3. a memória do alocador é fixa (não cresce com o uso).
 
 #include "check.hpp"
+#include "store_files_testing.hpp"
 #include "swarmstream/slot_allocator.hpp"
 #include "swarmstream/store_files.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -340,6 +342,167 @@ void test_store_files_invalid_layout()
     cleanup(dir);
 }
 
+void test_store_files_disk_full()
+{
+    std::cout << "[Test] StoreFiles: disco cheio dá DiskFull na criação, sem gastar espaço\n";
+    const fs::path dir = fresh_dir("diskfull");
+    {
+        std::error_code ec;
+        const auto before = fs::space(dir, ec);
+        SW_CHECK(!ec);
+        // Um arquivo só, com o dobro do espaço livre (slots de 1 GiB): não cabe de jeito nenhum.
+        // O livre é conferido antes de reservar, então nem a emulação da posix_fallocate (que
+        // escreveria zeros) chega a rodar.
+        constexpr uint32_t kHugeSlot = 1u << 30;
+        const uint64_t wanted_slots = before.available / kHugeSlot * 2 + 2;
+        SW_CHECK(wanted_slots < UINT32_MAX);
+        const auto slots = static_cast<uint32_t>(wanted_slots);
+        auto st = StoreFiles::open(dir, slots,
+                                   StoreLayout{.slots_per_file = slots, .slot_size = kHugeSlot});
+        SW_CHECK(st.has_value());
+
+        auto r = st->ensure_slot(0);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::DiskFull);
+        SW_CHECK(!fs::exists(dir / "store-000.bin")); // não deixa arquivo vazio para trás
+        SW_CHECK(st->files_created() == 0 && !st->broken());
+        auto w = st->write(slots - 1, 0, pattern(16, 1)); // a escrita cria sob demanda: idem
+        SW_CHECK(!w.has_value() && w.error() == CacheErrorCode::DiskFull);
+
+        const auto after = fs::space(dir, ec);
+        SW_CHECK(!ec);
+        const uint64_t moved = before.available > after.available
+                                   ? before.available - after.available
+                                   : after.available - before.available;
+        std::cout << "    pedido " << (uint64_t{slots} * kHugeSlot >> 20) << " MiB com "
+                  << (before.available >> 20) << " MiB livres; o livre mudou " << (moved >> 10)
+                  << " KiB\n";
+        SW_CHECK(moved < (uint64_t{256} << 20)); // folga só para outros processos da máquina
+        SW_CHECK(st->close().has_value());
+    }
+    cleanup(dir);
+}
+
+void test_store_files_close_reports()
+{
+    std::cout << "[Test] StoreFiles: close() confere o fechamento e encerra o store\n";
+    const fs::path dir = fresh_dir("close");
+    StoreLayout layout{.slots_per_file = 2, .slot_size = kSlotSize};
+    {
+        auto st = StoreFiles::open(dir, 4, layout);
+        SW_CHECK(st.has_value());
+        const auto data = pattern(4096, 5);
+        SW_CHECK(st->write(1, 0, data).has_value() && st->flush().has_value());
+        SW_CHECK(st->close().has_value());
+        SW_CHECK(st->close().has_value()); // de novo: nada mais a fechar
+
+        std::vector<std::byte> back(data.size());
+        auto w = st->write(1, 0, data);
+        auto r = st->read(1, 0, back);
+        auto f = st->flush();
+        auto e = st->ensure_slot(3);
+        SW_CHECK(!w.has_value() && w.error() == CacheErrorCode::IoError);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::IoError);
+        SW_CHECK(!f.has_value() && f.error() == CacheErrorCode::IoError);
+        SW_CHECK(!e.has_value() && e.error() == CacheErrorCode::IoError);
+        SW_CHECK(!fs::exists(dir / "store-001.bin")); // fechado não recria arquivo
+
+        // Fechou de verdade: com o objeto ainda vivo, o arquivo já pode ser apagado (o Windows
+        // recusaria se o handle continuasse aberto).
+        std::error_code ec;
+        SW_CHECK(fs::remove(dir / "store-000.bin", ec) && !ec);
+    }
+    cleanup(dir);
+}
+
+void test_store_files_sync_failure_is_sticky()
+{
+    std::cout << "[Test] StoreFiles: falha de sync é pegajosa até reabrir\n";
+    const fs::path dir = fresh_dir("sticky");
+    StoreLayout layout{.slots_per_file = 2, .slot_size = kSlotSize};
+    const auto data = pattern(8192, 11);
+    {
+        auto st = StoreFiles::open(dir, 4, layout);
+        SW_CHECK(st.has_value());
+        SW_CHECK(st->write(0, 0, data).has_value());
+        StoreFilesTestHook::fail_next_sync(*st);
+        auto f1 = st->flush();
+        SW_CHECK(!f1.has_value() && f1.error() == CacheErrorCode::IoError);
+        SW_CHECK(st->broken());
+        // O segundo flush NÃO pode dar sucesso (no Linux o fdatasync seguinte daria, sem os
+        // dados no disco).
+        auto f2 = st->flush();
+        SW_CHECK(!f2.has_value() && f2.error() == CacheErrorCode::IoError);
+        std::vector<std::byte> back(data.size());
+        auto w = st->write(1, 0, data);
+        auto r = st->read(0, 0, back);
+        auto e = st->ensure_slot(3);
+        SW_CHECK(!w.has_value() && w.error() == CacheErrorCode::IoError);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::IoError);
+        SW_CHECK(!e.has_value() && e.error() == CacheErrorCode::IoError);
+        SW_CHECK(!fs::exists(dir / "store-001.bin"));
+        SW_CHECK(st->close().has_value()); // fechar continua possível
+    }
+    {
+        // Falha de sync na criação do arquivo também quebra o store.
+        auto st = StoreFiles::open(dir, 4, layout);
+        SW_CHECK(st.has_value() && !st->broken());
+        StoreFilesTestHook::fail_next_sync(*st);
+        auto e = st->ensure_slot(2);
+        SW_CHECK(!e.has_value() && e.error() == CacheErrorCode::IoError && st->broken());
+        auto f = st->flush();
+        SW_CHECK(!f.has_value() && f.error() == CacheErrorCode::IoError);
+    }
+    {
+        // Reabrir dá um store novo, usável (a F1-11 refaz a recuperação e confere checksums).
+        auto st = StoreFiles::open(dir, 4, layout);
+        SW_CHECK(st.has_value() && !st->broken());
+        std::vector<std::byte> back(data.size());
+        SW_CHECK(st->read(0, 0, back).has_value());
+        SW_CHECK(st->write(2, 0, data).has_value() && st->flush().has_value());
+        SW_CHECK(st->close().has_value());
+    }
+    cleanup(dir);
+}
+
+void test_store_files_directory_sync_and_missing_file()
+{
+    std::cout << "[Test] StoreFiles: pasta sincronizada ao criar; arquivo sumido volta zerado\n";
+    const fs::path dir = fresh_dir("dirsync");
+    StoreLayout layout{.slots_per_file = 2, .slot_size = kSlotSize};
+    const auto data0 = pattern(5000, 21);
+    const auto data4 = pattern(5000, 42);
+    {
+        auto st = StoreFiles::open(dir, 6, layout);
+        SW_CHECK(st.has_value());
+        SW_CHECK(StoreFilesTestHook::directory_syncs(*st) == 0);
+        SW_CHECK(st->write(0, 0, data0).has_value()); // cria store-000.bin
+        SW_CHECK(StoreFilesTestHook::directory_syncs(*st) == 1);
+        SW_CHECK(st->write(1, 0, data0).has_value()); // mesmo arquivo: nada a sincronizar
+        SW_CHECK(StoreFilesTestHook::directory_syncs(*st) == 1);
+        SW_CHECK(st->write(4, 0, data4).has_value()); // cria store-002.bin
+        SW_CHECK(StoreFilesTestHook::directory_syncs(*st) == 2);
+        SW_CHECK(st->flush().has_value() && st->close().has_value());
+    }
+    // O arquivo sumiu (queda de energia antes de a pasta ir ao disco, ou alguém apagou).
+    std::error_code ec;
+    SW_CHECK(fs::remove(dir / "store-000.bin", ec) && !ec);
+    {
+        auto st = StoreFiles::open(dir, 6, layout);
+        SW_CHECK(st.has_value());
+        std::vector<std::byte> back(data4.size());
+        SW_CHECK(st->read(4, 0, back).has_value() && back == data4); // o outro arquivo está intacto
+        SW_CHECK(StoreFilesTestHook::directory_syncs(*st) == 0); // abrir arquivo pronto não cria
+        // O slot do arquivo sumido volta zerado (o arquivo é recriado e pré-alocado): o checksum
+        // por bloco da F1-11 não confere e a peça é dada por perdida, sem erro fatal.
+        SW_CHECK(st->read(0, 0, back).has_value());
+        SW_CHECK(
+            std::all_of(back.begin(), back.end(), [](std::byte b) { return b == std::byte{0}; }));
+        SW_CHECK(StoreFilesTestHook::directory_syncs(*st) == 1);
+        SW_CHECK(st->close().has_value());
+    }
+    cleanup(dir);
+}
+
 } // namespace
 
 void run_store_tests()
@@ -352,6 +515,10 @@ void run_store_tests()
     test_store_files_write_read_flush();
     test_store_files_reopen_keeps_data();
     test_store_files_invalid_layout();
+    test_store_files_disk_full();
+    test_store_files_close_reports();
+    test_store_files_sync_failure_is_sticky();
+    test_store_files_directory_sync_and_missing_file();
 }
 
 } // namespace swarmstream
