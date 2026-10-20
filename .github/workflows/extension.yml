@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Alexandre Aparecido Rodrigues Peres
+#
+# F1-49: compila a GDExtension (loader e registro, com godot-cpp na tag fixada) em Ubuntu e
+# Windows (MSVC) e roda o portão do F1-20 sem janela no Ubuntu. O godot-cpp e o Godot não entram
+# no git: o godot-cpp vem do tag fixado (com cache) e o Godot é baixado com o SHA-512 conferido.
+
+name: extension
+
+on:
+  pull_request:
+  push:
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_CPP_TAG: godot-4.5-stable
+  GODOT_VERSION: 4.7.2-stable
+  # SHA-512 oficial do Godot_v4.7.2-stable_linux.x86_64.zip (SHA512-SUMS.txt da release 4.7.2-stable)
+  GODOT_LINUX_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+
+jobs:
+  build:
+    name: GDExtension build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch godot-cpp (tag fixo, fora do git)
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$GODOT_CPP_TAG" https://github.com/godotengine/godot-cpp.git "$RUNNER_TEMP/godot-cpp"
+
+      - name: Cache do build da extensão (godot-cpp incluído)
+        uses: actions/cache@v4
+        with:
+          path: build-godot
+          key: godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-${{ hashFiles('sw-godot/extension/**', 'sw-core/**') }}
+          restore-keys: |
+            godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-
+
+      - name: Configurar (CMake)
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            GODOT_CPP_DIR="$(cygpath -m "$RUNNER_TEMP/godot-cpp")"
+          else
+            GODOT_CPP_DIR="$RUNNER_TEMP/godot-cpp"
+          fi
+          cmake -S sw-godot/extension -B build-godot \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGODOT_CPP_DIR="$GODOT_CPP_DIR"
+
+      - name: Compilar a extensão
+        run: cmake --build build-godot --config Release --parallel
+
+      - name: Conferir a saída (DLL ou .so)
+        shell: bash
+        run: |
+          ls -la sw-godot/project/addons/swarmstream/bin
+          test -f sw-godot/project/addons/swarmstream/swarmstream.gdextension || \
+            test -f sw-godot/project/addons/swarmstream/bin/swarmstream_godot.dll || \
+            test -f sw-godot/project/addons/swarmstream/bin/swarmstream_godot.so
+
+      - name: Guardar a extensão para o portão
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-${{ matrix.os }}
+          path: sw-godot/project/addons
+          if-no-files-found: error
+
+  gate:
+    name: Portão F1-20 sem janela (ubuntu-latest)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extensão compilada (ubuntu)
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-ubuntu-latest
+          path: sw-godot/project/addons
+
+      - name: ffmpeg (gera o OGG de teste)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Godot 4.7.2 (baixado e conferido por SHA-512)
+        shell: bash
+        run: |
+          curl -fsSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          echo "${GODOT_LINUX_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          chmod +x "Godot_v${GODOT_VERSION}_linux.x86_64"
+          "./Godot_v${GODOT_VERSION}_linux.x86_64" --version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Textura de teste (rock_path, CC0, Poly Haven, MD5 conferido)
+        run: python sw-godot/tools/download_assets.py --resolution 8k --only rock_path
+
+      - name: Rodar o portão do F1-20 (headless)
+        run: |
+          python sw-godot/tools/gate_f1_20.py \
+            --godot "$PWD/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            --ffmpeg ffmpeg --headless --out "$PWD/gate-out"
+
+      - name: Guardar o log do portão
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-f1-20-log
+          path: gate-out
+          if-no-files-found: warn

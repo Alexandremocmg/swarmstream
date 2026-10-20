@@ -20,7 +20,8 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1] / "project"
 PACK_DIR = PROJECT / ".swarm_gate"
-DLL = PROJECT / "addons" / "swarmstream" / "bin" / "swarmstream_godot.dll"
+LIB_NAME = "swarmstream_godot.dll" if sys.platform == "win32" else "swarmstream_godot.so"
+DLL = PROJECT / "addons" / "swarmstream" / "bin" / LIB_NAME
 GDEXT = PROJECT / "addons" / "swarmstream" / "swarmstream.gdextension"
 RESULT_TAG = "[gate] RESULTADO:"
 
