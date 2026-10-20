@@ -13,7 +13,16 @@ add_library(sw-core STATIC
     src/api_stub.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
+    src/http_range_source.cpp
+    src/tcp_socket.cpp
 )
+
+# Fonte HTTP (F1-27): threads e, no Windows, Winsock.
+find_package(Threads REQUIRED)
+target_link_libraries(sw-core PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(sw-core PUBLIC ws2_32)
+endif()
 
 target_include_directories(sw-core
     PUBLIC
@@ -39,6 +48,7 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         tests/test_content_source.cpp
         tests/test_cache_store.cpp
         tests/test_pipeline_integration.cpp
+        tests/test_http_range_source.cpp
     )
 
     target_link_libraries(sw-core-tests PRIVATE sw-core)
@@ -72,6 +82,22 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     set_tests_properties(check-selftest-ok check-selftest-evaluates-condition
         check-selftest-fails check-selftest-fails-in-thread check-selftest-message
         PROPERTIES TIMEOUT 60)
+
+    # Fonte HTTP contra o servidor da bancada (sw-netlab) nos 3 perfis (F1-27). Precisa de Python.
+    add_executable(sw-core-http-fetch tests/http_fetch_tool.cpp)
+    target_link_libraries(sw-core-http-fetch PRIVATE sw-core)
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        foreach(profile fibra_300 cabo_50 adsl_10)
+            add_test(NAME http-netlab-${profile}
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_netlab_test.py
+                    $<TARGET_FILE:sw-core-http-fetch>
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../sw-netlab/server.py ${profile})
+            set_tests_properties(http-netlab-${profile} PROPERTIES TIMEOUT 240 LABELS netlab)
+        endforeach()
+    else()
+        message(STATUS "Python3 nao encontrado: testes http-netlab-* nao serao registrados")
+    endif()
 
     # Contrato swarmstream.h v0 (ADR-0014): layout (sizeof/offsetof) e stub.
     # Teste que quebra aqui = mudança de contrato, que exige ADR.

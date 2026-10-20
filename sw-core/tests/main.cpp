@@ -12,6 +12,9 @@
 void run_content_source_tests();
 void run_cache_store_tests();
 void run_pipeline_integration_tests();
+namespace swarmstream {
+void run_http_range_source_tests();
+}
 
 // Os testes verificam com SW_CHECK (check.hpp), que não some com NDEBUG. Ainda assim, no MSVC
 // em Debug, avisos do CRT/STL abrem uma caixa de diálogo e esperam alguém clicar:
@@ -48,6 +51,10 @@ int main()
         std::cout << "--- Pipeline Integration Tests (F0-07) ---\n";
         run_pipeline_integration_tests();
         std::cout << "-> Pipeline Integration tests passed.\n\n";
+
+        std::cout << "--- HTTP Range Source Tests (F1-27) ---\n";
+        swarmstream::run_http_range_source_tests();
+        std::cout << "-> HTTP Range Source tests passed.\n\n";
 
         std::cout << "========================================\n";
         std::cout << " ALL TESTS PASSED SUCCESSFULLY! (100%)\n";
