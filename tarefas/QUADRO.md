@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 2 | 0 | 1 | 0 | 40 | 6 |
+| 2 | 0 | 1 | 0 | 39 | 7 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -16,10 +16,9 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
 | --- | --- | --- | --- | --- | --- |
-| [F1-01](cartoes/F1-01.md) | R2 | Sonnet 5.5, esforço alto (Opus 5.5 se travar) | não | sim | Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: 03 §11.1, vetores) |
-| [F1-02](cartoes/F1-02.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-01 | Testes do chunker (arquivos vazios, pequenos, enormes, aleatórios) |
-| [F1-03](cartoes/F1-03.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-01 | Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo |
-| [F1-04](cartoes/F1-04.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-01 | Geração do manifesto v0, assinado com a chave de teste (ADR-0012) |
+| [F1-02](cartoes/F1-02.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Testes do chunker (arquivos vazios, pequenos, enormes, aleatórios) |
+| [F1-03](cartoes/F1-03.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo |
+| [F1-04](cartoes/F1-04.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Geração do manifesto v0, assinado com a chave de teste (ADR-0012) |
 | [F1-05](cartoes/F1-05.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-04 | Classificação core/grupo/opcional por regras de pasta |
 | [F1-07](cartoes/F1-07.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-05 | Mips/LODs baixos sempre no core |
 | [F1-08](cartoes/F1-08.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-04 | Relatório da CLI: tamanho por grupo, nº de peças, taxa de compressão |
@@ -46,7 +45,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-48](cartoes/F1-48.md) | R1 | Opus 5.5, esforço alto | não | sim | Método do percentil e mínimo de amostras para o p99 da espera no Portão 1 |
 | [F1-49](cartoes/F1-49.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-20 | CI compila a extensão do Godot (loader) e roda o portão sem janela |
 | [F1-50](cartoes/F1-50.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-20 | Trocar uma thread por peça e por ensure por um pool de threads (loader e mock) |
-| [F1-51](cartoes/F1-51.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-01 | Vetor de bordas do chunker e esclarecimentos da spec 03 §11.1 e do README dos vetores |
+| [F1-51](cartoes/F1-51.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Vetor de bordas do chunker e esclarecimentos da spec 03 §11.1 e do README dos vetores |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -62,6 +61,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-40](cartoes/F1-40.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Carga fria de verdade, depois de reiniciar o Windows |
 
 ## Feitas
+- [F1-01](cartoes/F1-01.md): Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: 03 §11.1, vetores)
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
 - [F1-39](cartoes/F1-39.md): Ampliar o lint do CI para as ferramentas do baseline e os vetores
 - [F1-41](cartoes/F1-41.md): Alinhar a spec 03 (§7.1, §7.2, §8) ao ADR-0012: format_version só do envelope, min_reader no payload
