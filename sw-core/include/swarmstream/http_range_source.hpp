@@ -50,7 +50,11 @@ struct HttpSourceConfig
     std::chrono::milliseconds request_timeout{60000}; // por peça, somando as tentativas
     unsigned max_attempts = 3;                        // tentativas por peça (1..10)
     std::size_t max_piece_bytes = kDefaultPieceSize;  // maior corpo aceito
-    PieceLocator locator;                             // vazio = "/p/<hex>" sob o prefixo da base
+    // `locator` e `verifier` são chamados pelas threads de trabalho, várias ao mesmo tempo, e
+    // devem ser thread-safe (sem estado mutável compartilhado sem trava).
+    // `locator` e `verifier` são chamados pelas threads de trabalho, várias ao mesmo tempo: devem
+    // ser thread-safe (nada de estado mutável compartilhado sem trava).
+    PieceLocator locator;   // vazio = "/p/<hex>" sob o prefixo da base
     PieceVerifier verifier; // vazio = não verifica (devolve CorruptedData se retornar false)
 };
 

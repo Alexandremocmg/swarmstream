@@ -167,7 +167,11 @@ std::optional<ResponseHead> parse_head(std::string_view head)
         if (colon == std::string_view::npos) {
             return std::nullopt;
         }
-        const std::string name = lower(trim(line.substr(0, colon)));
+        if (colon == 0 || line[colon - 1] == ' ' || line[colon - 1] == '	' || line[0] == ' ' ||
+            line[0] == '	') {
+            return std::nullopt; // RFC 9112 §5.1: sem espaço antes do ":" nem linha de continuação
+        }
+        const std::string name = lower(line.substr(0, colon));
         const std::string_view value = trim(line.substr(colon + 1));
         if (name == "content-length") {
             const auto length = parse_u64(value);
@@ -382,6 +386,8 @@ private:
         PieceLocation location;
         std::vector<std::uint8_t> body;
         std::uint64_t expected = 0; // tamanho final da peça; 0 = ainda não sabido
+        SteadyTimePoint
+            give_up_at{}; // início + request_timeout: vale para TODA a peça, tentativas inclusive
     };
 
     struct Connection
@@ -443,6 +449,7 @@ private:
     {
         const auto started = std::chrono::steady_clock::now();
         Download download;
+        download.give_up_at = started + config_.request_timeout;
         download.location = config_.locator(job.piece, url_.base_path);
         if (download.location.range) {
             const auto [first, last] = *download.location.range;
@@ -467,7 +474,7 @@ private:
                 complete(job, connection, download, SourceErrorCode::Canceled, "cancelado");
                 return;
             }
-            if (std::chrono::steady_clock::now() - started > config_.request_timeout) {
+            if (std::chrono::steady_clock::now() >= download.give_up_at) {
                 complete(job, connection, download, SourceErrorCode::Timeout,
                          "prazo da peca esgotado: " + last_message);
                 return;
@@ -561,18 +568,56 @@ private:
         return Attempt{kind, code, std::move(message)};
     }
 
+    enum class Budget { Ok, Exhausted, SocketError };
+
+    // Prazo do próximo send/recv: o MENOR entre io_timeout e o que resta do request_timeout da
+    // peça. Sem isso, um servidor que manda 1 byte por vez dentro do io_timeout renova a espera
+    // a cada recv e a peça nunca estoura o request_timeout.
+    Budget apply_budget(Connection& connection, const Download& download)
+    {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            download.give_up_at - std::chrono::steady_clock::now());
+        if (left.count() <= 0) {
+            return Budget::Exhausted;
+        }
+        return connection.socket.set_io_timeout(std::min(config_.io_timeout, left))
+                   ? Budget::Ok
+                   : Budget::SocketError;
+    }
+
+    Attempt budget_failure(Connection& connection, Job& job, Budget budget)
+    {
+        drop_connection(connection, &job);
+        if (budget == Budget::Exhausted) {
+            return outcome(AttemptKind::Retry, SourceErrorCode::Timeout, "prazo da peca esgotado");
+        }
+        return outcome(AttemptKind::Retry, SourceErrorCode::NetworkError,
+                       "nao consegui aplicar o prazo no soquete");
+    }
+
     Attempt try_once(Job& job, Connection& connection, Download& download)
     {
-        const bool reused = connection.socket.valid();
+        bool reused = connection.socket.valid();
+        // Conexão reaproveitada que já tem bytes à espera (resto de uma resposta anterior, ou o
+        // servidor fechou): não serve. Reutilizá-la leria lixo como se fosse a próxima resposta.
+        if (reused && connection.socket.readable_now()) {
+            drop_connection(connection, &job);
+            reused = false;
+        }
         if (!reused) {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                download.give_up_at - std::chrono::steady_clock::now());
+            if (left.count() <= 0) {
+                return outcome(AttemptKind::Retry, SourceErrorCode::Timeout,
+                               "prazo da peca esgotado");
+            }
             std::string error;
-            auto socket =
-                net::TcpSocket::connect(url_.host, url_.port, config_.connect_timeout, error);
+            auto socket = net::TcpSocket::connect(url_.host, url_.port,
+                                                  std::min(config_.connect_timeout, left), error);
             if (!socket) {
                 return outcome(AttemptKind::Retry, SourceErrorCode::NetworkError,
                                "conexao: " + error);
             }
-            socket->set_io_timeout(config_.io_timeout);
             adopt_connection(connection, std::move(*socket), job);
             connections_opened_.fetch_add(1);
         }
@@ -606,6 +651,9 @@ private:
             resumed_requests_.fetch_add(1);
         }
 
+        if (const Budget budget = apply_budget(connection, download); budget != Budget::Ok) {
+            return budget_failure(connection, job, budget);
+        }
         const net::IoStatus sent = connection.socket.send_all(request.data(), request.size());
         if (sent != net::IoStatus::Ok) {
             drop_connection(connection, &job);
@@ -621,6 +669,9 @@ private:
         std::size_t head_end = std::string::npos;
         std::uint8_t chunk[4096];
         while (head_end == std::string::npos) {
+            if (const Budget budget = apply_budget(connection, download); budget != Budget::Ok) {
+                return budget_failure(connection, job, budget);
+            }
             const net::RecvResult got = connection.socket.recv_some(chunk, sizeof(chunk));
             if (got.status != net::IoStatus::Ok) {
                 drop_connection(connection, &job);
@@ -649,13 +700,14 @@ private:
         const auto parsed = parse_head(head_view);
         if (!parsed) {
             drop_connection(connection, &job);
-            return outcome(AttemptKind::Fatal, SourceErrorCode::NetworkError,
-                           "resposta HTTP invalida");
+            // Numa conexão reaproveitada pode ser lixo de uma resposta anterior: tenta numa nova.
+            return outcome(reused ? AttemptKind::RetryFresh : AttemptKind::Fatal,
+                           SourceErrorCode::NetworkError, "resposta HTTP invalida");
         }
         const ResponseHead& response = *parsed;
         const std::size_t body_start = head_end + 4;
 
-        // ---- status
+        // ---- status (1xx não é esperado em GET sem "Expect"; cai aqui como erro fatal)
         if (response.status != 200 && response.status != 206) {
             http_errors_.fetch_add(1);
             drop_connection(connection, &job); // não lê o corpo de erro; abre outra conexão depois
@@ -735,6 +787,10 @@ private:
             bytes_received_.fetch_add(leftover);
         }
         while (filled < length) {
+            if (const Budget budget = apply_budget(connection, download); budget != Budget::Ok) {
+                download.body.resize(base + filled); // guarda o que chegou
+                return budget_failure(connection, job, budget);
+            }
             const net::RecvResult got =
                 connection.socket.recv_some(download.body.data() + base + filled, length - filled);
             if (got.status != net::IoStatus::Ok) {

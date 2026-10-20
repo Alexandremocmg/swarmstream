@@ -75,6 +75,10 @@ struct FakeServerOptions
     bool close_without_header = false;  // fecha a conexão depois de cada resposta, sem avisar
     std::chrono::milliseconds delay{0}; // espera antes de responder
     bool ignore_range = false;          // responde 200 com o objeto inteiro mesmo com Range
+    std::chrono::milliseconds garbage_after{
+        0};                                 // depois da resposta, espera isso e manda "EFGH" a mais
+    std::chrono::milliseconds trickle{0};   // manda o corpo 1 byte por vez, com esta pausa
+    bool header_space_before_colon = false; // "Content-Length : N" (invalido pelo RFC 9112)
 };
 
 class FakeServer
@@ -140,7 +144,7 @@ private:
 
     void serve(net::TcpSocket& socket)
     {
-        socket.set_io_timeout(200ms);
+        SW_CHECK(socket.set_io_timeout(200ms));
         std::string pending;
         while (!stop_.load()) {
             std::size_t end = pending.find("\r\n\r\n");
@@ -213,9 +217,11 @@ private:
             status = 206;
         }
         const std::size_t length = last - first + 1;
-        std::string out =
-            "HTTP/1.1 " + std::to_string(status) + (status == 206 ? " Partial Content" : " OK") +
-            "\r\nContent-Length: " + std::to_string(length) + "\r\nAccept-Ranges: bytes\r\n";
+        std::string out = "HTTP/1.1 " + std::to_string(status) +
+                          (status == 206 ? " Partial Content" : " OK") +
+                          (options_.header_space_before_colon ? "\r\nContent-Length : "
+                                                              : "\r\nContent-Length: ") +
+                          std::to_string(length) + "\r\nAccept-Ranges: bytes\r\n";
         if (status == 206) {
             out += "Content-Range: bytes " + std::to_string(first) + "-" + std::to_string(last) +
                    "/" + std::to_string(data.size()) + "\r\n";
@@ -229,8 +235,22 @@ private:
         if (cut) {
             to_send = std::min(to_send, options_.truncate_first_at);
         }
-        if (socket.send_all(data.data() + first, to_send) != net::IoStatus::Ok) {
+        if (options_.trickle.count() > 0) {
+            for (std::size_t i = 0; i < to_send && !stop_.load(); ++i) {
+                if (socket.send_all(data.data() + first + i, 1) != net::IoStatus::Ok) {
+                    return false;
+                }
+                std::this_thread::sleep_for(options_.trickle);
+            }
+        } else if (socket.send_all(data.data() + first, to_send) != net::IoStatus::Ok) {
             return false;
+        }
+        if (options_.garbage_after.count() > 0) {
+            std::this_thread::sleep_for(options_.garbage_after);
+            static constexpr char kGarbage[] = "EFGH";
+            if (socket.send_all(kGarbage, 4) != net::IoStatus::Ok) {
+                return false;
+            }
         }
         return !cut && !options_.close_without_header;
     }
@@ -585,6 +605,90 @@ void test_deadline_order()
     SW_CHECK(order[2] == path_of(make_piece(1)));
 }
 
+void test_extra_bytes_do_not_poison_the_next_request()
+{
+    std::puts(
+        "[Test] HttpRangeSource: bytes alem do Content-Length nao envenenam o pedido seguinte");
+    FakeServerOptions options;
+    options.garbage_after = 50ms; // manda "EFGH" 50 ms depois do fim do corpo
+    FakeServer server(options);
+    const Bytes first = make_bytes(4, 1);
+    server.add(path_of(make_piece(1)), first);
+    server.add(path_of(make_piece(2)), make_bytes(4, 2));
+    HttpSourceConfig config;
+    config.connections = 1;
+    auto source = make_source(server, config);
+    const PieceResponse a = fetch(*source, make_piece(1));
+    SW_CHECK(a.ok() && a.data == first);
+    std::this_thread::sleep_for(200ms); // os bytes extras chegam enquanto a conexao esta parada
+    const PieceResponse b = fetch(*source, make_piece(2));
+    SW_CHECK(b.ok() && b.data == make_bytes(4, 2));
+    SW_CHECK(source->diagnostics().connections_opened == 2); // descartou a conexao suja
+    SW_CHECK(source->diagnostics().retries == 0);
+}
+
+void test_request_timeout_bounds_a_slow_body()
+{
+    std::puts("[Test] HttpRangeSource: request_timeout limita corpo que chega 1 byte por vez");
+    FakeServerOptions options;
+    options.trickle = 200ms; // 50 bytes levariam 10 s; cada recv chega dentro do io_timeout
+    FakeServer server(options);
+    server.add(path_of(make_piece(1)), make_bytes(50, 1));
+    HttpSourceConfig config;
+    config.connections = 1;
+    config.max_attempts = 3;
+    config.base_url = server.url();
+    config.io_timeout = 1000ms;
+    config.request_timeout = 1500ms;
+    auto created = HttpRangeSource::create(std::move(config));
+    SW_CHECK(created.has_value());
+    auto source = std::move(created).value();
+    const auto started = std::chrono::steady_clock::now();
+    RequestTicket ticket = source->request(make_piece(1), started + 1s);
+    SW_CHECK(ticket.future.wait_for(30s) == std::future_status::ready);
+    const PieceResponse response = ticket.future.get();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    std::printf("  corpo lento: %s em %lld ms (request_timeout 1500 ms)\n",
+                std::string(to_string(response.error)).c_str(),
+                static_cast<long long>(elapsed.count()));
+    SW_CHECK(response.error == SourceErrorCode::Timeout);
+    SW_CHECK(elapsed < 3500ms);
+}
+
+void test_header_name_with_space_before_colon_is_refused()
+{
+    std::puts("[Test] HttpRangeSource: cabecalho com espaco antes do ':' e recusado");
+    FakeServerOptions options;
+    options.header_space_before_colon = true;
+    FakeServer server(options);
+    server.add(path_of(make_piece(1)), make_bytes(100, 1));
+    auto source = make_source(server);
+    const PieceResponse response = fetch(*source, make_piece(1));
+    SW_CHECK(response.error == SourceErrorCode::NetworkError);
+    SW_CHECK(source->diagnostics().retries == 0); // fatal na conexao nova, sem repetir
+}
+
+void test_tcp_socket_timeout_and_readable()
+{
+    std::puts("[Test] TcpSocket: set_io_timeout confere o retorno e readable_now enxerga bytes");
+    net::TcpSocket none;
+    SW_CHECK(!none.set_io_timeout(100ms)); // soquete invalido: nao finge que aplicou
+    std::string error;
+    auto listener = net::TcpListener::listen_loopback(0, error);
+    SW_CHECK(listener.has_value());
+    auto client = net::TcpSocket::connect("127.0.0.1", listener->port(), 2000ms, error);
+    SW_CHECK(client.has_value());
+    auto accepted = listener->accept(2000ms);
+    SW_CHECK(accepted.has_value());
+    SW_CHECK(client->set_io_timeout(100ms));
+    SW_CHECK(!client->set_io_timeout(0ms)); // prazo zero seria "sem prazo": recusado
+    SW_CHECK(!client->readable_now());
+    SW_CHECK(accepted->send_all("x", 1) == net::IoStatus::Ok);
+    std::this_thread::sleep_for(100ms);
+    SW_CHECK(client->readable_now()); // chegou um byte que ninguem pediu
+}
+
 void test_long_session_bounded_resources()
 {
     std::puts("[Test] HttpRangeSource: sessao longa com threads e handles limitados");
@@ -659,6 +763,10 @@ void run_http_range_source_tests()
     test_connection_refused_fails_with_error();
     test_cancel_and_shutdown();
     test_deadline_order();
+    test_extra_bytes_do_not_poison_the_next_request();
+    test_request_timeout_bounds_a_slow_body();
+    test_header_name_with_space_before_colon_is_refused();
+    test_tcp_socket_timeout_and_readable();
     test_long_session_bounded_resources();
 }
 

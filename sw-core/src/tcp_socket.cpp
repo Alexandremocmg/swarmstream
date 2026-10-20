@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <utility>
 
@@ -104,20 +105,29 @@ int wait_ready(NativeSocket s, bool for_read, std::chrono::milliseconds timeout)
     pollfd entry{};
     entry.fd = s;
     entry.events = for_read ? POLLIN : POLLOUT;
-    return poll(&entry, 1, static_cast<int>(timeout.count()));
+    // Um sinal interrompe o poll (EINTR): refaz com o prazo que sobrou.
+    const auto end = std::chrono::steady_clock::now() + timeout;
+    while (true) {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end - std::chrono::steady_clock::now());
+        const int rc = poll(&entry, 1, static_cast<int>(std::max<long long>(left.count(), 0)));
+        if (rc >= 0 || errno != EINTR) {
+            return rc;
+        }
+    }
 #endif
 }
 
-void apply_timeout(NativeSocket s, int option, std::chrono::milliseconds timeout) noexcept
+bool apply_timeout(NativeSocket s, int option, std::chrono::milliseconds timeout) noexcept
 {
 #ifdef _WIN32
     const DWORD ms = static_cast<DWORD>(timeout.count());
-    setsockopt(s, SOL_SOCKET, option, reinterpret_cast<const char*>(&ms), sizeof(ms));
+    return setsockopt(s, SOL_SOCKET, option, reinterpret_cast<const char*>(&ms), sizeof(ms)) == 0;
 #else
     timeval tv{};
     tv.tv_sec = static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000);
     tv.tv_usec = static_cast<decltype(tv.tv_usec)>((timeout.count() % 1000) * 1000);
-    setsockopt(s, SOL_SOCKET, option, &tv, sizeof(tv));
+    return setsockopt(s, SOL_SOCKET, option, &tv, sizeof(tv)) == 0;
 #endif
 }
 
@@ -182,16 +192,23 @@ std::optional<TcpSocket> TcpSocket::connect(const std::string& host, std::uint16
 #else
                 const bool in_progress = e == EINPROGRESS;
 #endif
-                if (in_progress && wait_ready(s, false, timeout) > 0) {
+                const int ready = in_progress ? wait_ready(s, false, timeout) : 0;
+                if (in_progress && ready > 0) {
                     int so_error = 0;
 #ifdef _WIN32
                     int len = sizeof(so_error);
 #else
                     socklen_t len = sizeof(so_error);
 #endif
-                    getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_error), &len);
-                    connected = so_error == 0;
-                    last_failure = connected ? last_failure : describe(so_error);
+                    if (getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_error),
+                                   &len) != 0) {
+                        last_failure = "getsockopt(SO_ERROR) falhou: " + describe(last_error());
+                    } else {
+                        connected = so_error == 0;
+                        last_failure = connected ? last_failure : describe(so_error);
+                    }
+                } else if (in_progress && ready < 0) {
+                    last_failure = "poll falhou ao conectar: " + describe(last_error());
                 } else {
                     last_failure = in_progress ? "tempo esgotado ao conectar" : describe(e);
                 }
@@ -209,13 +226,23 @@ std::optional<TcpSocket> TcpSocket::connect(const std::string& host, std::uint16
     return std::nullopt;
 }
 
-void TcpSocket::set_io_timeout(std::chrono::milliseconds timeout) noexcept
+bool TcpSocket::set_io_timeout(std::chrono::milliseconds timeout) noexcept
+{
+    if (!valid() || timeout.count() <= 0) {
+        return false;
+    }
+    const bool receive_ok = apply_timeout(to_native(fd_), SO_RCVTIMEO, timeout);
+    const bool send_ok = apply_timeout(to_native(fd_), SO_SNDTIMEO, timeout);
+    return receive_ok && send_ok;
+}
+
+bool TcpSocket::readable_now() const noexcept
 {
     if (!valid()) {
-        return;
+        return true;
     }
-    apply_timeout(to_native(fd_), SO_RCVTIMEO, timeout);
-    apply_timeout(to_native(fd_), SO_SNDTIMEO, timeout);
+    // Qualquer resultado diferente de "nada pronto" (dados, EOF ou erro) torna a conexão suspeita.
+    return wait_ready(to_native(fd_), true, std::chrono::milliseconds(0)) != 0;
 }
 
 IoStatus TcpSocket::send_all(const void* data, std::size_t size) noexcept
@@ -231,7 +258,13 @@ IoStatus TcpSocket::send_all(const void* data, std::size_t size) noexcept
         const auto chunk = static_cast<int>(std::min<std::size_t>(size - sent, 1U << 20));
         const auto n = ::send(to_native(fd_), bytes + sent, chunk, flags);
         if (n < 0) {
-            return is_timeout_error(last_error()) ? IoStatus::Timeout : IoStatus::Error;
+            const int error = last_error();
+#ifndef _WIN32
+            if (error == EINTR) {
+                continue; // interrompido por sinal: repete
+            }
+#endif
+            return is_timeout_error(error) ? IoStatus::Timeout : IoStatus::Error;
         }
         sent += static_cast<std::size_t>(n);
     }
@@ -241,7 +274,12 @@ IoStatus TcpSocket::send_all(const void* data, std::size_t size) noexcept
 RecvResult TcpSocket::recv_some(void* buffer, std::size_t capacity) noexcept
 {
     const auto chunk = static_cast<int>(std::min<std::size_t>(capacity, 1U << 20));
-    const auto n = ::recv(to_native(fd_), static_cast<char*>(buffer), chunk, 0);
+    auto n = ::recv(to_native(fd_), static_cast<char*>(buffer), chunk, 0);
+#ifndef _WIN32
+    while (n < 0 && errno == EINTR) {
+        n = ::recv(to_native(fd_), static_cast<char*>(buffer), chunk, 0);
+    }
+#endif
     if (n > 0) {
         return {IoStatus::Ok, static_cast<std::size_t>(n)};
     }

@@ -44,8 +44,13 @@ public:
 
     [[nodiscard]] bool valid() const noexcept { return fd_ != kInvalid; }
 
-    // Prazo de cada send/recv. Zero = sem prazo.
-    void set_io_timeout(std::chrono::milliseconds timeout) noexcept;
+    // Prazo de cada send/recv (> 0). Devolve false se o sistema não aplicou o prazo: nesse caso o
+    // recv poderia bloquear sem limite, então quem chama deve descartar a conexão.
+    [[nodiscard]] bool set_io_timeout(std::chrono::milliseconds timeout) noexcept;
+
+    // true se o soquete já está legível AGORA (poll com prazo 0): chegaram bytes que ninguém
+    // pediu, o par fechou ou deu erro. Numa conexão ociosa isso significa "não reutilize".
+    [[nodiscard]] bool readable_now() const noexcept;
 
     [[nodiscard]] IoStatus send_all(const void* data, std::size_t size) noexcept;
     [[nodiscard]] RecvResult recv_some(void* buffer, std::size_t capacity) noexcept;
