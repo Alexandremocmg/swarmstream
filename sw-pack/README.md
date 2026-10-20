@@ -4,13 +4,21 @@ Ferramenta de empacotamento de conteúdo do Swarmstream — trilha **T1
 (Conteúdo/build)**. Divide o build do jogo em blocos comprimidos, identificados
 por hash, e gera o manifesto assinado que a publisher distribui.
 
-> **Estado:** Fase 0. O CMake e o vcpkg estão ligados ([F0-02](../docs/11-backlog-inicial.md)),
-> mas ainda não há fonte: a biblioteca é `INTERFACE` (build vazia). O conteúdo
-> real depende da especificação v0 do manifesto ([F0-08](../docs/11-backlog-inicial.md)).
+> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01) e o SHA-256 que ele
+> usa; o resto abaixo ainda não tem código.
+
+## O que já existe
+
+- `include/swarmstream/chunker.hpp`, `src/chunker.cpp`: chunker de [docs/03 §11.1](../docs/03-formato-de-conteudo.md).
+  `Chunker::make(params)` valida os parâmetros; `cut(janela)` devolve o tamanho do primeiro bloco
+  (sem alocação); `split(buffer)` devolve todos. A referência são os vetores de
+  [testdata/vectors-v0.json](testdata/README.md), reproduzidos por `tests/test_chunker.cpp`.
+- `include/swarmstream/sha256.hpp`, `src/sha256.cpp`: SHA-256 pequeno, sem dependências.
+- Teste pesado de estabilidade em 1 GiB (mudar, inserir ou remover 1 byte altera ≤ 3 blocos), fora do
+  CTest padrão: `cmake -DSW_PACK_HEAVY_TESTS=ON ...` e `ctest -L heavy` (cerca de 1 min em Release).
 
 ## O que vai morar aqui
 
-- Chunker FastCDC com tamanhos mín/médio/máx configuráveis (F1-01)
 - Compressão por bloco Zstd/LZ4 por tipo de arquivo (F1-03)
 - Geração e leitura do manifesto v0 (F1-04), classificação core/grupo/opcional (F1-05)
 - Ordenação de blocos em peças por localidade (F1-06)
