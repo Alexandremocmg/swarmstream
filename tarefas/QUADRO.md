@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 38 | 9 |
+| 3 | 0 | 1 | 0 | 37 | 10 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -33,9 +33,8 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-18](cartoes/F1-18.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-11 | Ferramenta `sw-cache-inspect` (listar peças, uso, estado) |
 | [F1-21](cartoes/F1-21.md) | R1 | Opus 5.5, esforço alto | não | espera F1-20 | Política de falta para textura (mip menor + troca ao chegar) |
 | [F1-24](cartoes/F1-24.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Overlay de debug (acertos, faltas, fila, bytes por fonte) |
-| [F1-27](cartoes/F1-27.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Fonte HTTP Range implementando `IContentSource`, com conexões persistentes |
-| [F1-28](cartoes/F1-28.md) | R1 | Opus 5.5, esforço muito alto | sim | espera F1-27 | Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento) |
-| [F1-29](cartoes/F1-29.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-27 | Estimador de banda e RTT da fonte |
+| [F1-28](cartoes/F1-28.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento) |
+| [F1-29](cartoes/F1-29.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Estimador de banda e RTT da fonte |
 | [F1-30](cartoes/F1-30.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-12 | Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo |
 | [F1-31](cartoes/F1-31.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-11 | Teste de queda: matar o processo em pontos aleatórios da escrita |
 | [F1-32](cartoes/F1-32.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Teste de disco cheio e de erro de escrita |
@@ -62,6 +61,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 ## Feitas
 - [F1-01](cartoes/F1-01.md): Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: 03 §11.1, vetores)
+- [F1-27](cartoes/F1-27.md): Fonte HTTP Range implementando `IContentSource`, com conexões persistentes
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
 - [F1-39](cartoes/F1-39.md): Ampliar o lint do CI para as ferramentas do baseline e os vetores
 - [F1-41](cartoes/F1-41.md): Alinhar a spec 03 (§7.1, §7.2, §8) ao ADR-0012: format_version só do envelope, min_reader no payload
