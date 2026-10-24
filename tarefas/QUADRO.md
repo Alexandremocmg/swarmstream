@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 36 | 11 |
+| 3 | 0 | 1 | 0 | 35 | 12 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -24,8 +24,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-07](cartoes/F1-07.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-05 | Mips/LODs baixos sempre no core |
 | [F1-08](cartoes/F1-08.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-04 | Relatório da CLI: tamanho por grupo, nº de peças, taxa de compressão |
 | [F1-11](cartoes/F1-11.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Índice + journal com ordem dados → flush → journal → flush |
-| [F1-12](cartoes/F1-12.md) | R1 | Opus 5.5, esforço alto | sim | sim | Thread dona do cache e fila MPSC de pedidos |
-| [F1-13](cartoes/F1-13.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-12 | Leases com contagem de referência |
+| [F1-13](cartoes/F1-13.md) | R1 | Opus 5.5, esforço alto | sim | sim | Leases com contagem de referência |
 | [F1-14](cartoes/F1-14.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-13 | Remoção CLOCK com marcas 95%/85% e conjunto fixo |
 | [F1-16](cartoes/F1-16.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Checksum XXH3 por bloco na leitura |
 | [F1-17](cartoes/F1-17.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | VFS: caminho + offset + tamanho → blocos |
@@ -34,7 +33,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-24](cartoes/F1-24.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Overlay de debug (acertos, faltas, fila, bytes por fonte) |
 | [F1-28](cartoes/F1-28.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento) |
 | [F1-29](cartoes/F1-29.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Estimador de banda e RTT da fonte |
-| [F1-30](cartoes/F1-30.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-12 | Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo |
+| [F1-30](cartoes/F1-30.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo |
 | [F1-31](cartoes/F1-31.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-11 | Teste de queda: matar o processo em pontos aleatórios da escrita |
 | [F1-32](cartoes/F1-32.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-11 | Teste de disco cheio e de erro de escrita |
 | [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33 | Rodadas semanais nos 3 perfis + comparação com o baseline |
@@ -49,7 +48,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
 | --- | --- | --- | --- | --- | --- |
 | [F1-06](cartoes/F1-06.md) | R1 | Opus 5.5, esforço alto | não | espera F1-04 | Ordenação de blocos em peças por localidade (por pasta/região) |
-| [F1-15](cartoes/F1-15.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-12 | Cache de blocos descomprimidos em RAM + pool de buffers |
+| [F1-15](cartoes/F1-15.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Cache de blocos descomprimidos em RAM + pool de buffers |
 | [F1-22](cartoes/F1-22.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-20 | Política de falta para malha (LOD menor / esconder) |
 | [F1-23](cartoes/F1-23.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-20 | Nó `SwarmHintArea3D` chamando `sw_hint_group` |
 | [F1-25](cartoes/F1-25.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Gravação de traces de leitura (posição, tempo, peça) |
@@ -61,6 +60,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 ## Feitas
 - [F1-01](cartoes/F1-01.md): Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: 03 §11.1, vetores)
 - [F1-10](cartoes/F1-10.md): Arquivos de store pré-alocados e slots
+- [F1-12](cartoes/F1-12.md): Thread dona do cache e fila MPSC de pedidos
 - [F1-27](cartoes/F1-27.md): Fonte HTTP Range implementando `IContentSource`, com conexões persistentes
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
 - [F1-39](cartoes/F1-39.md): Ampliar o lint do CI para as ferramentas do baseline e os vetores
