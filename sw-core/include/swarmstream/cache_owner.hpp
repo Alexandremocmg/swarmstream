@@ -97,7 +97,7 @@ public:
     [[nodiscard]] bool valid() const noexcept { return table_ != nullptr; }
     [[nodiscard]] explicit operator bool() const noexcept { return valid(); }
     [[nodiscard]] const PieceHash& piece() const noexcept { return piece_; }
-    [[nodiscard]] SlotId slot() const noexcept { return slot_; } // kInvalidSlot se vazio
+    [[nodiscard]] SlotId slot() const noexcept { return slot_; }   // kInvalidSlot se vazio
     [[nodiscard]] uint32_t size() const noexcept { return size_; } // bytes da peça
 
     // Solta o lease (se houver). Depois disso a peça pode ser removida.

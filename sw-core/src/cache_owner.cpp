@@ -665,8 +665,7 @@ void CacheOwner::Impl::acquire(CacheRequest& r) noexcept
         r.complete(drop_corrupt(r.piece_.hash), 0);
         return;
     }
-    detail::LeaseAccess::grant(*r.lease_, leases, r.piece_.hash, it->second.slot,
-                               it->second.size);
+    detail::LeaseAccess::grant(*r.lease_, leases, r.piece_.hash, it->second.slot, it->second.size);
     r.complete(CacheErrorCode::Success, it->second.size);
 }
 
