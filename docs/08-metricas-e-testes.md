@@ -105,9 +105,9 @@ Por que 300:
 - **(a) É o menor N redondo em que o dado sustenta alguma afirmação sobre o p99.** Abaixo de 299 não existe cota superior de 95% para o p99 verdadeiro: nem a maior espera observada garante, com 95% de confiança, que ele está abaixo dela (a cota existe quando `1 − 0,99^N ≥ 0,95`, isto é, N ≥ 299).
 - **(b) O p99 amostral é um estimador ruidoso da cauda.** Ele fica abaixo do p99 verdadeiro em 42% a 74% das vezes nos valores da tabela, perto da metade quando N cresce. Por isso o relatório mostra, ao lado do p99, a **cota superior de 95%** e o N.
 
-**Regra de decisão proposta (opção A, recomendada):** o critério do portão é o p99 por posto mais próximo < 300 ms com N ≥ 300, como o dono decidiu. A cota de 95% é informativa. Quando o p99 passa e a cota não (cota ≥ 300 ms), o relatório escreve `passou (margem não demonstrada)`, e isso vai para o dono na reunião do portão.
+**Regra de decisão (opção A, escolhida pelo dono do produto em 2026-10-20):** o critério do portão é o p99 por posto mais próximo < 300 ms com N ≥ 300, como o dono decidiu. A cota de 95% é informativa. Quando o p99 passa e a cota não (cota ≥ 300 ms), o relatório escreve `passou (margem não demonstrada)`, e isso vai para o dono na reunião do portão.
 
-**Opção B, mais estrita, para o dono escolher:** exigir também a cota de 95% < 300 ms. O custo está na tabela. Com N = 300, a cota de 95% é a própria maior espera (posto 300), enquanto o p99 tem 3 esperas acima dele. Uma única falta lenta decide a cota (opção B), mas não o p99 (opção A). A cota só sai da maior espera perto de N = 500 (posto 499) e fica no percentil amostral 99,6 com N = 1000 (posto 996). A opção B só faz sentido com N ≥ 1000, ou seja, mais rodadas.
+**Opção B, mais estrita (não escolhida em 2026-10-20; registrada para referência):** exigir também a cota de 95% < 300 ms. O custo está na tabela. Com N = 300, a cota de 95% é a própria maior espera (posto 300), enquanto o p99 tem 3 esperas acima dele. Uma única falta lenta decide a cota (opção B), mas não o p99 (opção A). A cota só sai da maior espera perto de N = 500 (posto 499) e fica no percentil amostral 99,6 com N = 1000 (posto 996). A opção B só faz sentido com N ≥ 1000, ou seja, mais rodadas.
 
 **O mínimo vale por perfil**, sempre sobre as faltas reunidas das rodadas daquele perfil:
 - no portão, só o perfil `cabo_50`;
@@ -154,7 +154,7 @@ Não proponho agora um teste estatístico de homogeneidade entre rodadas, como u
 **4. Regra de parada e o que fazer com menos amostras que o mínimo.**
 - **Antes de medir**, declara-se no arquivo da sessão o número de rodadas `K`, com 3 ≤ `K` ≤ 10. **Todas as `K` rodadas completas entram**; não se escolhe nenhuma. Uma rodada incompleta é refeita dentro da mesma sessão, com o motivo registrado; ela nunca é simplesmente descartada.
 - Se, depois das `K` rodadas, o perfil tiver N < 300, é permitida **uma** extensão: declara-se o novo total `K′` (com `K′` ≤ 10), antes de rodar as rodadas extras, e todas entram.
-- Com `K` = 10 e N < 300, o p99 agregado é `incompleto por poucas faltas`, e a decisão vai para o dono. Poucas faltas é uma boa notícia para a taxa, mas não certifica a espera. A saída que proponho para esse caso, se o dono aceitar, é uma **rodada de faltas forçadas**: mesma rota, cache frio e prefetch desligado, só para medir a distribuição da espera no caminho da falta. Ela não entra na taxa de falta.
+- Com `K` = 10 e N < 300, o p99 agregado é `incompleto por poucas faltas`, e a decisão vai para o dono. Poucas faltas é uma boa notícia para a taxa, mas não certifica a espera. Nesse caso, por decisão do dono do produto em 2026-10-20, faz-se uma **rodada de faltas forçadas**: mesma rota, cache frio e prefetch desligado, só para medir a distribuição da espera no caminho da falta. Ela não entra na taxa de falta.
 - Em qualquer caso, com N < 300 o p99 agregado é `incompleto`, nunca `passou`. Sem nenhuma falta concluída, ele é `n/d` com N = 0, nunca p99 = 0. Taxa de falta e p99 são critérios separados: uma rodada pode passar na taxa (< 1%) e o p99 agregado continuar `incompleto`.
 
 **5. Limiares da comparação entre perfis (`compare_profiles.py`, F1-47).**

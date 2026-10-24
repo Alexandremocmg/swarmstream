@@ -36,6 +36,8 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-20 | **F1-48 aceito (PR #29). Opção A:** o critério do Portão 1 é o p99 pontual (posto mais próximo) < 300 ms com **N >= 300 faltas concluídas por perfil**; a cota superior de 95% é **só informativa**. Rodadas comparáveis com os campos exatos de ambiente do doc 08; K declarado antes de medir (3 a 10, com uma extensão); sessões diferentes não se reúnem. Ruído da validação da bancada mantido em 10% |
 | 2026-10-20 | **Rodada de faltas forçadas aceita**: se, com K = 10, o perfil não chegar a 300 faltas, faz-se uma rodada com cache frio e prefetch desligado, só para medir a espera; ela não entra na taxa de falta |
 | 2026-10-20 | PRs #25 (F1-01), #26 (portão do F1-20), #27 (F1-51) e #29 (F1-48) aceitos |
+| 2026-10-22 | PRs #30 (decisões do F1-48 no doc 08) e #32 (F1-27, fonte HTTP Range) aceitos |
+| 2026-10-22 | Atribuições: **F1-12 e depois F1-11 ao Arquiteto**, com revisão independente da Sênior; **F1-53 à Pleno**, depois do PR #28 |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_a1345bc0-fcb0-4aa8-a986-e4bff85c6932`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto
@@ -45,8 +47,7 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | Decidir quando o repositório deixa de ser privado (recomendado: depois do Portão 1 e de consulta jurídica rápida) | 2026-10-17 |
 | Plano de preços do backend hospedado (depois do Portão 2) | 2026-10-17 |
 | Mover o Godot 4.7.2 para uma pasta fixa (hoje está em uma pasta temporária do Windows) | 2026-10-18 |
-| Destino da alteração solta em `docs/medicoes/guia-1h.md` na pasta compartilhada: um pré-teste do guia feito por um agente Hermes em contêiner Docker (Ubuntu 22.04). Não é da sessão Pleno; autor não identificado pela gestão. A própria nota diz que **não vale** como resultado do critério. Sugestão: revisar e, se útil, entrar por PR; senão descartar | 2026-10-18 |
+| Destino da alteração solta em `docs/medicoes/guia-1h.md` na pasta compartilhada: um pré-teste do guia feito por um agente Hermes em contêiner Docker (Ubuntu 22.04). Não é da sessão Pleno; autor não identificado pela gestão. A própria nota diz que **não vale** como resultado do critério. Sugestão: revisar e, se útil, entrar por PR; senão descartar. **Em 2026-10-22, guardada no branch local `local/pre-teste-hermes` (só na pasta compartilhada, não enviado ao GitHub)** | 2026-10-18 |
 | Dizer se a sessão "Hermez Agent utilização" faz parte do projeto (hoje só Arquiteto, Sênior e Pleno recebem avisos da gestão) | 2026-10-18 |
 | Incluir os cartões F1-37 a F1-47 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |
 | Apagar os branches já incorporados no GitHub, se quiser (ex.: `baseline/limites-aprovados-r1` e `feat/F0-08-vetores-de-teste`; o `test/ci-vermelho` convém manter, é a evidência do CI vermelho). Ninguém apagou sem a sua ordem | 2026-10-18 |
-| Quem fica com a pasta compartilhada (hoje no branch `feat/F0-08-vetores-de-teste`, que nenhuma sessão assume ter trocado): voltar para a `main` quando ninguém a usar | 2026-10-18 |
