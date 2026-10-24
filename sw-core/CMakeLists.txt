@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Core library (headers and mocks)
 add_library(sw-core STATIC
     src/api_stub.cpp
+    src/cache_journal.cpp
     src/cache_owner.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
@@ -18,6 +19,7 @@ add_library(sw-core STATIC
     src/slot_allocator.cpp
     src/store_files.cpp
     src/tcp_socket.cpp
+    src/xxh3.cpp
 )
 
 # Fonte HTTP (F1-27): threads e, no Windows, Winsock.
@@ -69,6 +71,21 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     target_include_directories(sw-core-store-tests PRIVATE src)
     add_test(NAME sw-core-store COMMAND sw-core-store-tests)
     set_tests_properties(sw-core-store PROPERTIES TIMEOUT 300)
+
+    # F1-11: XXH3-64 própria contra a biblioteca de referência.
+    add_executable(sw-core-xxh3-tests tests/test_xxh3.cpp)
+    target_link_libraries(sw-core-xxh3-tests PRIVATE sw-core)
+    add_test(NAME sw-core-xxh3 COMMAND sw-core-xxh3-tests)
+    add_executable(sw-core-journal-tests tests/test_cache_journal.cpp)
+    target_link_libraries(sw-core-journal-tests PRIVATE sw-core)
+    target_include_directories(sw-core-journal-tests PRIVATE src)
+    add_test(NAME sw-core-journal COMMAND sw-core-journal-tests)
+    set_tests_properties(sw-core-journal PROPERTIES TIMEOUT 300)
+    add_executable(sw-core-recovery-tests tests/test_cache_recovery.cpp)
+    target_link_libraries(sw-core-recovery-tests PRIVATE sw-core)
+    target_include_directories(sw-core-recovery-tests PRIVATE src)
+    add_test(NAME sw-core-recovery COMMAND sw-core-recovery-tests)
+    set_tests_properties(sw-core-recovery PROPERTIES TIMEOUT 300)
 
     # F1-12: thread dona do cache e fila MPSC (16 leitoras; o job TSan do CI roda este teste).
     add_executable(sw-core-owner-tests tests/test_cache_owner.cpp)
@@ -128,6 +145,21 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         endforeach()
     else()
         message(STATUS "Python3 nao encontrado: testes http-netlab-* nao serao registrados")
+    endif()
+
+    # F1-11: teste de queda (critério de aceite: queda sem peça corrompida). 120 iterações de 3
+    # rodadas; o F1-31 roda 1.000 quedas com a mesma ferramenta. Rótulo `crash`: o job TSan o
+    # pula (lento sob TSan e sem threads novas a examinar).
+    add_executable(sw-core-crash-tool tests/crash_tool.cpp)
+    target_link_libraries(sw-core-crash-tool PRIVATE sw-core)
+    target_include_directories(sw-core-crash-tool PRIVATE src)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME sw-core-crash
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/crash_test.py
+                $<TARGET_FILE:sw-core-crash-tool> 120)
+        set_tests_properties(sw-core-crash PROPERTIES TIMEOUT 900 LABELS crash)
+    else()
+        message(STATUS "Python3 nao encontrado: teste de queda sw-core-crash nao sera registrado")
     endif()
 
     # Contrato swarmstream.h v0 (ADR-0014): layout (sizeof/offsetof) e stub.

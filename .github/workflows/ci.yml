@@ -132,5 +132,7 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      # O teste de queda (F1-11, rótulo `crash`) roda nos outros jobs; sob TSan é lento e não
+      # traz threads novas.
       - name: Test under TSan
-        run: ctest --test-dir build --output-on-failure --timeout 300
+        run: ctest --test-dir build --output-on-failure --timeout 300 -LE crash

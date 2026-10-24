@@ -3,6 +3,7 @@
 
 #include "swarmstream/store_files.hpp"
 
+#include "platform_file.hpp"
 #include "store_files_testing.hpp"
 
 #include <algorithm>
@@ -10,21 +11,6 @@
 #include <string>
 #include <system_error>
 #include <vector>
-
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
 
 namespace swarmstream {
 
@@ -39,267 +25,10 @@ std::filesystem::path file_name(const std::filesystem::path& dir, uint32_t index
     return dir / name;
 }
 
-// Arquivo aberto, dono do handle nativo. Toda operação devolve CacheErrorCode::Success ou
-// o erro; nunca ignora um retorno.
-class File
-{
-public:
-    File() = default;
-    File(const File&) = delete;
-    File& operator=(const File&) = delete;
-    File(File&& o) noexcept : h_(o.h_) { o.h_ = kInvalid; }
-    File& operator=(File&& o) noexcept
-    {
-        if (this != &o) {
-            (void)close(); // último recurso: quem quer o erro chama close() antes
-            h_ = o.h_;
-            o.h_ = kInvalid;
-        }
-        return *this;
-    }
-    ~File() { (void)close(); } // último recurso: StoreFiles::close() devolve o erro
-
-    [[nodiscard]] bool is_open() const noexcept { return h_ != kInvalid; }
-
-#if defined(_WIN32)
-    // INVALID_HANDLE_VALUE é um reinterpret_cast: não pode ser constexpr.
-    inline static const HANDLE kInvalid = INVALID_HANDLE_VALUE;
-
-    CacheErrorCode open(const std::filesystem::path& p) noexcept
-    {
-        h_ = ::CreateFileW(p.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        return h_ == kInvalid ? CacheErrorCode::IoError : CacheErrorCode::Success;
-    }
-
-    CacheErrorCode size(uint64_t& out) const noexcept
-    {
-        LARGE_INTEGER s{};
-        if (!::GetFileSizeEx(h_, &s)) return CacheErrorCode::IoError;
-        out = static_cast<uint64_t>(s.QuadPart);
-        return CacheErrorCode::Success;
-    }
-
-    // Reserva os clusters (não esparso) e põe o fim do arquivo em `bytes`. `native` só existe
-    // para a versão POSIX (gancho de teste do fallback).
-    CacheErrorCode preallocate(uint64_t bytes, [[maybe_unused]] bool native = true) noexcept
-    {
-        FILE_ALLOCATION_INFO alloc{};
-        alloc.AllocationSize.QuadPart = static_cast<LONGLONG>(bytes);
-        if (!::SetFileInformationByHandle(h_, FileAllocationInfo, &alloc, sizeof alloc))
-            return last_error();
-        FILE_END_OF_FILE_INFO eof{};
-        eof.EndOfFile.QuadPart = static_cast<LONGLONG>(bytes);
-        if (!::SetFileInformationByHandle(h_, FileEndOfFileInfo, &eof, sizeof eof))
-            return last_error();
-        return CacheErrorCode::Success;
-    }
-
-    CacheErrorCode write_at(uint64_t offset, const std::byte* data, size_t n) noexcept
-    {
-        while (n > 0) {
-            OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(offset & 0xFFFFFFFFu);
-            ov.OffsetHigh = static_cast<DWORD>(offset >> 32);
-            const DWORD chunk = n > (DWORD{1} << 30) ? (DWORD{1} << 30) : static_cast<DWORD>(n);
-            DWORD done = 0;
-            if (!::WriteFile(h_, data, chunk, &done, &ov)) return last_error();
-            if (done == 0) return CacheErrorCode::IoError;
-            offset += done;
-            data += done;
-            n -= done;
-        }
-        return CacheErrorCode::Success;
-    }
-
-    CacheErrorCode read_at(uint64_t offset, std::byte* data, size_t n) noexcept
-    {
-        while (n > 0) {
-            OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(offset & 0xFFFFFFFFu);
-            ov.OffsetHigh = static_cast<DWORD>(offset >> 32);
-            const DWORD chunk = n > (DWORD{1} << 30) ? (DWORD{1} << 30) : static_cast<DWORD>(n);
-            DWORD done = 0;
-            if (!::ReadFile(h_, data, chunk, &done, &ov)) return CacheErrorCode::IoError;
-            if (done == 0) return CacheErrorCode::IoError; // fim do arquivo antes do esperado
-            offset += done;
-            data += done;
-            n -= done;
-        }
-        return CacheErrorCode::Success;
-    }
-
-    CacheErrorCode sync() noexcept
-    {
-        return ::FlushFileBuffers(h_) ? CacheErrorCode::Success : CacheErrorCode::IoError;
-    }
-
-    // Desfaz uma pré-alocação que falhou: volta o fim do arquivo e a reserva para `bytes`.
-    CacheErrorCode truncate(uint64_t bytes) noexcept
-    {
-        FILE_END_OF_FILE_INFO eof{};
-        eof.EndOfFile.QuadPart = static_cast<LONGLONG>(bytes);
-        if (!::SetFileInformationByHandle(h_, FileEndOfFileInfo, &eof, sizeof eof))
-            return CacheErrorCode::IoError;
-        FILE_ALLOCATION_INFO alloc{};
-        alloc.AllocationSize.QuadPart = static_cast<LONGLONG>(bytes);
-        return ::SetFileInformationByHandle(h_, FileAllocationInfo, &alloc, sizeof alloc)
-                   ? CacheErrorCode::Success
-                   : CacheErrorCode::IoError;
-    }
-
-    // Fecha conferindo o retorno. O handle é dado por fechado mesmo se a chamada falhar
-    // (repetir CloseHandle num handle já liberado seria pior).
-    CacheErrorCode close() noexcept
-    {
-        if (h_ == kInvalid) return CacheErrorCode::Success;
-        const BOOL ok = ::CloseHandle(h_);
-        h_ = kInvalid;
-        return ok ? CacheErrorCode::Success : CacheErrorCode::IoError;
-    }
-
-private:
-    static CacheErrorCode last_error() noexcept
-    {
-        const DWORD e = ::GetLastError();
-        return (e == ERROR_DISK_FULL || e == ERROR_HANDLE_DISK_FULL) ? CacheErrorCode::DiskFull
-                                                                     : CacheErrorCode::IoError;
-    }
-    HANDLE h_ = kInvalid;
-#else
-    static constexpr int kInvalid = -1;
-
-    CacheErrorCode open(const std::filesystem::path& p) noexcept
-    {
-        do {
-            h_ = ::open(p.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-        } while (h_ < 0 && errno == EINTR);
-        return h_ < 0 ? CacheErrorCode::IoError : CacheErrorCode::Success;
-    }
-
-    CacheErrorCode size(uint64_t& out) const noexcept
-    {
-        struct stat st
-        {
-        };
-        if (::fstat(h_, &st) != 0) return CacheErrorCode::IoError;
-        out = static_cast<uint64_t>(st.st_size);
-        return CacheErrorCode::Success;
-    }
-
-    // Reserva os blocos de verdade. No Linux usa fallocate(2), que nunca emula; só num sistema
-    // de arquivos sem suporte (EOPNOTSUPP: NFS antigo, alguns overlay/ZFS) cai na
-    // posix_fallocate, que a glibc emula escrevendo zeros (lento). Em todo caso o espaço livre
-    // já foi conferido antes (Impl::open_file), então a emulação não enche o disco.
-    // `native` = false pula o fallocate(2) e vai direto ao fallback (StoreFilesTestHook).
-    CacheErrorCode preallocate(uint64_t bytes, [[maybe_unused]] bool native = true) noexcept
-    {
-        int rc = EOPNOTSUPP;
-#if defined(__linux__)
-        if (native) {
-            do {
-                rc = ::fallocate(h_, 0, 0, static_cast<off_t>(bytes)) == 0 ? 0 : errno;
-            } while (rc == EINTR);
-        }
-#endif
-        if (rc == EOPNOTSUPP || rc == ENOSYS) {
-            do {
-                rc = ::posix_fallocate(h_, 0, static_cast<off_t>(bytes)); // devolve o erro
-            } while (rc == EINTR);
-        }
-        if (rc == ENOSPC) return CacheErrorCode::DiskFull;
-        return rc == 0 ? CacheErrorCode::Success : CacheErrorCode::IoError;
-    }
-
-    // Desfaz uma pré-alocação que falhou (blocos já reservados voltam ao disco).
-    CacheErrorCode truncate(uint64_t bytes) noexcept
-    {
-        int rc = 0;
-        do {
-            rc = ::ftruncate(h_, static_cast<off_t>(bytes));
-        } while (rc != 0 && errno == EINTR);
-        return rc == 0 ? CacheErrorCode::Success : CacheErrorCode::IoError;
-    }
-
-    CacheErrorCode write_at(uint64_t offset, const std::byte* data, size_t n) noexcept
-    {
-        while (n > 0) {
-            const ssize_t done = ::pwrite(h_, data, n, static_cast<off_t>(offset));
-            if (done < 0) {
-                if (errno == EINTR) continue;
-                return errno == ENOSPC ? CacheErrorCode::DiskFull : CacheErrorCode::IoError;
-            }
-            if (done == 0) return CacheErrorCode::IoError;
-            offset += static_cast<uint64_t>(done);
-            data += done;
-            n -= static_cast<size_t>(done);
-        }
-        return CacheErrorCode::Success;
-    }
-
-    CacheErrorCode read_at(uint64_t offset, std::byte* data, size_t n) noexcept
-    {
-        while (n > 0) {
-            const ssize_t done = ::pread(h_, data, n, static_cast<off_t>(offset));
-            if (done < 0) {
-                if (errno == EINTR) continue;
-                return CacheErrorCode::IoError;
-            }
-            if (done == 0) return CacheErrorCode::IoError; // fim do arquivo antes do esperado
-            offset += static_cast<uint64_t>(done);
-            data += done;
-            n -= static_cast<size_t>(done);
-        }
-        return CacheErrorCode::Success;
-    }
-
-    CacheErrorCode sync() noexcept
-    {
-        int rc = 0;
-        do {
-            rc = ::fdatasync(h_);
-        } while (rc != 0 && errno == EINTR);
-        return rc == 0 ? CacheErrorCode::Success : CacheErrorCode::IoError;
-    }
-
-    // Fecha conferindo o retorno. Não repete em EINTR: no Linux o descritor já foi liberado
-    // e repetir poderia fechar outro arquivo aberto no meio-tempo.
-    CacheErrorCode close() noexcept
-    {
-        if (h_ < 0) return CacheErrorCode::Success;
-        const int rc = ::close(h_);
-        h_ = kInvalid;
-        return rc == 0 ? CacheErrorCode::Success : CacheErrorCode::IoError;
-    }
-
-private:
-    int h_ = kInvalid;
-#endif
-};
+using detail::File;
+using detail::sync_directory;
 
 Unexpected<CacheErrorCode> fail(CacheErrorCode code) { return Unexpected(code); }
-
-// Grava no disco a entrada de diretório dos arquivos criados (POSIX): sem isso, depois de
-// queda de energia o store-XXX.bin pode sumir mesmo com os dados sincronizados. No Windows
-// não há fsync de pasta; o NTFS registra a criação no journal de metadados dele.
-CacheErrorCode sync_directory([[maybe_unused]] const std::filesystem::path& dir) noexcept
-{
-#if defined(_WIN32)
-    return CacheErrorCode::Success;
-#else
-    int fd = -1;
-    do {
-        fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    } while (fd < 0 && errno == EINTR);
-    if (fd < 0) return CacheErrorCode::IoError;
-    int rc = 0;
-    do {
-        rc = ::fsync(fd);
-    } while (rc != 0 && errno == EINTR);
-    const int closed = ::close(fd);
-    return rc == 0 && closed == 0 ? CacheErrorCode::Success : CacheErrorCode::IoError;
-#endif
-}
 
 } // namespace
 
@@ -316,6 +45,7 @@ struct StoreFiles::Impl
     bool skip_space_check = false;  // StoreFilesTestHook
     bool native_preallocate = true; // StoreFilesTestHook
     uint32_t directory_syncs = 0;
+    uint64_t file_syncs = 0; // syncs de arquivo que deram certo (StoreFilesTestHook)
 
     [[nodiscard]] CacheErrorCode usable() const noexcept
     {
@@ -331,7 +61,11 @@ struct StoreFiles::Impl
         } else {
             rc = f.sync();
         }
-        if (rc != CacheErrorCode::Success) broken = true;
+        if (rc != CacheErrorCode::Success) {
+            broken = true;
+        } else {
+            ++file_syncs;
+        }
         return rc;
     }
 
@@ -487,6 +221,65 @@ uint32_t StoreFiles::file_count() const noexcept
 }
 uint32_t StoreFiles::files_created() const noexcept { return impl_->created; }
 
+std::filesystem::path StoreFiles::file_path(const std::filesystem::path& dir, uint32_t index)
+{
+    return file_name(dir, index);
+}
+
+Result<void, CacheErrorCode> StoreFiles::shrink_to_ceiling()
+{
+    if (const auto rc = impl_->usable(); rc != CacheErrorCode::Success) return fail(rc);
+    // Teto 0 apagaria todos os store-NNN.bin: é configuração errada, não "teto menor".
+    if (impl_->total_slots == 0) return fail(CacheErrorCode::InvalidSize);
+    namespace fs = std::filesystem;
+    const uint32_t count = file_count();
+    // Arquivos inteiros além do teto (só os de nome canônico "store-NNN.bin").
+    std::vector<fs::path> beyond;
+    std::error_code ec;
+    for (fs::directory_iterator it(impl_->dir, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        unsigned n = 0;
+        char extra = 0;
+        if (std::sscanf(name.c_str(), "store-%u.bin%c", &n, &extra) != 1) continue;
+        if (name != file_name(fs::path{}, n).filename().string()) continue;
+        if (n >= count) beyond.push_back(it->path());
+    }
+    if (ec) return fail(CacheErrorCode::IoError);
+    for (const fs::path& p : beyond) {
+        if (detail::remove_file(p) != CacheErrorCode::Success) return fail(CacheErrorCode::IoError);
+    }
+    // Arquivos maiores que o layout pede agora (o último, quando o teto não fecha um arquivo).
+    for (uint32_t i = 0; i < count; ++i) {
+        const fs::path p = file_name(impl_->dir, i);
+        if (!fs::exists(p, ec) || ec) {
+            if (ec) return fail(CacheErrorCode::IoError);
+            continue;
+        }
+        const uint64_t size = fs::file_size(p, ec);
+        if (ec) return fail(CacheErrorCode::IoError);
+        const uint64_t wanted = impl_->file_bytes(i);
+        if (size <= wanted) continue;
+        File& open_file = impl_->files[i];
+        File local;
+        File& f = open_file.is_open() ? open_file : local;
+        if (!f.is_open()) {
+            if (const auto rc = f.open(p); rc != CacheErrorCode::Success) return fail(rc);
+        }
+        CacheErrorCode rc = f.truncate(wanted);
+        if (rc == CacheErrorCode::Success) rc = impl_->sync(f);
+        if (&f == &local) {
+            const CacheErrorCode closed = local.close();
+            if (rc == CacheErrorCode::Success) rc = closed;
+        }
+        if (rc != CacheErrorCode::Success) return fail(rc);
+    }
+    if (!beyond.empty() && sync_directory(impl_->dir) != CacheErrorCode::Success) {
+        impl_->broken = true;
+        return fail(CacheErrorCode::IoError);
+    }
+    return {};
+}
+
 Result<uint64_t, CacheErrorCode> StoreFiles::allocated_bytes(const std::filesystem::path& file)
 {
 #if defined(_WIN32)
@@ -515,6 +308,11 @@ void StoreFilesTestHook::fail_next_sync(StoreFiles& store) noexcept
 uint32_t StoreFilesTestHook::directory_syncs(const StoreFiles& store) noexcept
 {
     return store.impl_->directory_syncs;
+}
+
+uint64_t StoreFilesTestHook::file_syncs(const StoreFiles& store) noexcept
+{
+    return store.impl_->file_syncs;
 }
 
 void StoreFilesTestHook::skip_space_check(StoreFiles& store) noexcept

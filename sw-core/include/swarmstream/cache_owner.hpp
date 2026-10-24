@@ -14,15 +14,22 @@
 // - submit() nunca espera pela dona: é um push wait-free e, só se a dona estiver dormindo,
 //   uma trava curta para acordá-la. done() também não bloqueia (try_lock). wait() bloqueia,
 //   e é para quem pode esperar (thread de stream, ferramentas, testes), nunca para o jogo.
-// - Escrita (Put), nesta ordem: aloca o slot, grava os dados, flush (Barreira 1 do 04 §3) e
-//   publica no índice. O journal e o índice em disco entram na F1-11, entre o flush e a
-//   publicação. Até lá, o índice só existe em RAM e some ao fechar.
+// - Escrita (Put), nesta ordem (04 §3, F1-11): aloca o slot, calcula o XXH3-64 de cada bloco
+//   sobre os bytes em memória, grava os dados, Barreira 1 (flush do store), registro
+//   COMMIT_PIECE no journal.bin, Barreira 2 (flush do journal) e só então publica no índice.
+//   Remove grava FREE_SLOT e faz a Barreira 2 ANTES de o slot poder ser reaproveitado.
+// - Leitura (Get): copia a peça e confere o XXH3-64 de cada bloco antes de devolver. Um bloco
+//   que não confere tira a peça do cache (FREE_SLOT) e devolve CorruptedChecksum: nada
+//   estragado sai do cache (04 §5, passo 5).
+// - start() recupera o estado (04 §5): index.bin do último checkpoint mais os registros do
+//   journal; depois grava um checkpoint novo. O relatório fica em recovery().
+// - Falha de sync no store ou no journal deixa o cache quebrado (broken()): tudo dá IoError
+//   até stop() e um start() novo, que refaz a recuperação. Nunca se repete um sync que falhou.
 // - Ainda não há leases (F1-13): Get COPIA a peça para o buffer de quem pede, e Remove libera
 //   o slot na hora. Como a dona faz as duas coisas, uma leitura nunca vê meia escrita nem um
 //   slot reaproveitado por outra peça.
-//
-// O índice desta tarefa é provisório (um unordered_map reservado para o teto, só na dona). A
-// F1-11 o substitui pelo índice com journal, mantendo a dona e a fila.
+// - A peça é identificada pela raiz Merkle (`PieceId::hash`, ADR-0007); o índice da peça no
+//   manifesto (`PieceId::index`) não entra no cache em disco.
 
 #pragma once
 
@@ -42,15 +49,23 @@
 
 namespace swarmstream {
 
+namespace detail {
+enum class CrashPoint : int; // cache_journal.hpp (testes de queda)
+using CrashHook = void (*)(CrashPoint point, void* context);
+} // namespace detail
+
 enum class CacheOp : uint8_t {
     Put,    // grava `input` como a peça; sucesso devolve o tamanho
-    Get,    // copia a peça para `output`; sucesso devolve o tamanho
+    Get,    // copia a peça para `output` e confere os blocos; sucesso devolve o tamanho
     Remove, // tira a peça do cache e libera o slot; sucesso devolve 0
 };
 
 // Um pedido à thread dona. É de quem pede e não se move (o nó da fila mora dentro dele).
 // Regras:
-// - `input` (Put) e `output` (Get) têm de continuar válidos até o pedido terminar.
+// - `input` (Put), `output` (Get) e `blocks` têm de continuar válidos até o pedido terminar.
+// - `blocks`: o tamanho gravado de cada bloco da peça, na ordem (do manifesto, 03 §5). Vazio
+//   = a peça é um bloco só. Put calcula um XXH3-64 por bloco; Get precisa da mesma lista para
+//   conferir (InvalidOffset se ela não bate com a peça gravada).
 // - Um pedido pendente não pode ser reenviado (submit devolve false). Um pedido concluído pode
 //   ser reenviado (o resultado anterior é apagado).
 // - O destrutor de um pedido ainda pendente espera a resposta (nunca deixa a dona escrever em
@@ -59,19 +74,20 @@ class CacheRequest : private MpscNode
 {
 public:
     CacheRequest(CacheOp op, const PieceId& piece, std::span<const std::byte> input,
-                 std::span<std::byte> output) noexcept;
+                 std::span<std::byte> output, std::span<const uint32_t> blocks = {}) noexcept;
     ~CacheRequest();
     CacheRequest(const CacheRequest&) = delete;
     CacheRequest& operator=(const CacheRequest&) = delete;
 
-    [[nodiscard]] static CacheRequest put(const PieceId& piece,
-                                          std::span<const std::byte> data) noexcept
+    [[nodiscard]] static CacheRequest put(const PieceId& piece, std::span<const std::byte> data,
+                                          std::span<const uint32_t> blocks = {}) noexcept
     {
-        return CacheRequest(CacheOp::Put, piece, data, {});
+        return CacheRequest(CacheOp::Put, piece, data, {}, blocks);
     }
-    [[nodiscard]] static CacheRequest get(const PieceId& piece, std::span<std::byte> out) noexcept
+    [[nodiscard]] static CacheRequest get(const PieceId& piece, std::span<std::byte> out,
+                                          std::span<const uint32_t> blocks = {}) noexcept
     {
-        return CacheRequest(CacheOp::Get, piece, {}, out);
+        return CacheRequest(CacheOp::Get, piece, {}, out, blocks);
     }
     [[nodiscard]] static CacheRequest remove(const PieceId& piece) noexcept
     {
@@ -109,6 +125,7 @@ private:
     PieceId piece_;
     std::span<const std::byte> input_;
     std::span<std::byte> output_;
+    std::span<const uint32_t> blocks_;
 
     std::atomic<bool> pending_{false}; // entre arm() e complete()
     mutable std::mutex mutex_;
@@ -120,16 +137,35 @@ private:
 
 struct CacheOwnerConfig
 {
-    std::filesystem::path dir; // pasta dos store-XXX.bin; precisa existir
-    uint32_t total_slots = 0;  // teto do cache, em slots
+    std::filesystem::path dir; // pasta dos store-XXX.bin, do index.bin e do journal.bin
+    uint32_t total_slots = 0;  // teto do cache, em slots (> 0; pode diminuir entre aberturas)
     StoreLayout layout = {};
+    // Checkpoint (04 §4) quando o journal passa deste tamanho; também há um ao abrir e ao parar.
+    uint64_t checkpoint_journal_bytes = uint64_t{64} << 20;
+};
+
+// O que start() encontrou no disco (04 §5). Para os testes e a telemetria.
+struct CacheRecovery
+{
+    bool index_loaded = false;            // index.bin válido usado
+    bool index_invalid = false;           // index.bin existia, mas foi descartado
+    uint64_t index_lsn = 0;               // LSN do checkpoint do índice usado
+    bool journal_created = false;         // journal.bin não existia
+    bool journal_header_ok = true;        // false: cabeçalho inválido, registros descartados
+    uint64_t journal_records_applied = 0; // registros depois do checkpoint, aplicados
+    uint64_t journal_truncated_bytes = 0; // cauda inválida descartada
+    uint32_t dropped_ceiling = 0;         // peças além do teto (o teto diminuiu)
+    uint32_t dropped_missing_file = 0;    // peças num store-XXX.bin que não existe
+    uint32_t dropped_conflict = 0;        // slot reaproveitado ou registro de outro layout
+    uint32_t pieces = 0;                  // peças no índice depois da recuperação
 };
 
 class CacheOwner
 {
 public:
-    // Abre o store e sobe a thread dona. Erros do StoreFiles::open (IoError, InvalidSize);
-    // IoError se a thread não pôde ser criada.
+    // Abre o store, recupera o índice e o journal (04 §5), grava um checkpoint e sobe a thread
+    // dona. Erros do StoreFiles::open (IoError, InvalidSize), da recuperação (IoError,
+    // DiskFull) ou IoError se a thread não pôde ser criada.
     [[nodiscard]] static Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
     start(CacheOwnerConfig config);
 
@@ -160,9 +196,15 @@ public:
     [[nodiscard]] uint64_t requests_processed() const noexcept;
     [[nodiscard]] uint64_t sleeps() const noexcept; // vezes que a dona dormiu sem pedidos
     [[nodiscard]] uint32_t pieces() const noexcept; // peças publicadas no índice
+    // true depois de uma falha de sync: só stop() e um start() novo resolvem.
+    [[nodiscard]] bool broken() const noexcept;
+    // O que start() encontrou. Escrito antes de a dona existir; só leitura depois.
+    [[nodiscard]] const CacheRecovery& recovery() const noexcept;
 
 private:
     friend struct CacheOwnerTestHook; // src/cache_owner_testing.hpp, só para os testes
+    [[nodiscard]] static Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
+    start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* context);
     struct Impl;
     explicit CacheOwner(std::unique_ptr<Impl> impl) noexcept;
     std::unique_ptr<Impl> impl_;
