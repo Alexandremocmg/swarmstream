@@ -4,6 +4,8 @@ Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê e
 
 Última atualização: 2026-10-24.
 
+> **Migração (2026-10-24, ordem do dono):** o repositório passou a ser o **público** `Alexandremocmg/swarmstream` (sem refs `refs/pull`). O antigo, privado, é `Alexandremocmg/swarmstream-privado-antigo` (backup, com os PRs/revisões antigos). PRs reabertos: antigo #34 → **#1** (F1-11), #28 → **#2** (F1-49), #35 → **#3** (F1-54). Números de PR e o texto sobre "GitHub Actions bloqueado" abaixo são do repositório antigo. Pendências do suporte do GitHub e de billing deixaram de valer.
+
 ## Ao assumir
 1. Leia este arquivo, o `CLAUDE.md`, o [README.md](README.md) (inclusive a seção Economia), o [QUADRO.md](QUADRO.md) e o [decisoes.md](decisoes.md).
 2. Troque, no item 8 do [README.md](README.md), o id da sessão do coordenador pelo seu (veja o seu id com a ferramenta de sessão, `get_session` com `self`). Faça commit e push em `tarefas/`.
