@@ -23,6 +23,8 @@ Responsável pela camada 2 da arquitetura. Objetivo: o engine **nunca espera por
 ### 1. Arquivos de dados (`store-XXX.bin`)
 - Divididos em **slots de tamanho fixo de 1 MiB (1 048 576 bytes)** alinhados a 4 KiB (compatível com `FILE_FLAG_NO_BUFFERING` no Windows e `O_DIRECT` no Linux).
 - Capacidade padrão por arquivo de store: 2 GiB (2 048 slots). Novos arquivos (`store-001.bin`, etc.) são criados sob demanda até atingir o teto de cache configurado.
+- **Pré-alocação de verdade, não esparsa** (F1-10). Windows: `FileAllocationInfo` e depois `FileEndOfFileInfo`. Linux: `fallocate(2)`. O espaço livre é conferido **antes** de reservar, e um pedido que não cabe dá `DiskFull` sem reservar nada; se a reserva falhar, o que foi reservado volta ao disco e o arquivo recém-criado é apagado.
+  - **Aviso: sistema de arquivos sem `fallocate`** (NFS antigo, alguns overlay e ZFS). O código cai na `posix_fallocate`, que a glibc **emula escrevendo zeros** no arquivo inteiro: 2 GiB por arquivo, com o tempo de gravar 2 GiB. Por causa da conferência prévia, isso não enche o disco, mas deixa a criação lenta. Se aparecer em campo, a saída é zerar o arquivo em segundo plano. O ramo tem teste (`test_store_files_posix_fallocate_fallback`); a emulação em si não tem, porque o CI não tem um sistema de arquivos sem `fallocate`.
 - Estrutura de cada slot:
   - Offset `0`: bytes da peça compactada (tamanho `size ≤ 1 048 576`).
   - Sem fragmentação interna entre slots; peças ocupam 1 slot inteiro.

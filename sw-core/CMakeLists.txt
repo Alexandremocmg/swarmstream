@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Core library (headers and mocks)
 add_library(sw-core STATIC
     src/api_stub.cpp
+    src/cache_owner.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
     src/http_range_source.cpp
@@ -68,6 +69,26 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     target_include_directories(sw-core-store-tests PRIVATE src)
     add_test(NAME sw-core-store COMMAND sw-core-store-tests)
     set_tests_properties(sw-core-store PROPERTIES TIMEOUT 300)
+
+    # F1-12: thread dona do cache e fila MPSC (16 leitoras; o job TSan do CI roda este teste).
+    add_executable(sw-core-owner-tests tests/test_cache_owner.cpp)
+    target_link_libraries(sw-core-owner-tests PRIVATE sw-core)
+    # src/: cache_owner_testing.hpp (ganchos de teste, fora da API instalada).
+    target_include_directories(sw-core-owner-tests PRIVATE src)
+    if(SANITIZE_THREAD)
+        target_compile_definitions(sw-core-owner-tests PRIVATE SW_EXPECT_TSAN)
+    endif()
+    add_test(NAME sw-core-owner COMMAND sw-core-owner-tests)
+    set_tests_properties(sw-core-owner PROPERTIES TIMEOUT 300)
+    # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
+    # está ligado; sem isso, "nenhuma corrida" não provaria nada).
+    if(SANITIZE_THREAD)
+        add_executable(sw-core-tsan-selftest tests/tsan_selftest.cpp)
+        target_link_libraries(sw-core-tsan-selftest PRIVATE Threads::Threads)
+        add_test(NAME tsan-selftest-detects-race COMMAND sw-core-tsan-selftest)
+        set_tests_properties(tsan-selftest-detects-race PROPERTIES
+            PASS_REGULAR_EXPRESSION "ThreadSanitizer: data race" TIMEOUT 60)
+    endif()
     # Teste pendurado deve falhar, não travar o CI.
     set_tests_properties(sw-core-tests PROPERTIES TIMEOUT 120)
 

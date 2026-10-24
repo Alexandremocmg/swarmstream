@@ -80,8 +80,9 @@ public:
         return CacheErrorCode::Success;
     }
 
-    // Reserva os clusters (não esparso) e põe o fim do arquivo em `bytes`.
-    CacheErrorCode preallocate(uint64_t bytes) noexcept
+    // Reserva os clusters (não esparso) e põe o fim do arquivo em `bytes`. `native` só existe
+    // para a versão POSIX (gancho de teste do fallback).
+    CacheErrorCode preallocate(uint64_t bytes, [[maybe_unused]] bool native = true) noexcept
     {
         FILE_ALLOCATION_INFO alloc{};
         alloc.AllocationSize.QuadPart = static_cast<LONGLONG>(bytes);
@@ -190,13 +191,16 @@ private:
     // de arquivos sem suporte (EOPNOTSUPP: NFS antigo, alguns overlay/ZFS) cai na
     // posix_fallocate, que a glibc emula escrevendo zeros (lento). Em todo caso o espaço livre
     // já foi conferido antes (Impl::open_file), então a emulação não enche o disco.
-    CacheErrorCode preallocate(uint64_t bytes) noexcept
+    // `native` = false pula o fallocate(2) e vai direto ao fallback (StoreFilesTestHook).
+    CacheErrorCode preallocate(uint64_t bytes, [[maybe_unused]] bool native = true) noexcept
     {
         int rc = EOPNOTSUPP;
 #if defined(__linux__)
-        do {
-            rc = ::fallocate(h_, 0, 0, static_cast<off_t>(bytes)) == 0 ? 0 : errno;
-        } while (rc == EINTR);
+        if (native) {
+            do {
+                rc = ::fallocate(h_, 0, 0, static_cast<off_t>(bytes)) == 0 ? 0 : errno;
+            } while (rc == EINTR);
+        }
 #endif
         if (rc == EOPNOTSUPP || rc == ENOSYS) {
             do {
@@ -307,8 +311,10 @@ struct StoreFiles::Impl
     std::vector<File> files;
     uint32_t created = 0;
     bool closed = false;
-    bool broken = false;         // um sync falhou: inutilizável até reabrir (ver o header)
-    bool fail_next_sync = false; // StoreFilesTestHook
+    bool broken = false;            // um sync falhou: inutilizável até reabrir (ver o header)
+    bool fail_next_sync = false;    // StoreFilesTestHook
+    bool skip_space_check = false;  // StoreFilesTestHook
+    bool native_preallocate = true; // StoreFilesTestHook
     uint32_t directory_syncs = 0;
 
     [[nodiscard]] CacheErrorCode usable() const noexcept
@@ -351,9 +357,9 @@ struct StoreFiles::Impl
             // podendo dar DiskFull (outro processo gastou o espaço no meio-tempo).
             std::error_code ec;
             const auto space = std::filesystem::space(dir, ec);
-            CacheErrorCode rc = (!ec && space.available < wanted - current)
+            CacheErrorCode rc = (!skip_space_check && !ec && space.available < wanted - current)
                                     ? CacheErrorCode::DiskFull
-                                    : f.preallocate(wanted);
+                                    : f.preallocate(wanted, native_preallocate);
             if (rc != CacheErrorCode::Success) {
                 // Devolve ao disco o que tiver sido reservado e não deixa arquivo vazio para trás.
                 if (f.truncate(current) != CacheErrorCode::Success) broken = true;
@@ -509,6 +515,16 @@ void StoreFilesTestHook::fail_next_sync(StoreFiles& store) noexcept
 uint32_t StoreFilesTestHook::directory_syncs(const StoreFiles& store) noexcept
 {
     return store.impl_->directory_syncs;
+}
+
+void StoreFilesTestHook::skip_space_check(StoreFiles& store) noexcept
+{
+    store.impl_->skip_space_check = true;
+}
+
+void StoreFilesTestHook::force_posix_fallocate(StoreFiles& store) noexcept
+{
+    store.impl_->native_preallocate = false;
 }
 
 } // namespace swarmstream
