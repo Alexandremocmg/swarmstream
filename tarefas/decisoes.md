@@ -40,13 +40,14 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-22 | Atribuições: **F1-12 e depois F1-11 ao Arquiteto**, com revisão independente da Sênior; **F1-53 à Pleno**, depois do PR #28 |
 | 2026-10-24 | PR #31 (F1-10, crítico, revisado pela Sênior) aceito; Arquiteto liberado para o F1-12 |
 | 2026-10-24 | PR #33 (F1-12, crítico, revisado pela Sênior) aceito, com o job **TSan** novo no CI (o CI passa a 14 checks); Arquiteto liberado para o F1-11 |
+| 2026-10-24 | **Preparação para tornar o repositório público** (a cota grátis do GitHub Actions para repositório privado acabou). Por ordem do dono, o histórico foi **reescrito** para remover de todos os commits o `Exemplo_Engine_Navegador.md` (estudo de um porte de engine de terceiros), com **push forçado autorizado pelo dono**. Todos os SHAs mudaram (a main passou de `51cca9e` para `388da32`); o conteúdo, os autores e as mensagens são os mesmos. O backup e o mapa de commits ficam só com o dono, fora do repositório. SHAs citados antes desta data nos cartões e docs referem-se ao histórico antigo |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_a1345bc0-fcb0-4aa8-a986-e4bff85c6932`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto
 | Pendência | Desde |
 | --- | --- |
 | Escolher a pessoa do teste de 1 hora no Windows (Windows Sandbox, quem não montou o ambiente) | 2026-10-18 |
-| Decidir quando o repositório deixa de ser privado (recomendado: depois do Portão 1 e de consulta jurídica rápida) | 2026-10-17 |
+| Tornar o repositório público. Antes: (1) **pedido ao suporte do GitHub** para apagar as referências dos PRs fechados e as visualizações em cache dos commits antigos (32 refs `refs/pull/*` ainda contêm o arquivo removido); (2) conferir em Billing que não há pagamento falho (se houver, o Actions pode seguir bloqueado mesmo em repositório público); (3) PR que tira de `docs/README.md` a menção ao arquivo removido. Depois: ligar o relato privado de vulnerabilidades (o `SECURITY.md` depende dele), o secret scanning e a proteção da main | 2026-10-24 |
 | Plano de preços do backend hospedado (depois do Portão 2) | 2026-10-17 |
 | Mover o Godot 4.7.2 para uma pasta fixa (hoje está em uma pasta temporária do Windows) | 2026-10-18 |
 | Destino da alteração solta em `docs/medicoes/guia-1h.md` na pasta compartilhada: um pré-teste do guia feito por um agente Hermes em contêiner Docker (Ubuntu 22.04). Não é da sessão Pleno; autor não identificado pela gestão. A própria nota diz que **não vale** como resultado do critério. Sugestão: revisar e, se útil, entrar por PR; senão descartar. **Em 2026-10-22, guardada no branch local `local/pre-teste-hermes` (só na pasta compartilhada, não enviado ao GitHub)** | 2026-10-18 |
