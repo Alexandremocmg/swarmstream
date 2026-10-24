@@ -4,6 +4,16 @@ Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê e
 
 Última atualização: 2026-10-24.
 
+## Ao assumir
+1. Leia este arquivo, o `CLAUDE.md`, o [README.md](README.md) (inclusive a seção Economia), o [QUADRO.md](QUADRO.md) e o [decisoes.md](decisoes.md).
+2. Troque, no item 8 do [README.md](README.md), o id da sessão do coordenador pelo seu (veja o seu id com a ferramenta de sessão, `get_session` com `self`). Faça commit e push em `tarefas/`.
+3. Mande uma mensagem curta ao Arquiteto, à Pleno e à Sênior com o seu id novo.
+4. Confira no GitHub o estado dos PRs e do CI e responda ao dono: o estado, o que está pendente com ele e o próximo passo.
+
+## Pedidos para abrir as sessões (no app do desktop)
+- **Planejador novo** (Sonnet 5.5, esforço médio, na pasta do projeto): "Você é a nova sessão de coordenação do Swarmstream. Leia `tarefas/passagem-planejador.md` e siga a seção Ao assumir."
+- **Sênior, F1-54** (Sonnet 5.5, esforço médio): "Você é a Sênior (R2) do Swarmstream. Leia o `CLAUDE.md`, o `tarefas/README.md` (inclusive a seção Economia) e o seu cartão, `tarefas/cartoes/F1-54.md`, e faça a tarefa. Ao abrir o PR, mande o resumo ao coordenador indicado no item 8 do README."
+
 ## Papel
 - Conversa com o dono do produto (Alexandre) no chat, em português do Brasil, frases curtas.
 - Cria e atribui cartões, mantém o quadro e as decisões, confere tudo no GitHub antes de afirmar, pede o aceite ao dono e faz o merge depois do aceite.
