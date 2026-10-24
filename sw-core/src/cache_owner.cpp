@@ -3,9 +3,15 @@
 
 #include "swarmstream/cache_owner.hpp"
 
+#include "cache_journal.hpp"
 #include "cache_owner_testing.hpp"
+#include "store_files_testing.hpp"
 #include "swarmstream/slot_allocator.hpp"
+#include "swarmstream/xxh3.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <iterator>
 #include <new>
 #include <system_error>
 #include <thread>
@@ -16,8 +22,8 @@ namespace swarmstream {
 // ---------------------------------------------------------------- CacheRequest
 
 CacheRequest::CacheRequest(CacheOp op, const PieceId& piece, std::span<const std::byte> input,
-                           std::span<std::byte> output) noexcept
-    : op_(op), piece_(piece), input_(input), output_(output)
+                           std::span<std::byte> output, std::span<const uint32_t> blocks) noexcept
+    : op_(op), piece_(piece), input_(input), output_(output), blocks_(blocks)
 {
 }
 
@@ -80,16 +86,32 @@ struct CacheOwner::Impl
 {
     struct Entry
     {
-        SlotId slot;
-        uint32_t size;
+        SlotId slot = kInvalidSlot;
+        uint32_t size = 0;
+        std::vector<uint64_t> blocks; // XXH3-64 por bloco; reservado na escrita, nunca na leitura
     };
 
-    Impl(StoreFiles s, uint32_t total_slots) : store(std::move(s)), slots(total_slots) {}
+    Impl(StoreFiles s, CacheOwnerConfig c)
+        : store(std::move(s)), slots(c.total_slots), config(std::move(c))
+    {
+    }
 
-    // Só a thread dona toca nestes três (depois de start() e antes do join em stop()).
+    // Só a thread dona toca nestes (depois de start() e antes do join em stop()). start() os
+    // prepara antes de a thread existir.
     StoreFiles store;
     SlotAllocator slots;
-    std::unordered_map<PieceId, Entry> index; // provisório até a F1-11
+    CacheOwnerConfig config;
+    std::unordered_map<PieceHash, Entry> index; // chave: a raiz Merkle (ADR-0007)
+    detail::Journal journal;
+    uint64_t next_lsn = 1;
+    bool broken = false; // um sync falhou: tudo dá IoError até fechar e reabrir
+    CacheRecovery recovery;
+
+    // CacheOwnerTestHook (testes de queda): chamado em pontos da escrita e do checkpoint.
+    detail::CrashHook crash_hook = nullptr;
+    void* crash_context = nullptr;
+    std::atomic<bool> fail_next_store_sync{false};
+    std::atomic<bool> skip_stop_checkpoint{false}; // simula queda: o journal fica com os registros
 
     MpscQueue queue;
 
@@ -113,6 +135,7 @@ struct CacheOwner::Impl
     std::atomic<uint64_t> processed{0};
     std::atomic<uint64_t> sleeps{0};
     std::atomic<uint32_t> pieces{0};
+    std::atomic<bool> broken_flag{false}; // cópia de `broken` para leitura fora da dona
 
     std::thread thread;
     std::mutex stop_mutex;
@@ -129,12 +152,202 @@ struct CacheOwner::Impl
 
     void hold_in_window() noexcept;
 
+    [[nodiscard]] std::filesystem::path index_path() const { return config.dir / "index.bin"; }
+    [[nodiscard]] std::filesystem::path journal_path() const { return config.dir / "journal.bin"; }
+
+    void crash(detail::CrashPoint p) const noexcept
+    {
+        if (crash_hook) crash_hook(p, crash_context);
+    }
+    void mark_broken() noexcept
+    {
+        broken = true;
+        broken_flag.store(true, std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] CacheErrorCode recover();
+    [[nodiscard]] CacheErrorCode checkpoint();
+    [[nodiscard]] CacheErrorCode append_and_sync(detail::JournalRecord& rec);
+    [[nodiscard]] CacheErrorCode invalidate(PieceHash piece);
+
     void run() noexcept;
     void process(CacheRequest& r) noexcept;
-    void put(CacheRequest& r) noexcept;
-    void get(CacheRequest& r) noexcept;
-    void remove(CacheRequest& r) noexcept;
+    // Podem lançar bad_alloc (índice, buffer do journal); process() trata.
+    void put(CacheRequest& r);
+    void get(CacheRequest& r);
+    void remove(CacheRequest& r);
 };
+
+// 04 §5. Índice do último checkpoint + registros do journal com LSN maior; depois descarta o
+// que não pode ser servido (fora do teto, arquivo de store ausente) e grava um checkpoint
+// novo, para o journal recomeçar limpo.
+CacheErrorCode CacheOwner::Impl::recover()
+{
+    const StoreLayout& layout = config.layout;
+    detail::LoadedIndex loaded;
+    const detail::IndexLoad load = detail::read_index_file(index_path(), layout, loaded);
+    recovery.index_loaded = load == detail::IndexLoad::Ok;
+    recovery.index_invalid = load == detail::IndexLoad::Invalid;
+    recovery.index_lsn = recovery.index_loaded ? loaded.checkpoint_lsn : 0;
+
+    std::unordered_map<SlotId, PieceHash> by_slot;
+    auto erase_piece = [&](const PieceHash& piece) {
+        if (auto it = index.find(piece); it != index.end()) {
+            by_slot.erase(it->second.slot);
+            index.erase(it);
+        }
+    };
+    auto put_entry = [&](const PieceHash& piece, Entry e) {
+        if (auto s = by_slot.find(e.slot); s != by_slot.end() && s->second != piece) {
+            // O slot foi reaproveitado: o dado antigo foi sobrescrito, vale o registro novo.
+            erase_piece(s->second);
+            ++recovery.dropped_conflict;
+        }
+        erase_piece(piece); // a mesma peça noutro slot: vale a mais nova
+        by_slot[e.slot] = piece;
+        index[piece] = std::move(e);
+    };
+    if (recovery.index_loaded) {
+        for (detail::IndexEntry& e : loaded.entries) {
+            put_entry(e.piece, Entry{e.slot, e.size, std::move(e.blocks)});
+        }
+    }
+
+    auto apply = [&](const detail::JournalRecord& r) {
+        const uint64_t slot = uint64_t{r.store_file_id} * layout.slots_per_file + r.slot_in_file;
+        if (r.slot_in_file >= layout.slots_per_file || slot >= kInvalidSlot) {
+            ++recovery.dropped_conflict; // registro de outro layout: não aponta para slot válido
+            return;
+        }
+        if (r.type == detail::JournalType::CommitPiece) {
+            put_entry(r.piece, Entry{static_cast<SlotId>(slot), r.piece_size, r.blocks});
+        } else if (r.type == detail::JournalType::FreeSlot) {
+            if (auto s = by_slot.find(static_cast<SlotId>(slot));
+                s != by_slot.end() && s->second == r.piece) {
+                erase_piece(r.piece);
+            }
+        }
+    };
+    detail::JournalReplay replay;
+    auto opened = detail::Journal::open(journal_path(), recovery.index_lsn, apply, replay);
+    if (!opened) return opened.error();
+    journal = std::move(*opened);
+    recovery.journal_created = replay.created;
+    recovery.journal_header_ok = replay.header_ok;
+    recovery.journal_records_applied = replay.applied;
+    recovery.journal_truncated_bytes = replay.truncated_bytes;
+    next_lsn = std::max(replay.last_lsn, recovery.index_lsn) + 1;
+
+    // O que não pode ser servido sai do índice: fora do teto (o teto diminuiu), maior que o
+    // slot, ou num store-XXX.bin que não existe (no Windows não há fsync da pasta: um arquivo
+    // criado logo antes de uma queda pode sumir). Arquivo presente mas zerado ou estragado é
+    // pego pelo checksum por bloco na leitura.
+    for (auto it = index.begin(); it != index.end();) {
+        const Entry& e = it->second;
+        bool drop = false;
+        if (e.slot >= config.total_slots) {
+            ++recovery.dropped_ceiling;
+            drop = true;
+        } else if (e.size > layout.slot_size) {
+            ++recovery.dropped_conflict;
+            drop = true;
+        } else {
+            std::error_code ec;
+            const auto file = StoreFiles::file_path(config.dir, e.slot / layout.slots_per_file);
+            if (!std::filesystem::exists(file, ec) || ec) {
+                ++recovery.dropped_missing_file;
+                drop = true;
+            }
+        }
+        it = drop ? index.erase(it) : std::next(it);
+    }
+
+    // Teto menor: apaga os arquivos além do teto e encurta o último (F1-10, item 6).
+    if (auto s = store.shrink_to_ceiling(); !s) return s.error();
+    for (const auto& [piece, e] : index) {
+        if (!slots.mark_used(e.slot)) return CacheErrorCode::IoError; // não deveria ocorrer
+    }
+    pieces.store(static_cast<uint32_t>(index.size()), std::memory_order_relaxed);
+    recovery.pieces = static_cast<uint32_t>(index.size());
+    return checkpoint();
+}
+
+// 04 §4: index.bin novo por rename atômico, depois um journal novo (cabeçalho e CHECKPOINT)
+// também por rename. Uma queda entre os dois renames deixa o índice novo com o journal antigo,
+// cujos registros têm LSN menor ou igual ao do índice e são pulados na recuperação.
+CacheErrorCode CacheOwner::Impl::checkpoint()
+{
+    const uint64_t lsn = next_lsn - 1;
+    std::vector<detail::IndexEntry> entries;
+    entries.reserve(index.size());
+    for (const auto& [piece, e] : index) {
+        detail::IndexEntry out;
+        out.piece = piece;
+        out.slot = e.slot;
+        out.size = e.size;
+        out.blocks = e.blocks;
+        entries.push_back(std::move(out));
+    }
+    std::vector<const detail::IndexEntry*> ptrs;
+    ptrs.reserve(entries.size());
+    for (const auto& e : entries)
+        ptrs.push_back(&e);
+    std::filesystem::path tmp = index_path();
+    tmp += ".tmp";
+    if (auto rc = detail::write_index_file(index_path(), tmp, lsn, config.layout, ptrs, crash_hook,
+                                           crash_context);
+        rc != CacheErrorCode::Success) {
+        return rc;
+    }
+    if (auto rc = journal.close(); rc != CacheErrorCode::Success) return rc;
+    if (auto rc = detail::Journal::create_fresh(journal_path(), lsn, crash_hook, crash_context);
+        rc != CacheErrorCode::Success) {
+        return rc;
+    }
+    detail::JournalReplay replay;
+    auto opened =
+        detail::Journal::open(journal_path(), lsn, [](const detail::JournalRecord&) {}, replay);
+    if (!opened) return opened.error();
+    journal = std::move(*opened);
+    next_lsn = std::max(next_lsn, replay.last_lsn + 1);
+    return CacheErrorCode::Success;
+}
+
+CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
+{
+    rec.lsn = next_lsn++;
+    rec.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+    if (auto rc = journal.append(rec, crash_hook, crash_context); rc != CacheErrorCode::Success)
+        return rc;
+    return journal.sync(); // Barreira 2: ponto de commit
+}
+
+// Tira a peça do cache: FREE_SLOT no journal (sincronizado) ANTES de o slot poder ser
+// reaproveitado; senão uma queda deixaria o journal apontando para dado de outra peça.
+CacheErrorCode CacheOwner::Impl::invalidate(PieceHash piece)
+{
+    const auto it = index.find(piece);
+    if (it == index.end()) return CacheErrorCode::PieceNotFound;
+    detail::JournalRecord rec;
+    rec.type = detail::JournalType::FreeSlot;
+    rec.piece = piece;
+    rec.store_file_id = it->second.slot / config.layout.slots_per_file;
+    rec.slot_in_file = it->second.slot % config.layout.slots_per_file;
+    if (auto rc = append_and_sync(rec); rc != CacheErrorCode::Success) {
+        mark_broken();
+        return CacheErrorCode::IoError;
+    }
+    // Sem leases ainda (F1-13): nenhuma leitura segura o slot fora da dona.
+    if (auto rel = slots.release(it->second.slot); !rel) {
+        mark_broken(); // índice e alocador discordam: não deveria ocorrer
+        return CacheErrorCode::IoError;
+    }
+    index.erase(it);
+    pieces.fetch_sub(1, std::memory_order_relaxed);
+    return CacheErrorCode::Success;
+}
 
 void CacheOwner::Impl::run() noexcept
 {
@@ -172,22 +385,45 @@ void CacheOwner::Impl::run() noexcept
 
 void CacheOwner::Impl::process(CacheRequest& r) noexcept
 {
-    switch (r.op_) {
-    case CacheOp::Put: put(r); return;
-    case CacheOp::Get: get(r); return;
-    case CacheOp::Remove: remove(r); return;
+    if (broken) { // fechar e reabrir refaz a recuperação (04 §5)
+        r.complete(CacheErrorCode::IoError, 0);
+        return;
+    }
+    try {
+        switch (r.op_) {
+        case CacheOp::Put: put(r); return;
+        case CacheOp::Get: get(r); return;
+        case CacheOp::Remove: remove(r); return;
+        }
+    } catch (...) { // sem memória para o índice ou o buffer do journal
+        mark_broken();
+        r.complete(CacheErrorCode::IoError, 0);
+        return;
     }
     r.complete(CacheErrorCode::IoError, 0); // op inválida (memória corrompida?)
 }
 
-void CacheOwner::Impl::put(CacheRequest& r) noexcept
+void CacheOwner::Impl::put(CacheRequest& r)
 {
     const size_t size = r.input_.size();
-    if (size == 0 || size > store.layout().slot_size) {
+    if (size == 0 || size > store.layout().slot_size || size > detail::kMaxPieceSize) {
         r.complete(CacheErrorCode::InvalidSize, 0);
         return;
     }
-    if (const auto it = index.find(r.piece_); it != index.end()) {
+    // Limites dos blocos (do manifesto): sem lista, a peça é um bloco só.
+    uint64_t sum = 0;
+    for (uint32_t b : r.blocks_) {
+        if (b == 0) {
+            r.complete(CacheErrorCode::InvalidSize, 0);
+            return;
+        }
+        sum += b;
+    }
+    if (!r.blocks_.empty() && sum != size) {
+        r.complete(CacheErrorCode::InvalidSize, 0);
+        return;
+    }
+    if (const auto it = index.find(r.piece_.hash); it != index.end()) {
         r.complete(CacheErrorCode::Success, it->second.size); // já está: não regrava
         return;
     }
@@ -196,72 +432,131 @@ void CacheOwner::Impl::put(CacheRequest& r) noexcept
         r.complete(slot.error(), 0);
         return;
     }
-    // 04 §3: dados, depois a Barreira 1. O journal (F1-11) entra aqui, antes de publicar.
-    CacheErrorCode code = CacheErrorCode::Success;
-    if (auto w = store.write(*slot, 0, r.input_); !w) {
-        code = w.error();
-    } else if (auto f = store.flush(); !f) {
-        code = f.error();
+    // Checksums sobre os bytes em memória, antes de gravar (04 §2): nunca relendo o disco.
+    Entry entry{*slot, static_cast<uint32_t>(size), {}};
+    if (r.blocks_.empty()) {
+        entry.blocks.push_back(xxh3_64(r.input_));
     } else {
-        try {
-            index.emplace(r.piece_, Entry{*slot, static_cast<uint32_t>(size)});
-        } catch (...) { // sem memória para o nó do índice
-            code = CacheErrorCode::IoError;
+        entry.blocks.reserve(r.blocks_.size());
+        size_t off = 0;
+        for (uint32_t b : r.blocks_) {
+            entry.blocks.push_back(xxh3_64(r.input_.subspan(off, b)));
+            off += b;
         }
     }
-    if (code != CacheErrorCode::Success) {
-        (void)slots.release(*slot); // o slot acabou de ser alocado: release não falha
-        r.complete(code, 0);
+    // 04 §3: dados, Barreira 1, registro no journal, Barreira 2, publicação.
+    auto fail = [&](CacheErrorCode code) {
+        mark_broken(); // o estado no disco é desconhecido: só a recuperação decide
+        r.complete(code == CacheErrorCode::DiskFull ? code : CacheErrorCode::IoError, 0);
+    };
+    if (auto w = store.write(*slot, 0, r.input_); !w) {
+        (void)slots.release(*slot);
+        if (w.error() == CacheErrorCode::DiskFull) { // reserva do arquivo: nada foi gravado
+            r.complete(CacheErrorCode::DiskFull, 0);
+            return;
+        }
+        fail(w.error());
         return;
     }
+    crash(detail::CrashPoint::AfterDataWrite);
+    if (fail_next_store_sync.exchange(false)) StoreFilesTestHook::fail_next_sync(store);
+    if (auto f = store.flush(); !f) {
+        fail(f.error());
+        return;
+    }
+    crash(detail::CrashPoint::AfterDataFlush);
+    detail::JournalRecord rec;
+    rec.type = detail::JournalType::CommitPiece;
+    rec.piece = r.piece_.hash;
+    rec.store_file_id = *slot / config.layout.slots_per_file;
+    rec.slot_in_file = *slot % config.layout.slots_per_file;
+    rec.piece_size = static_cast<uint32_t>(size);
+    rec.blocks = entry.blocks;
+    if (auto rc = append_and_sync(rec); rc != CacheErrorCode::Success) {
+        fail(rc);
+        return;
+    }
+    crash(detail::CrashPoint::AfterJournalSync);
+    index.emplace(r.piece_.hash, std::move(entry));
     pieces.fetch_add(1, std::memory_order_relaxed);
+    if (journal.size_bytes() > config.checkpoint_journal_bytes) {
+        if (checkpoint() != CacheErrorCode::Success) mark_broken(); // a peça já é durável
+    }
     r.complete(CacheErrorCode::Success, size);
 }
 
-void CacheOwner::Impl::get(CacheRequest& r) noexcept
+void CacheOwner::Impl::get(CacheRequest& r)
 {
-    const auto it = index.find(r.piece_);
+    const auto it = index.find(r.piece_.hash);
     if (it == index.end()) {
         r.complete(CacheErrorCode::PieceNotFound, 0);
         return;
     }
-    const Entry e = it->second;
+    const Entry& e = it->second;
     if (r.output_.size() < e.size) {
         r.complete(CacheErrorCode::InvalidSize, 0);
         return;
     }
-    if (auto rd = store.read(e.slot, 0, r.output_.first(e.size)); !rd) {
+    // Para conferir bloco a bloco é preciso saber onde cada um começa (do manifesto). Sem a
+    // lista, só uma peça de um bloco pode ser conferida.
+    if (r.blocks_.empty() ? e.blocks.size() != 1 : r.blocks_.size() != e.blocks.size()) {
+        r.complete(CacheErrorCode::InvalidOffset, 0);
+        return;
+    }
+    const std::span<std::byte> out = r.output_.first(e.size);
+    if (auto rd = store.read(e.slot, 0, out); !rd) {
         r.complete(rd.error(), 0);
+        return;
+    }
+    // 04 §5, passo 5: nada sai do cache sem o XXH3 do próprio bloco conferir. Um bloco ruim
+    // invalida a peça inteira, que é pedida de novo.
+    bool ok = true;
+    if (r.blocks_.empty()) {
+        ok = xxh3_64(out) == e.blocks[0];
+    } else {
+        size_t off = 0;
+        for (size_t i = 0; i < r.blocks_.size() && ok; ++i) {
+            const uint32_t b = r.blocks_[i];
+            ok = b > 0 && off + b <= out.size() && xxh3_64(out.subspan(off, b)) == e.blocks[i];
+            off += b;
+        }
+        ok = ok && off == out.size();
+    }
+    if (!ok) {
+        const CacheErrorCode inv = invalidate(r.piece_.hash);
+        r.complete(inv == CacheErrorCode::Success ? CacheErrorCode::CorruptedChecksum : inv, 0);
         return;
     }
     r.complete(CacheErrorCode::Success, e.size);
 }
 
-void CacheOwner::Impl::remove(CacheRequest& r) noexcept
+void CacheOwner::Impl::remove(CacheRequest& r)
 {
-    const auto it = index.find(r.piece_);
-    if (it == index.end()) {
-        r.complete(CacheErrorCode::PieceNotFound, 0);
-        return;
+    const CacheErrorCode rc = invalidate(r.piece_.hash);
+    if (rc == CacheErrorCode::Success && journal.size_bytes() > config.checkpoint_journal_bytes) {
+        if (checkpoint() != CacheErrorCode::Success) mark_broken();
     }
-    // Sem leases ainda (F1-13): nenhuma leitura segura o slot fora da dona.
-    if (auto rel = slots.release(it->second.slot); !rel) {
-        r.complete(CacheErrorCode::IoError, 0); // índice e alocador discordam: não deveria ocorrer
-        return;
-    }
-    index.erase(it);
-    pieces.fetch_sub(1, std::memory_order_relaxed);
-    r.complete(CacheErrorCode::Success, 0);
+    r.complete(rc, 0);
 }
 
 Result<std::unique_ptr<CacheOwner>, CacheErrorCode> CacheOwner::start(CacheOwnerConfig config)
 {
+    return start_impl(std::move(config), nullptr, nullptr);
+}
+
+Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
+CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* context)
+{
+    if (config.layout.slots_per_file == 0) return Unexpected(CacheErrorCode::InvalidSize);
     auto store = StoreFiles::open(config.dir, config.total_slots, config.layout);
     if (!store) return Unexpected(store.error());
     std::unique_ptr<Impl> impl;
     try {
-        impl = std::make_unique<Impl>(std::move(*store), config.total_slots);
-        impl->index.reserve(config.total_slots); // o índice não reorganiza no meio do jogo
+        impl = std::make_unique<Impl>(std::move(*store), std::move(config));
+        impl->index.reserve(impl->config.total_slots); // o índice não reorganiza no meio do jogo
+        impl->crash_hook = hook;
+        impl->crash_context = context;
+        if (auto rc = impl->recover(); rc != CacheErrorCode::Success) return Unexpected(rc);
     } catch (const std::bad_alloc&) {
         return Unexpected(CacheErrorCode::IoError);
     }
@@ -322,8 +617,15 @@ Result<void, CacheErrorCode> CacheOwner::stop() noexcept
             return Unexpected(CacheErrorCode::IoError); // chamado da própria dona
         }
     }
-    // Depois do join, o store é desta thread.
-    return s.store.close();
+    // Depois do join, o store, o índice e o journal são desta thread. Checkpoint para a próxima
+    // abertura não precisar reler o journal; com o cache quebrado, só fecha (a recuperação
+    // decide na próxima abertura).
+    CacheErrorCode first = CacheErrorCode::Success;
+    if (!s.broken && !s.skip_stop_checkpoint.load()) first = s.checkpoint();
+    if (const auto rc = s.journal.close(); first == CacheErrorCode::Success) first = rc;
+    if (auto rc = s.store.close(); !rc && first == CacheErrorCode::Success) first = rc.error();
+    if (first != CacheErrorCode::Success) return Unexpected(first);
+    return {};
 }
 
 bool CacheOwner::is_owner_thread() const noexcept
@@ -345,6 +647,13 @@ uint32_t CacheOwner::pieces() const noexcept
 {
     return impl_->pieces.load(std::memory_order_relaxed);
 }
+
+bool CacheOwner::broken() const noexcept
+{
+    return impl_->broken_flag.load(std::memory_order_relaxed);
+}
+
+const CacheRecovery& CacheOwner::recovery() const noexcept { return impl_->recovery; }
 
 // ---------------------------------------------------------------- ganchos de teste
 
@@ -381,6 +690,23 @@ bool CacheOwnerTestHook::wait_submitters_in_window(CacheOwner& owner, uint32_t c
     CacheOwner::Impl& s = *owner.impl_;
     std::unique_lock lock(s.hook_mutex);
     return s.hook_cv.wait_for(lock, timeout, [&] { return s.hook_in_window == count; });
+}
+
+Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
+CacheOwnerTestHook::start_with_crash_hook(CacheOwnerConfig config, detail::CrashHook hook,
+                                          void* context)
+{
+    return CacheOwner::start_impl(std::move(config), hook, context);
+}
+
+void CacheOwnerTestHook::fail_next_store_sync(CacheOwner& owner) noexcept
+{
+    owner.impl_->fail_next_store_sync.store(true);
+}
+
+void CacheOwnerTestHook::skip_checkpoint_on_stop(CacheOwner& owner) noexcept
+{
+    owner.impl_->skip_stop_checkpoint.store(true);
 }
 
 bool CacheOwnerTestHook::wait_owner_left_loop(CacheOwner& owner,

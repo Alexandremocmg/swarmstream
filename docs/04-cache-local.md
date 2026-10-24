@@ -45,6 +45,8 @@ offset  tam  campo          descrição
 56      8    header_crc     = XXH3-64 dos bytes [0..56)
 ```
 
+- **O cabeçalho nunca é regravado no lugar** (F1-11): um cabeçalho rasgado por uma queda perderia o journal inteiro. Ele é escrito uma vez, na criação, e `last_lsn` guarda o LSN daquele momento; o último LSN real sai da leitura dos registros. O checkpoint (§4) cria um journal novo e o troca por rename atômico.
+
 #### Registros de Transação (Record Entry)
 Cada mutação no cache gera um registro append-only com soma de verificação. O `COMMIT_PIECE` carrega o checksum XXH3-64 de **cada bloco** da peça ([ADR-0013](adr/0013-hash-dos-blocos.md)); os outros tipos têm tamanho fixo:
 ```text
@@ -100,7 +102,21 @@ Para prevenir dados corrompidos ou leituras de zeros em crashes repentinos (falh
   55      1    flags
   ```
   Antes havia um `checksum_xxh3: u64` por peça; ele saiu. A entrada continua com 56 bytes, porque `cks_first` e `block_count` ocupam o lugar do checksum único e o espaço de alinhamento.
-- O cabeçalho guarda o número de entradas, o tamanho da região de checksums, o `lsn` do checkpoint e um XXH3-64 de todo o arquivo. No checkpoint, a região é regravada compacta (sem buracos de peças removidas).
+- O cabeçalho guarda o número de entradas, o tamanho da região de checksums, o `lsn` do checkpoint e um XXH3-64 de todo o arquivo. No checkpoint, a região é regravada compacta (sem buracos de peças removidas). Layout (F1-11), 64 bytes, little-endian:
+  ```text
+  offset  tam  campo
+  0       8    magic            = "SWINDEX\0"
+  8       2    version          = 1
+  10      2    flags            = 0
+  12      4    entry_count
+  16      8    checksum_count   u64 na região de checksums
+  24      8    checkpoint_lsn   o journal continua a partir daqui
+  32      4    slot_size        layout do store: um índice de outro layout é descartado
+  36      4    slots_per_file
+  40      16   reserved         = 0
+  56      8    file_xxh3        XXH3-64 do arquivo inteiro, calculado com este campo zerado
+  ```
+  O leitor confere magic, versão, layout, `tamanho do arquivo = 64 + 56·entry_count + 8·checksum_count` (antes de alocar) e o XXH3. Depois confere cada entrada (slot dentro do arquivo, `1 ≤ size ≤ slot_size`, `1 ≤ block_count ≤ size`, checksums dentro da região, sem slot nem peça repetidos). Qualquer defeito descarta o índice **inteiro**: um índice incoerente não é usado em parte.
 - **Custo** (estimativa; os valores reais saem da F1-11):
 
   | Item | Antes (1 checksum por peça) | Agora (1 por bloco) |
@@ -110,12 +126,14 @@ Para prevenir dados corrompidos ou leituras de zeros em crashes repentinos (falh
   | Registro `COMMIT_PIECE` de uma peça de 1 MiB com 14 blocos | 80 B | 192 B |
 
   \* Média do chunker ≈ 148 KiB crus ([03 §11.1](03-formato-de-conteudo.md#111-chunker-determinismo)) com compressão de ~2:1, a confirmar na F1-03. O custo cresce com o número de blocos, não com o tamanho: conteúdo muito comprimível (blocos de poucos bytes) aumenta a região de checksums, até 8 B por bloco.
+- **Decisão da F1-11:** em RAM, cada entrada tem o próprio vetor de checksums, reservado na escrita (thread dona). Isso dá O(1) para o bloco *b* e nenhuma alocação na leitura, sem arena e, portanto, sem buracos para compactar. O custo é um vetor por peça (24 B + o cabeçalho do bloco de memória), aceitável perto dos 56 B da entrada; se a medição da F1-15 pedir, troca-se por uma arena sem mudar o formato em disco.
 - Em RAM, o arranjo exato (tabela de entradas + arena de checksums) é decisão da F1-11, com duas regras: achar o checksum do bloco *b* de uma peça em O(1) e nenhuma alocação no caminho de leitura (a lista é reservada no passo 6 da escrita, na thread dona). A arena **terá buracos** quando peças saírem (remoção CLOCK); a F1-11 decide como reaproveitá-los ou compactá-los em RAM. No disco a compactação já acontece no checkpoint (acima).
 - **Checkpointing periódico em background**:
   1. A thread de I/O descarrega o estado atual do índice para `index.bin.tmp`.
   2. Executa `fsync(index.bin.tmp)`.
-  3. Realiza substituição atômica via rename (`rename` / `ReplaceFileW` no Windows).
-  4. Grava registro `CHECKPOINT(lsn)` no `journal.bin` e trunca logs anteriores ao `checkpoint_lsn`.
+  3. Realiza substituição atômica via rename (`rename` + `fsync` da pasta no POSIX; `MoveFileExW` com `MOVEFILE_WRITE_THROUGH` no Windows, que só volta com o rename no disco).
+  4. Grava registro `CHECKPOINT(lsn)` no `journal.bin` e trunca logs anteriores ao `checkpoint_lsn`. **Como a F1-11 faz:** escreve um journal novo em `journal.bin.tmp` (cabeçalho com `checkpoint_lsn` e o registro `CHECKPOINT`), sincroniza e troca por rename, do mesmo jeito que o índice. Uma queda entre o rename do índice e o do journal deixa o índice novo com o journal antigo, cujos registros têm LSN ≤ `checkpoint_lsn` e são pulados.
+- A F1-11 grava um checkpoint ao abrir (depois da recuperação), ao parar sem erro e quando o journal passa de `checkpoint_journal_bytes` (64 MiB por padrão).
 
 ### 5. Algoritmo de Recuperação de Falhas (Crash Recovery)
 Ao inicializar o subsistema de cache:
@@ -129,6 +147,8 @@ Ao inicializar o subsistema de cache:
    - Depois de aplicar, toda entrada cujo `block_count` difere do `block_count` da peça no manifesto em uso é descartada e o slot fica livre (a peça é de um manifesto com outros limites de bloco).
    - `block_count` igual **não prova** o mesmo layout: dois manifestos podem partir os mesmos bytes da peça em blocos diferentes com o mesmo número de blocos (possível com `codec = NONE`). Não há risco de dado errado: o checksum do bloco não bate na primeira leitura, a peça é invalidada e baixada de novo (passo 5). O custo é só um download a mais, raro (exige trocar de manifesto mantendo a peça com outra partição), e não justifica guardar um resumo do layout no v0.
 4. Identifica slots ocupados no store que não constam no índice reconstruído: marca-os como livres para reutilização imediata.
+   - **O que a F1-11 também descarta aqui:** entradas além do teto (o teto diminuiu entre aberturas; os `store-XXX.bin` além do teto são apagados e o último é encurtado) e entradas num `store-XXX.bin` que não existe (no Windows não há `fsync` de pasta: um arquivo criado logo antes de uma queda pode sumir). As peças saem do índice; nada vira erro fatal.
+   - **Ainda não feito (falta o manifesto no `sw-core`):** a conferência de `block_count` contra o manifesto em uso (passo 3) e a reconstrução por re-verificação Merkle quando o `index.bin` e o journal estão perdidos (passo 1). Até lá, cabeçalho do journal inválido descarta os registros e vale só o índice; índice inválido descarta o índice e vale só o journal. Nos dois casos se perde indexação, nunca se aceita dado não verificado.
 5. **Verificação de leitura subsequente**: todo bloco lido é conferido com **o XXH3-64 do próprio bloco** (`cks[cks_first + i]` para o *i*-ésimo bloco da peça), calculado sobre os bytes gravados desse bloco (até 256 KiB), antes de ser entregue à memória do jogo; não é preciso ler a peça inteira (até 1 MiB). Bloco com checksum inválido invalida a **peça inteira** (o slot é liberado e a peça é pedida de novo), porque o defeito de disco pode atingir outros blocos do mesmo slot.
 
 ## Concorrência

@@ -15,7 +15,8 @@
 //   disco antes de o slot ser usado. Mesmo assim a F1-11 deve tratar store-XXX.bin ausente
 //   ou zerado como peças perdidas (o checksum por bloco não confere), nunca como erro fatal.
 // - Reabrir não trunca nem apaga nada. Um arquivo maior que o layout esperado é recusado
-//   (IoError), porque pode ser de outro layout; menor é completado até o tamanho certo.
+//   (IoError), porque pode ser de outro layout; menor é completado até o tamanho certo. A única
+//   exceção é shrink_to_ceiling(), que a CacheOwner chama quando o teto diminuiu (F1-11).
 // - Todo retorno de I/O é conferido, inclusive o do fechamento: escrita ou leitura parcial é
 //   repetida até o fim, e qualquer falha volta como erro (docs/04, regra "nada calado").
 // - flush() PEDE ao SO e ao disco que gravem os dados (FlushFileBuffers / fdatasync): é a
@@ -98,6 +99,15 @@ public:
     [[nodiscard]] const StoreLayout& layout() const noexcept;
     [[nodiscard]] uint32_t file_count() const noexcept;    // arquivos que o teto pode exigir
     [[nodiscard]] uint32_t files_created() const noexcept; // arquivos abertos até agora
+
+    // F1-11: o teto diminuiu. Apaga os store-XXX.bin além do teto e encurta os que ficaram
+    // maiores que o layout pede (o índice já tirou as peças desses slots). Chamar antes de
+    // qualquer ensure_slot/read/write. Sem isso, reabrir com teto menor dava IoError.
+    [[nodiscard]] Result<void, CacheErrorCode> shrink_to_ceiling();
+
+    // Caminho do arquivo de store `index` em `dir` ("store-%03u.bin").
+    [[nodiscard]] static std::filesystem::path file_path(const std::filesystem::path& dir,
+                                                         uint32_t index);
 
     // Bytes realmente reservados no disco para um arquivo (para provar que não é esparso).
     [[nodiscard]] static Result<uint64_t, CacheErrorCode>

@@ -32,6 +32,11 @@ jobs:
           python -m ruff check --config sw-netlab/pyproject.toml sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
           python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-godot/tools/round_report.py sw-godot/tools/test_round_report.py
           python -m unittest discover -s sw-godot/tools -p test_round_report.py -v
+      - name: Crash test driver lint (F1-11)
+        run: |
+          python -m black --config sw-netlab/pyproject.toml --check sw-core/tests/crash_test.py
+          python -m ruff check --config sw-netlab/pyproject.toml sw-core/tests/crash_test.py
+          python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-core/tests/crash_test.py
       - name: Known-change comparison lint and tests (F1-47)
         run: |
           python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-godot/tools/compare_profiles.py sw-godot/tools/test_compare_profiles.py
