@@ -45,6 +45,7 @@ struct StoreFiles::Impl
     bool skip_space_check = false;  // StoreFilesTestHook
     bool native_preallocate = true; // StoreFilesTestHook
     uint32_t directory_syncs = 0;
+    uint64_t file_syncs = 0; // syncs de arquivo que deram certo (StoreFilesTestHook)
 
     [[nodiscard]] CacheErrorCode usable() const noexcept
     {
@@ -60,7 +61,11 @@ struct StoreFiles::Impl
         } else {
             rc = f.sync();
         }
-        if (rc != CacheErrorCode::Success) broken = true;
+        if (rc != CacheErrorCode::Success) {
+            broken = true;
+        } else {
+            ++file_syncs;
+        }
         return rc;
     }
 
@@ -224,6 +229,8 @@ std::filesystem::path StoreFiles::file_path(const std::filesystem::path& dir, ui
 Result<void, CacheErrorCode> StoreFiles::shrink_to_ceiling()
 {
     if (const auto rc = impl_->usable(); rc != CacheErrorCode::Success) return fail(rc);
+    // Teto 0 apagaria todos os store-NNN.bin: é configuração errada, não "teto menor".
+    if (impl_->total_slots == 0) return fail(CacheErrorCode::InvalidSize);
     namespace fs = std::filesystem;
     const uint32_t count = file_count();
     // Arquivos inteiros além do teto (só os de nome canônico "store-NNN.bin").
@@ -301,6 +308,11 @@ void StoreFilesTestHook::fail_next_sync(StoreFiles& store) noexcept
 uint32_t StoreFilesTestHook::directory_syncs(const StoreFiles& store) noexcept
 {
     return store.impl_->directory_syncs;
+}
+
+uint64_t StoreFilesTestHook::file_syncs(const StoreFiles& store) noexcept
+{
+    return store.impl_->file_syncs;
 }
 
 void StoreFilesTestHook::skip_space_check(StoreFiles& store) noexcept

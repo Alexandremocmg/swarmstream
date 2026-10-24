@@ -111,6 +111,7 @@ struct CacheOwner::Impl
     detail::CrashHook crash_hook = nullptr;
     void* crash_context = nullptr;
     std::atomic<bool> fail_next_store_sync{false};
+    std::atomic<bool> fail_next_journal_sync{false};
     std::atomic<bool> skip_stop_checkpoint{false}; // simula queda: o journal fica com os registros
 
     MpscQueue queue;
@@ -315,6 +316,7 @@ CacheErrorCode CacheOwner::Impl::checkpoint()
 
 CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
 {
+    if (fail_next_journal_sync.exchange(false)) journal.fail_next_sync();
     rec.lsn = next_lsn++;
     rec.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
@@ -547,7 +549,11 @@ Result<std::unique_ptr<CacheOwner>, CacheErrorCode> CacheOwner::start(CacheOwner
 Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
 CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* context)
 {
-    if (config.layout.slots_per_file == 0) return Unexpected(CacheErrorCode::InvalidSize);
+    // Teto 0 é configuração errada (um CacheOwnerConfig{} só com a pasta): reduzir o teto a 0
+    // apagaria todos os store-NNN.bin na recuperação.
+    if (config.layout.slots_per_file == 0 || config.total_slots == 0) {
+        return Unexpected(CacheErrorCode::InvalidSize);
+    }
     auto store = StoreFiles::open(config.dir, config.total_slots, config.layout);
     if (!store) return Unexpected(store.error());
     std::unique_ptr<Impl> impl;
@@ -702,6 +708,21 @@ CacheOwnerTestHook::start_with_crash_hook(CacheOwnerConfig config, detail::Crash
 void CacheOwnerTestHook::fail_next_store_sync(CacheOwner& owner) noexcept
 {
     owner.impl_->fail_next_store_sync.store(true);
+}
+
+void CacheOwnerTestHook::fail_next_journal_sync(CacheOwner& owner) noexcept
+{
+    owner.impl_->fail_next_journal_sync.store(true);
+}
+
+uint64_t CacheOwnerTestHook::store_syncs(const CacheOwner& owner) noexcept
+{
+    return StoreFilesTestHook::file_syncs(owner.impl_->store);
+}
+
+uint64_t CacheOwnerTestHook::journal_syncs(const CacheOwner& owner) noexcept
+{
+    return owner.impl_->journal.syncs();
 }
 
 void CacheOwnerTestHook::skip_checkpoint_on_stop(CacheOwner& owner) noexcept

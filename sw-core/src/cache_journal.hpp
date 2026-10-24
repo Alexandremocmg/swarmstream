@@ -120,9 +120,16 @@ public:
     [[nodiscard]] CacheErrorCode close() noexcept;
     [[nodiscard]] uint64_t size_bytes() const noexcept { return end_; }
 
+    // Testes (CacheOwnerTestHook): o próximo sync() falha como um EIO, sem sincronizar; e
+    // quantos sync() chegaram de fato ao disco com sucesso.
+    void fail_next_sync() noexcept { fail_next_sync_ = true; }
+    [[nodiscard]] uint64_t syncs() const noexcept { return syncs_; }
+
 private:
     File file_;
     uint64_t end_ = 0;
+    uint64_t syncs_ = 0;
+    bool fail_next_sync_ = false;
     std::vector<std::byte> buffer_; // reaproveitado entre appends (registros de até ~8 MiB)
 };
 

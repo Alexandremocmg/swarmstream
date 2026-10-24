@@ -17,6 +17,7 @@
 #include "swarmstream/cache_owner.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -393,6 +394,145 @@ void test_damaged_metadata_never_serves_bad_data()
     cleanup(dir2);
 }
 
+// Revisão da R2 (ajuste 1): a Barreira 2 tem de ter teste. Matar o processo não perde o cache
+// do SO, então só uma falha injetada no sync do journal e os contadores de sync provam que ela
+// existe e vem antes da publicação.
+void test_journal_sync_failure_on_commit()
+{
+    std::cout << "[Test] Barreira 2: sync do journal falha no COMMIT; a peça não é publicada\n";
+    const fs::path dir = fresh_dir("jsync_commit");
+    {
+        auto o = open_owner(dir, 4);
+        SW_CHECK(put(*o, 1).has_value() && o->pieces() == 1);
+        CacheOwnerTestHook::fail_next_journal_sync(*o);
+        auto r = put(*o, 2);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::IoError);
+        SW_CHECK(o->broken() && o->pieces() == 1); // não publicada
+        auto g = get_checked(*o, 2);
+        SW_CHECK(!g.has_value() && g.error() == CacheErrorCode::IoError);
+        SW_CHECK(o->stop().has_value());
+    }
+    {
+        // Ao reabrir, a recuperação decide pelo journal. Os dados de 2 passaram pela Barreira 1,
+        // então os dois resultados são seguros; a peça 1 tem de estar lá.
+        auto o = open_owner(dir, 4);
+        SW_CHECK(present(*o, 1));
+        (void)present(*o, 2); // presente ou não, se vier tem de vir certa (get_checked confere)
+    }
+    cleanup(dir);
+}
+
+void test_journal_sync_failure_on_free()
+{
+    std::cout << "[Test] Barreira 2: sync do journal falha no FREE_SLOT; o slot não é liberado\n";
+    const fs::path dir = fresh_dir("jsync_free");
+    {
+        auto o = open_owner(dir, 2);
+        SW_CHECK(put(*o, 1).has_value() && put(*o, 2).has_value() && o->pieces() == 2);
+        CacheOwnerTestHook::fail_next_journal_sync(*o);
+        auto r = remove(*o, 1);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::IoError);
+        SW_CHECK(o->broken() && o->pieces() == 2); // o slot continua ocupado
+        auto p = put(*o, 3);                       // o slot da peça 1 não pode ser reaproveitado
+        SW_CHECK(!p.has_value() && p.error() == CacheErrorCode::IoError);
+        SW_CHECK(o->stop().has_value());
+    }
+    {
+        auto o = open_owner(dir, 2);
+        SW_CHECK(present(*o, 2) && !present(*o, 3));
+        (void)present(*o, 1); // o FREE pode ter chegado ao journal; se a peça vier, vem certa
+    }
+    cleanup(dir);
+}
+
+// Os contadores de sync vistos de dentro do gancho de queda, na thread dona.
+struct SyncProbe
+{
+    std::atomic<CacheOwner*> owner{nullptr};
+    uint64_t store_at_write = 0;
+    uint64_t journal_at_write = 0;
+    uint32_t pieces_at_write = 0;
+    uint32_t checked = 0;
+    bool ok = true;
+};
+
+void probe_hook(detail::CrashPoint point, void* context)
+{
+    auto* probe = static_cast<SyncProbe*>(context);
+    CacheOwner* o = probe->owner.load();
+    if (o == nullptr) return; // checkpoint de start(), antes de o teste ligar a sonda
+    const uint64_t store = CacheOwnerTestHook::store_syncs(*o);
+    const uint64_t journal = CacheOwnerTestHook::journal_syncs(*o);
+    switch (point) {
+    case detail::CrashPoint::AfterDataWrite:
+        probe->store_at_write = store;
+        probe->journal_at_write = journal;
+        probe->pieces_at_write = o->pieces();
+        break;
+    case detail::CrashPoint::AfterDataFlush: // Barreira 1 já rodou; o journal ainda não
+        probe->ok =
+            probe->ok && store > probe->store_at_write && journal == probe->journal_at_write;
+        break;
+    case detail::CrashPoint::AfterJournalAppend: // registro gravado, ainda sem a Barreira 2
+        probe->ok = probe->ok && journal == probe->journal_at_write;
+        break;
+    case detail::CrashPoint::AfterJournalSync: // Barreira 2 rodou; ainda não publicada
+        probe->ok = probe->ok && journal == probe->journal_at_write + 1 &&
+                    o->pieces() == probe->pieces_at_write;
+        ++probe->checked;
+        break;
+    default: break;
+    }
+}
+
+void test_barrier_order_counters()
+{
+    std::cout << "[Test] barreiras: Barreira 1 antes do journal, Barreira 2 antes de publicar\n";
+    const fs::path dir = fresh_dir("barriers");
+    {
+        SyncProbe probe;
+        auto started = CacheOwnerTestHook::start_with_crash_hook(
+            CacheOwnerConfig{.dir = dir, .total_slots = 8, .layout = kLayout}, probe_hook, &probe);
+        SW_CHECK(started.has_value());
+        CacheOwner& o = **started;
+        probe.owner.store(&o);
+        for (uint32_t i = 0; i < 5; ++i)
+            SW_CHECK(put(o, i).has_value());
+        probe.owner.store(nullptr); // stop() faz checkpoint: fora da sonda
+        SW_CHECK(probe.ok && probe.checked == 5);
+        std::cout << "    " << probe.checked << " Put conferidos nos 4 pontos\n";
+        SW_CHECK(o.stop().has_value());
+    }
+    cleanup(dir);
+}
+
+void test_zero_ceiling_is_refused()
+{
+    std::cout << "[Test] teto 0 é recusado e não apaga o cache\n";
+    const fs::path dir = fresh_dir("zero");
+    {
+        auto o = open_owner(dir, 8);
+        SW_CHECK(put(*o, 1).has_value());
+        SW_CHECK(o->stop().has_value());
+    }
+    auto zero =
+        CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 0, .layout = kLayout});
+    SW_CHECK(!zero.has_value() && zero.error() == CacheErrorCode::InvalidSize);
+    SW_CHECK(fs::exists(StoreFiles::file_path(dir, 0)));
+    {
+        auto store = StoreFiles::open(dir, 0, kLayout); // e o próprio StoreFiles se recusa
+        SW_CHECK(store.has_value());
+        auto shrink = store->shrink_to_ceiling();
+        SW_CHECK(!shrink.has_value() && shrink.error() == CacheErrorCode::InvalidSize);
+        SW_CHECK(fs::exists(StoreFiles::file_path(dir, 0)));
+    }
+    {
+        auto o = open_owner(dir, 8);
+        SW_CHECK(present(*o, 1));
+    }
+    cleanup(dir);
+}
+
 } // namespace
 
 } // namespace swarmstream
@@ -408,6 +548,10 @@ int main()
     swarmstream::test_smaller_ceiling();
     swarmstream::test_sync_failure_breaks_until_reopen();
     swarmstream::test_damaged_metadata_never_serves_bad_data();
+    swarmstream::test_journal_sync_failure_on_commit();
+    swarmstream::test_journal_sync_failure_on_free();
+    swarmstream::test_barrier_order_counters();
+    swarmstream::test_zero_ceiling_is_refused();
     std::cout << "-> Recovery tests passed.\n";
     return 0;
 }

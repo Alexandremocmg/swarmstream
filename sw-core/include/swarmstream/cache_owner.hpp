@@ -138,7 +138,7 @@ private:
 struct CacheOwnerConfig
 {
     std::filesystem::path dir; // pasta dos store-XXX.bin, do index.bin e do journal.bin
-    uint32_t total_slots = 0;  // teto do cache, em slots (pode diminuir entre aberturas)
+    uint32_t total_slots = 0;  // teto do cache, em slots (> 0; pode diminuir entre aberturas)
     StoreLayout layout = {};
     // Checkpoint (04 §4) quando o journal passa deste tamanho; também há um ao abrir e ao parar.
     uint64_t checkpoint_journal_bytes = uint64_t{64} << 20;

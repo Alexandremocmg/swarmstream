@@ -36,6 +36,13 @@ struct CacheOwnerTestHook
     start_with_crash_hook(CacheOwnerConfig config, detail::CrashHook hook, void* context);
     // O próximo flush do store (num Put) falha como um EIO do disco.
     static void fail_next_store_sync(CacheOwner& owner) noexcept;
+    // O próximo sync do journal (Barreira 2, no COMMIT_PIECE ou no FREE_SLOT) falha como um EIO.
+    static void fail_next_journal_sync(CacheOwner& owner) noexcept;
+    // Syncs que chegaram ao disco: do store (Barreira 1) e do journal desde a última abertura
+    // dele (Barreira 2; o checkpoint troca o journal e zera). SÓ na thread dona: de dentro do
+    // gancho de queda (start_with_crash_hook).
+    static uint64_t store_syncs(const CacheOwner& owner) noexcept;
+    static uint64_t journal_syncs(const CacheOwner& owner) noexcept;
     // stop() não grava o checkpoint final: a próxima abertura tem de reler o journal.
     static void skip_checkpoint_on_stop(CacheOwner& owner) noexcept;
 };

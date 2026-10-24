@@ -267,7 +267,16 @@ CacheErrorCode Journal::append(const JournalRecord& r, CrashHook hook, void* hoo
     return CacheErrorCode::Success;
 }
 
-CacheErrorCode Journal::sync() noexcept { return file_.sync(); }
+CacheErrorCode Journal::sync() noexcept
+{
+    if (fail_next_sync_) {
+        fail_next_sync_ = false;
+        return CacheErrorCode::IoError;
+    }
+    const CacheErrorCode rc = file_.sync();
+    if (rc == CacheErrorCode::Success) ++syncs_;
+    return rc;
+}
 
 CacheErrorCode Journal::close() noexcept { return file_.close(); }
 
