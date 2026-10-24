@@ -38,6 +38,7 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-20 | PRs #25 (F1-01), #26 (portão do F1-20), #27 (F1-51) e #29 (F1-48) aceitos |
 | 2026-10-22 | PRs #30 (decisões do F1-48 no doc 08) e #32 (F1-27, fonte HTTP Range) aceitos |
 | 2026-10-22 | Atribuições: **F1-12 e depois F1-11 ao Arquiteto**, com revisão independente da Sênior; **F1-53 à Pleno**, depois do PR #28 |
+| 2026-10-24 | PR #31 (F1-10, crítico, revisado pela Sênior) aceito; Arquiteto liberado para o F1-12 |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_a1345bc0-fcb0-4aa8-a986-e4bff85c6932`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto
