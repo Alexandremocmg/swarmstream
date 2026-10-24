@@ -42,7 +42,7 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-24 | PR #33 (F1-12, crítico, revisado pela Sênior) aceito, com o job **TSan** novo no CI (o CI passa a 14 checks); Arquiteto liberado para o F1-11 |
 | 2026-10-24 | **Preparação para tornar o repositório público** (a cota grátis do GitHub Actions para repositório privado acabou). Por ordem do dono, o histórico foi **reescrito** para remover de todos os commits o `Exemplo_Engine_Navegador.md` (estudo de um porte de engine de terceiros), com **push forçado autorizado pelo dono**. Todos os SHAs mudaram (a main passou de `51cca9e` para `388da32`); o conteúdo, os autores e as mensagens são os mesmos. O backup e o mapa de commits ficam só com o dono, fora do repositório. SHAs citados antes desta data nos cartões e docs referem-se ao histórico antigo |
 | 2026-10-24 | **Economia de Claude Code e de CI:** uma sessão nova por cartão; modelo por tipo de trabalho; uma mensagem por etapa; conectores de nuvem sem uso desligados nas sessões; coordenação passa para um Planejador novo, em Sonnet. Cartão **F1-54** (reduzir o custo do CI) atribuído à Sênior, numa sessão nova. Regras na seção Economia de [README.md](README.md) |
-| 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_a1345bc0-fcb0-4aa8-a986-e4bff85c6932`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
+| 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_2e2d3843-77d4-4cf1-8782-427f70498d9c`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto
 | Pendência | Desde |
