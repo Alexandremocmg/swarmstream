@@ -34,6 +34,20 @@ if(SANITIZE)
     add_link_options(-fsanitize=address,undefined -fno-sanitize-recover=all)
 endif()
 
+# ThreadSanitizer (F1-12): -DSANITIZE_THREAD=ON. Não combina com o ASan (SANITIZE); o CI roda
+# cada um num job. O critério do F1-12 é "sem data race no TSan com 16 threads leitoras".
+option(SANITIZE_THREAD "Enable ThreadSanitizer" OFF)
+if(SANITIZE_THREAD)
+    if(MSVC)
+        message(FATAL_ERROR "SANITIZE_THREAD não suporta MSVC; use o job TSan do Linux")
+    endif()
+    if(SANITIZE)
+        message(FATAL_ERROR "SANITIZE_THREAD e SANITIZE não podem ser ligados juntos")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g -O1)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # Submodules
 add_subdirectory(sw-core)
 add_subdirectory(sw-pack)

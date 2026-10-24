@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -503,6 +504,79 @@ void test_store_files_directory_sync_and_missing_file()
     cleanup(dir);
 }
 
+// F1-12 (pendência do F1-10): o DiskFull que vem do próprio SO, sem a conferência prévia do
+// espaço livre. Provocar isso num disco de verdade o encheria; por isso só roda numa pasta de
+// um sistema de arquivos pequeno e isolado, indicada por SW_TEST_SMALL_FS (o job build+test do
+// Linux no CI monta um tmpfs de 16 MiB). Roda as duas reservas: fallocate(2) e o ramo da
+// posix_fallocate.
+void test_store_files_native_disk_full_small_fs()
+{
+    std::cout << "[Test] StoreFiles: DiskFull do próprio SO num sistema de arquivos pequeno\n";
+    const char* small = std::getenv("SW_TEST_SMALL_FS");
+    if (small == nullptr || *small == '\0') {
+        std::cout << "    PULADO: SW_TEST_SMALL_FS não definida (o CI do Linux define)\n";
+        return;
+    }
+    for (const bool native : {true, false}) {
+        const fs::path dir = fs::path(small) / (native ? "f1_12_native" : "f1_12_fallback");
+        fs::create_directories(dir);
+        {
+            std::error_code ec;
+            const auto before = fs::space(dir, ec);
+            SW_CHECK(!ec);
+            const auto slots = static_cast<uint32_t>(before.available / kSlotSize * 2 + 2);
+            auto st = StoreFiles::open(
+                dir, slots, StoreLayout{.slots_per_file = slots, .slot_size = kSlotSize});
+            SW_CHECK(st.has_value());
+            StoreFilesTestHook::skip_space_check(*st);
+            if (!native) StoreFilesTestHook::force_posix_fallocate(*st);
+            auto r = st->ensure_slot(0);
+            SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::DiskFull);
+            SW_CHECK(!fs::exists(dir / "store-000.bin")); // reserva desfeita e arquivo apagado
+            SW_CHECK(!st->broken());
+            const auto after = fs::space(dir, ec);
+            SW_CHECK(!ec);
+            std::cout << "    " << (native ? "fallocate(2)" : "posix_fallocate") << ": pedido "
+                      << (uint64_t{slots} * kSlotSize >> 10) << " KiB com "
+                      << (before.available >> 10) << " KiB livres; livre depois "
+                      << (after.available >> 10) << " KiB\n";
+            SW_CHECK(after.available == before.available); // sistema isolado: nada pode vazar
+            SW_CHECK(st->close().has_value());
+        }
+        cleanup(dir);
+    }
+}
+
+// F1-12 (pendência do F1-10): o ramo EOPNOTSUPP -> posix_fallocate. Num sistema de arquivos
+// com fallocate(2), a glibc também o usa por dentro; aqui se prova que o nosso ramo reserva o
+// arquivo inteiro e que os dados vão e voltam. A emulação da glibc (escrever zeros) só
+// aconteceria num sistema de arquivos sem fallocate, que o CI não tem.
+void test_store_files_posix_fallocate_fallback()
+{
+    std::cout << "[Test] StoreFiles: ramo da posix_fallocate (fallocate(2) indisponível)\n";
+#if defined(_WIN32)
+    std::cout << "    PULADO: o ramo só existe no POSIX\n";
+#else
+    const fs::path dir = fresh_dir("fallback");
+    StoreLayout layout{.slots_per_file = 4, .slot_size = kSlotSize};
+    {
+        auto st = StoreFiles::open(dir, 4, layout);
+        SW_CHECK(st.has_value());
+        StoreFilesTestHook::force_posix_fallocate(*st);
+        SW_CHECK(st->ensure_slot(0).has_value());
+        SW_CHECK(fs::file_size(dir / "store-000.bin") == uint64_t{4} * kSlotSize);
+        auto alloc = StoreFiles::allocated_bytes(dir / "store-000.bin");
+        SW_CHECK(alloc.has_value() && *alloc >= uint64_t{4} * kSlotSize); // não esparso
+        const auto data = pattern(9000, 77);
+        std::vector<std::byte> back(data.size());
+        SW_CHECK(st->write(3, 0, data).has_value() && st->flush().has_value());
+        SW_CHECK(st->read(3, 0, back).has_value() && back == data);
+        SW_CHECK(st->close().has_value());
+    }
+    cleanup(dir);
+#endif
+}
+
 } // namespace
 
 void run_store_tests()
@@ -519,6 +593,8 @@ void run_store_tests()
     test_store_files_close_reports();
     test_store_files_sync_failure_is_sticky();
     test_store_files_directory_sync_and_missing_file();
+    test_store_files_native_disk_full_small_fs();
+    test_store_files_posix_fallocate_fallback();
 }
 
 } // namespace swarmstream

@@ -35,6 +35,15 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug --parallel
 
+      # F1-12: um tmpfs de 16 MiB para o teste do DiskFull que vem do próprio SO (sem encher o
+      # disco do runner). O teste fica PULADO onde SW_TEST_SMALL_FS não existe.
+      - name: Mount small tmpfs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo mkdir -p /mnt/sw-small
+          sudo mount -t tmpfs -o size=16m,mode=1777 tmpfs /mnt/sw-small
+          echo "SW_TEST_SMALL_FS=/mnt/sw-small" >> "$GITHUB_ENV"
+
       - name: Test
         shell: bash
         run: ctest --test-dir build --build-config Debug --output-on-failure --timeout 120
@@ -90,3 +99,29 @@ jobs:
 
       - name: Test under sanitizers
         run: ctest --test-dir build --output-on-failure --timeout 120
+
+  # F1-12: critério de aceite "sem data race no TSan com 16 threads leitoras"
+  # (sw-core-owner). Roda todos os testes com -fsanitize=thread; halt_on_error derruba o teste
+  # na primeira corrida reportada.
+  tsan:
+    name: TSan (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v4
+
+      # O kernel dos runners usa 32 bits de aleatoriedade no mmap, que o TSan não aceita
+      # ("unexpected memory mapping"). 28 é o valor que o TSan suporta.
+      - name: Ajusta o ASLR para o TSan
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure (TSan)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE_THREAD=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test under TSan
+        run: ctest --test-dir build --output-on-failure --timeout 300
