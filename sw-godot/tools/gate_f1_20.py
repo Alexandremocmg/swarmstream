@@ -26,6 +26,12 @@ GDEXT = PROJECT / "addons" / "swarmstream" / "swarmstream.gdextension"
 RESULT_TAG = "[gate] RESULTADO:"
 
 
+def _as_text(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    return data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data
+
+
 def run(cmd: list[str], timeout_s: float) -> tuple[int, str]:
     """Roda um comando e devolve (código, saída). Timeout conta como falha."""
     try:
@@ -38,7 +44,9 @@ def run(cmd: list[str], timeout_s: float) -> tuple[int, str]:
             timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as exc:
-        out = exc.stdout if isinstance(exc.stdout, str) else ""
+        # No POSIX o stdout que vem na exceção é bytes mesmo com text=True: decodifica, senão
+        # a saída do Godot (o motivo do travamento) some e o timeout fica sem explicação.
+        out = _as_text(exc.stdout) + _as_text(exc.stderr)
         return 124, out + f"\n[gate_f1_20.py] TIMEOUT depois de {timeout_s:.0f} s"
     return done.returncode, done.stdout + done.stderr
 
