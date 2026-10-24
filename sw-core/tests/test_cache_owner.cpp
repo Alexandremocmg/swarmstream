@@ -452,37 +452,40 @@ void test_owner_stop_with_concurrent_submitters()
             CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 4, .layout = kLayout});
         SW_CHECK(started.has_value());
         CacheOwner& owner = **started;
-        std::atomic<uint64_t> ok{0}, stopped{0};
-        std::atomic<bool> go{false};
+        constexpr int kProducers = 8;
+        std::atomic<uint64_t> served{0}, stopped{0};
         std::vector<std::thread> producers;
-        for (int t = 0; t < 8; ++t) {
+        // Cada produtora envia sem parar até receber Stopped. Assim a parada acontece sempre
+        // com produtoras ativas, em qualquer máquina (antes, com um número fixo de pedidos, o
+        // MSVC em Release terminava tudo antes do stop()).
+        for (int t = 0; t < kProducers; ++t) {
             producers.emplace_back([&] {
                 std::vector<std::byte> out(64);
-                while (!go.load())
-                    std::this_thread::yield();
-                for (int i = 0; i < 5000; ++i) {
+                for (;;) {
                     auto req = CacheRequest::get(piece(1), out);
                     auto r = owner.call(req); // nunca pode ficar pendurado
-                    if (r.has_value()) {
-                        ok.fetch_add(1);
-                    } else if (r.error() == CacheErrorCode::Stopped) {
+                    SW_CHECK(!r.has_value());
+                    if (r.error() == CacheErrorCode::Stopped) {
                         stopped.fetch_add(1);
-                    } else {
-                        SW_CHECK(r.error() == CacheErrorCode::PieceNotFound);
-                        ok.fetch_add(1);
+                        return;
                     }
+                    SW_CHECK(r.error() == CacheErrorCode::PieceNotFound);
+                    served.fetch_add(1);
                 }
             });
         }
-        go.store(true);
-        std::this_thread::sleep_for(20ms);
+        // Para só depois de a dona ter atendido bastante, com todas ainda enviando.
+        const auto deadline = std::chrono::steady_clock::now() + 30s;
+        while (served.load() < 5000) {
+            SW_CHECK(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::yield();
+        }
         SW_CHECK(owner.stop().has_value());
         for (auto& p : producers)
             p.join();
-        std::cout << "    " << ok.load() << " atendidos, " << stopped.load()
-                  << " recusados com Stopped\n";
-        SW_CHECK(ok.load() + stopped.load() == 8u * 5000u);
-        SW_CHECK(stopped.load() > 0);
+        std::cout << "    " << served.load() << " atendidos antes da parada; " << stopped.load()
+                  << " de " << kProducers << " produtoras receberam Stopped\n";
+        SW_CHECK(stopped.load() == kProducers); // todas saíram pela resposta, nenhuma pendurou
     }
     cleanup(dir);
 }
