@@ -73,6 +73,10 @@ func _wait_loaded(paths: Array, timeout_s: float) -> Dictionary:
 func _shot(name: String) -> void:
 	if _out_dir == "":
 		return
+	# Com --headless o renderizador é falso e frame_post_draw nunca dispara: esperar por ele trava a cena.
+	if DisplayServer.get_name() == "headless":
+		_report.append("info captura %s pulada: sem janela (headless)" % name)
+		return
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	if img != null:

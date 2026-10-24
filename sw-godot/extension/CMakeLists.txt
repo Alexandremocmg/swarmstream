@@ -24,6 +24,10 @@ endif()
 
 set(GODOTCPP_DISABLE_EXCEPTIONS ON)
 add_subdirectory("${GODOT_CPP_DIR}" godot-cpp EXCLUDE_FROM_ALL)
+# A extensão é um .so/.dll compartilhado: o núcleo (sw-core) e o adaptador (sw-godot-gate) são
+# bibliotecas estáticas linkadas nele, então precisam de código independente de posição (-fPIC).
+# Sem isso o link no Linux falha com "relocation ... can not be used when making a shared object".
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../sw-core" sw-core EXCLUDE_FROM_ALL)
 
 # Adaptador do mock do sw-core. Biblioteca separada porque o godot-cpp propaga

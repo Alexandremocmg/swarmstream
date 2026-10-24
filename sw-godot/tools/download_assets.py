@@ -67,13 +67,25 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=Path(__file__).parents[1] / "project/assets/regions"
     )
+    parser.add_argument(
+        "--only",
+        help="ids separados por vírgula (ex.: rock_path); baixa só esses conjuntos do lock",
+    )
     args = parser.parse_args()
     output = args.output.resolve()
     rows: list[dict[str, str | int]] = []
     lock_path = Path(__file__).parents[1] / "assets.lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8-sig"))
+    locked_assets = lock["assets"]
+    if args.only:
+        wanted = [item.strip() for item in args.only.split(",") if item.strip()]
+        known = {asset["id"] for asset in locked_assets}
+        unknown = sorted(set(wanted) - known)
+        if unknown:
+            raise SystemExit(f"--only: ids fora do assets.lock.json: {', '.join(unknown)}")
+        locked_assets = [asset for asset in locked_assets if asset["id"] in set(wanted)]
     metadata_catalog = fetch_json(f"{API}/assets?type=textures")
-    for locked_asset in lock["assets"]:
+    for locked_asset in locked_assets:
         asset_id = locked_asset["id"]
         region = locked_asset["region"]
         metadata = metadata_catalog.get(asset_id)
@@ -124,12 +136,14 @@ def main() -> None:
                 )
     output.parent.mkdir(parents=True, exist_ok=True)
     catalog_dir = Path(__file__).parents[1]
-    with (catalog_dir / "assets.csv").open("w", newline="", encoding="utf-8-sig") as stream:
+    # Com --only o inventário é parcial: não sobrescreve o assets.csv completo do repositório.
+    csv_path = output.parent / "assets-only.csv" if args.only else catalog_dir / "assets.csv"
+    with csv_path.open("w", newline="", encoding="utf-8-sig") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
     print(
-        f"Catalogued {len(rows)} files from {len(lock['assets'])} CC0 assets at {args.resolution}."
+        f"Catalogued {len(rows)} files from {len(locked_assets)} CC0 assets at {args.resolution}."
     )
     print("Powered by Poly Haven (https://polyhaven.com).")
 

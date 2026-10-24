@@ -10,5 +10,5 @@ reloadable = false
 [libraries]
 windows.debug.x86_64 = "res://addons/swarmstream/bin/swarmstream_godot.dll"
 windows.release.x86_64 = "res://addons/swarmstream/bin/swarmstream_godot.dll"
-linux.debug.x86_64 = "res://addons/swarmstream/bin/libswarmstream_godot.so"
-linux.release.x86_64 = "res://addons/swarmstream/bin/libswarmstream_godot.so"
+linux.debug.x86_64 = "res://addons/swarmstream/bin/swarmstream_godot.so"
+linux.release.x86_64 = "res://addons/swarmstream/bin/swarmstream_godot.so"

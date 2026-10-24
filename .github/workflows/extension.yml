@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Alexandre Aparecido Rodrigues Peres
+#
+# F1-49: compila a GDExtension (loader e registro, com godot-cpp na tag fixada) em Ubuntu e
+# Windows (MSVC) e roda o portão do F1-20 sem janela no Ubuntu, no mesmo job (sem artefatos:
+# a cota de armazenamento de artefatos da conta está esgotada). O godot-cpp e o Godot não entram
+# no git: o godot-cpp vem do tag fixado (com cache) e o Godot é baixado com o SHA-512 conferido.
+
+name: extension
+
+on:
+  pull_request:
+  push:
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_CPP_TAG: godot-4.5-stable
+  GODOT_VERSION: 4.7.2-stable
+  # SHA-512 oficial do Godot_v4.7.2-stable_linux.x86_64.zip (SHA512-SUMS.txt da release 4.7.2-stable)
+  GODOT_LINUX_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+
+jobs:
+  build:
+    name: GDExtension build (${{ matrix.os }}; portão no Ubuntu)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch godot-cpp (tag fixo, fora do git)
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$GODOT_CPP_TAG" https://github.com/godotengine/godot-cpp.git "$RUNNER_TEMP/godot-cpp"
+
+      - name: Cache do build da extensão (godot-cpp incluído)
+        uses: actions/cache@v4
+        with:
+          path: build-godot
+          key: godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-${{ hashFiles('sw-godot/extension/**', 'sw-core/**') }}
+          restore-keys: |
+            godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-
+
+      - name: Configurar (CMake)
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            GODOT_CPP_DIR="$(cygpath -m "$RUNNER_TEMP/godot-cpp")"
+          else
+            GODOT_CPP_DIR="$RUNNER_TEMP/godot-cpp"
+          fi
+          cmake -S sw-godot/extension -B build-godot \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGODOT_CPP_DIR="$GODOT_CPP_DIR"
+
+      - name: Compilar a extensão
+        # Ubuntu: 2 jobs de compilação. Com --parallel total, o runner de 4 CPUs/~16 GB foi
+        # encerrado pelo runner ("received a shutdown signal") no meio do godot-cpp (hipótese: pico de memória).
+        env:
+          BUILD_JOBS: ${{ matrix.os == 'ubuntu-latest' && '2' || '4' }}
+        run: cmake --build build-godot --config Release --parallel "$BUILD_JOBS"
+
+      - name: Conferir a saída (DLL ou .so)
+        shell: bash
+        run: |
+          ls -la sw-godot/project/addons/swarmstream/bin
+          test -f sw-godot/project/addons/swarmstream/swarmstream.gdextension || \
+            test -f sw-godot/project/addons/swarmstream/bin/swarmstream_godot.dll || \
+            test -f sw-godot/project/addons/swarmstream/bin/swarmstream_godot.so
+
+      - name: ffmpeg (gera o OGG de teste)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Godot 4.7.2 (baixado e conferido por SHA-512)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          curl -fsSL -o godot.zip             "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          echo "${GODOT_LINUX_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          chmod +x "Godot_v${GODOT_VERSION}_linux.x86_64"
+          "./Godot_v${GODOT_VERSION}_linux.x86_64" --version
+
+      - uses: actions/setup-python@v5
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          python-version: "3.11"
+
+      - name: Textura de teste (rock_path, CC0, Poly Haven, MD5 conferido)
+        if: matrix.os == 'ubuntu-latest'
+        run: python sw-godot/tools/download_assets.py --resolution 8k --only rock_path
+
+      - name: Rodar o portão do F1-20 (headless)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python sw-godot/tools/gate_f1_20.py             --godot "$PWD/Godot_v${GODOT_VERSION}_linux.x86_64"             --ffmpeg ffmpeg --headless --out "$PWD/gate-out"
