@@ -3,6 +3,7 @@
 
 #include "swarmstream/cache_owner.hpp"
 
+#include "cache_owner_testing.hpp"
 #include "swarmstream/slot_allocator.hpp"
 
 #include <new>
@@ -117,6 +118,17 @@ struct CacheOwner::Impl
     std::mutex stop_mutex;
     bool stopped = false; // guardado por stop_mutex
 
+    // CacheOwnerTestHook: segura os submit() na janela entre ler `stopping` e o push, e marca
+    // quando a dona saiu do laço principal. Fora dos testes, custa uma leitura relaxada.
+    std::atomic<bool> hook_gate_enabled{false};
+    std::mutex hook_mutex;
+    std::condition_variable hook_cv;
+    bool hook_gate_open = true;        // guardado por hook_mutex
+    uint32_t hook_in_window = 0;       // guardado por hook_mutex
+    bool hook_owner_left_loop = false; // guardado por hook_mutex
+
+    void hold_in_window() noexcept;
+
     void run() noexcept;
     void process(CacheRequest& r) noexcept;
     void put(CacheRequest& r) noexcept;
@@ -143,6 +155,11 @@ void CacheOwner::Impl::run() noexcept
                      [this] { return !queue.empty() || stopping.load(std::memory_order_seq_cst); });
         sleeping.store(false, std::memory_order_relaxed);
         sleeps.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (hook_gate_enabled.load(std::memory_order_relaxed)) {
+        std::lock_guard lock(hook_mutex);
+        hook_owner_left_loop = true;
+        hook_cv.notify_all();
     }
     // Parando: espera quem está no meio de um submit e recusa o que sobrou na fila.
     while (inflight.load(std::memory_order_seq_cst) != 0) {
@@ -271,6 +288,7 @@ bool CacheOwner::submit(CacheRequest& request) noexcept
         request.complete(CacheErrorCode::Stopped, 0);
         return true;
     }
+    if (s.hook_gate_enabled.load(std::memory_order_relaxed)) s.hold_in_window();
     s.queue.push(&request); // depois daqui o pedido é da dona: não tocar mais nele
     if (s.sleeping.load(std::memory_order_seq_cst)) {
         std::lock_guard lock(s.wake_mutex);
@@ -326,6 +344,51 @@ uint64_t CacheOwner::sleeps() const noexcept
 uint32_t CacheOwner::pieces() const noexcept
 {
     return impl_->pieces.load(std::memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------- ganchos de teste
+
+void CacheOwner::Impl::hold_in_window() noexcept
+{
+    std::unique_lock lock(hook_mutex);
+    ++hook_in_window;
+    hook_cv.notify_all();
+    hook_cv.wait(lock, [this] { return hook_gate_open; });
+    --hook_in_window;
+}
+
+void CacheOwnerTestHook::close_submit_window(CacheOwner& owner) noexcept
+{
+    CacheOwner::Impl& s = *owner.impl_;
+    {
+        std::lock_guard lock(s.hook_mutex);
+        s.hook_gate_open = false;
+    }
+    s.hook_gate_enabled.store(true);
+}
+
+void CacheOwnerTestHook::open_submit_window(CacheOwner& owner) noexcept
+{
+    CacheOwner::Impl& s = *owner.impl_;
+    std::lock_guard lock(s.hook_mutex);
+    s.hook_gate_open = true;
+    s.hook_cv.notify_all();
+}
+
+bool CacheOwnerTestHook::wait_submitters_in_window(CacheOwner& owner, uint32_t count,
+                                                   std::chrono::milliseconds timeout) noexcept
+{
+    CacheOwner::Impl& s = *owner.impl_;
+    std::unique_lock lock(s.hook_mutex);
+    return s.hook_cv.wait_for(lock, timeout, [&] { return s.hook_in_window == count; });
+}
+
+bool CacheOwnerTestHook::wait_owner_left_loop(CacheOwner& owner,
+                                              std::chrono::milliseconds timeout) noexcept
+{
+    CacheOwner::Impl& s = *owner.impl_;
+    std::unique_lock lock(s.hook_mutex);
+    return s.hook_cv.wait_for(lock, timeout, [&] { return s.hook_owner_left_loop; });
 }
 
 } // namespace swarmstream

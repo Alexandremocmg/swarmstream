@@ -10,8 +10,11 @@
 //   pop() e empty() são SÓ da consumidora.
 // - FIFO por produtora. Entre produtoras, vale a ordem das trocas atômicas no `head_`.
 // - pop() pode devolver nullptr por um instante com um push em andamento (a produtora já
-//   trocou o `head_` mas ainda não ligou o `next`). Nesse caso empty() devolve false, e a
-//   consumidora tenta de novo.
+//   trocou o `head_` mas ainda não ligou o `next`). Nesse instante empty() pode devolver
+//   false (o nó atrás do qual a produtora vai ligar ainda não saiu; a consumidora tenta de
+//   novo) ou TRUE (a fila parecia vazia, a produtora vai ligar o nó no sentinela). O true é
+//   seguro para a CacheOwner: a produtora ainda vai fazer a escrita seq_cst do `next` e, depois
+//   dela, ler a marca "dormindo" e acordar a dona (protocolo de Dekker em cache_owner.cpp).
 // - Um nó devolvido por pop() não é mais referenciado pela fila: quem pediu pode destruí-lo
 //   depois que a consumidora terminar de usá-lo.
 //
@@ -75,7 +78,8 @@ public:
         return nullptr;
     }
 
-    // Só a consumidora. true quando não há nó para entregar nem push em andamento visível.
+    // Só a consumidora. true quando não há nó para entregar; pode ser true com um push que
+    // ainda não ligou o `next` (ver o topo do arquivo).
     [[nodiscard]] bool empty() const noexcept
     {
         // Um `tail_` que não é o sentinela é um nó ainda não entregue.

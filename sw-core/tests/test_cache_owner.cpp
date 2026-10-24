@@ -10,6 +10,7 @@
 // Fora do TSan, o mesmo teste confere os bytes de toda leitura bem-sucedida (nunca dado de
 // outra peça nem meia escrita) e que nenhum pedido fica sem resposta.
 
+#include "cache_owner_testing.hpp"
 #include "check.hpp"
 #include "swarmstream/cache_owner.hpp"
 #include "swarmstream/mpsc_queue.hpp"
@@ -29,6 +30,22 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// No job TSan (SANITIZE_THREAD), este executável tem de estar instrumentado: senão o critério
+// "sem data race com 16 leitoras" passaria sem o TSan olhar a fila nem a dona.
+#if defined(SW_EXPECT_TSAN)
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define SW_TSAN_ON 1
+#endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+#define SW_TSAN_ON 1
+#endif
+#if !defined(SW_TSAN_ON)
+#error "SANITIZE_THREAD ligado, mas este executável não foi compilado com -fsanitize=thread"
+#endif
+#endif
 
 // ---------------------------------------------------------------- contagem de alocações
 // Substitui o operator new global deste executável para provar que o caminho de leitura
@@ -490,6 +507,60 @@ void test_owner_stop_with_concurrent_submitters()
     cleanup(dir);
 }
 
+// Revisão da R2: as duas peças da parada (a dona espera `inflight` zerar; depois drena a
+// fila) têm de ter um teste que falhe sem elas. O gancho segura 4 submit() na janela exata
+// (já leram `stopping == false`, ainda não fizeram o push), a dona para e sai do laço, e só
+// então a janela abre. Sem esperar `inflight`, a dona sairia antes dos push; sem drenar, os
+// push ficariam na fila. Nos dois casos os pedidos nunca terminam e o prazo abaixo falha (em
+// vez de travar o teste).
+void test_owner_stop_waits_inflight_and_drains()
+{
+    std::cout << "[Test] CacheOwner: parada com submit na janela (espera inflight e drena)\n";
+    const fs::path dir = fresh_dir("window");
+    {
+        auto started =
+            CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 4, .layout = kLayout});
+        SW_CHECK(started.has_value());
+        CacheOwner& owner = **started;
+        constexpr uint32_t kSubmitters = 4;
+        std::vector<std::byte> out(64);
+        std::deque<CacheRequest> requests;
+        for (uint32_t i = 0; i < kSubmitters; ++i) {
+            requests.emplace_back(CacheOp::Get, piece(1), std::span<const std::byte>{},
+                                  std::span(out));
+        }
+
+        CacheOwnerTestHook::close_submit_window(owner);
+        std::vector<std::thread> submitters;
+        for (uint32_t i = 0; i < kSubmitters; ++i) {
+            submitters.emplace_back([&, i] { SW_CHECK(owner.submit(requests[i])); });
+        }
+        SW_CHECK(CacheOwnerTestHook::wait_submitters_in_window(owner, kSubmitters, 10s));
+
+        std::thread stopper([&] { SW_CHECK(owner.stop().has_value()); });
+        SW_CHECK(CacheOwnerTestHook::wait_owner_left_loop(owner, 10s));
+        for (auto& r : requests) {
+            SW_CHECK(!r.done()); // a janela ainda está fechada: ninguém respondeu
+        }
+
+        CacheOwnerTestHook::open_submit_window(owner);
+        const auto deadline = std::chrono::steady_clock::now() + 10s;
+        for (auto& r : requests) {
+            while (!r.done()) {
+                SW_CHECK(std::chrono::steady_clock::now() < deadline); // pedido perdido
+                std::this_thread::yield();
+            }
+            auto res = r.result();
+            SW_CHECK(!res.has_value() && res.error() == CacheErrorCode::Stopped);
+        }
+        for (auto& t : submitters)
+            t.join();
+        stopper.join();
+        std::cout << "    " << kSubmitters << " pedidos da janela terminaram com Stopped\n";
+    }
+    cleanup(dir);
+}
+
 void test_owner_start_errors()
 {
     std::cout << "[Test] CacheOwner: start() devolve o erro do store\n";
@@ -516,6 +587,7 @@ void run_cache_owner_tests()
     test_owner_request_lifecycle();
     test_owner_read_path_does_not_allocate();
     test_owner_stop_with_concurrent_submitters();
+    test_owner_stop_waits_inflight_and_drains();
     test_owner_sixteen_readers();
 }
 

@@ -514,6 +514,9 @@ void test_store_files_native_disk_full_small_fs()
     std::cout << "[Test] StoreFiles: DiskFull do próprio SO num sistema de arquivos pequeno\n";
     const char* small = std::getenv("SW_TEST_SMALL_FS");
     if (small == nullptr || *small == '\0') {
+        // No job que monta o tmpfs, pular seria um teste que passa sem testar (revisão da R2).
+        const char* required = std::getenv("SW_REQUIRE_SMALL_FS");
+        SW_CHECK(required == nullptr || *required == '\0');
         std::cout << "    PULADO: SW_TEST_SMALL_FS não definida (o CI do Linux define)\n";
         return;
     }

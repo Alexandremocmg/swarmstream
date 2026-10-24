@@ -43,6 +43,15 @@ jobs:
           sudo mkdir -p /mnt/sw-small
           sudo mount -t tmpfs -o size=16m,mode=1777 tmpfs /mnt/sw-small
           echo "SW_TEST_SMALL_FS=/mnt/sw-small" >> "$GITHUB_ENV"
+          echo "SW_REQUIRE_SMALL_FS=1" >> "$GITHUB_ENV"
+
+      # Prova no log que o teste do DiskFull nativo rodou (o ctest só mostra a saída de quem falha).
+      - name: DiskFull nativo no tmpfs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          out="$(build/sw-core/sw-core-store-tests)"
+          echo "$out" | grep -A3 'DiskFull do próprio SO'
+          if echo "$out" | grep -q 'PULADO: SW_TEST_SMALL_FS'; then exit 1; fi
 
       - name: Test
         shell: bash

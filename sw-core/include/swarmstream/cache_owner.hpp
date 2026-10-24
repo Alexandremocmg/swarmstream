@@ -133,7 +133,10 @@ public:
     [[nodiscard]] static Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
     start(CacheOwnerConfig config);
 
-    // Para a thread (como stop()) e fecha o store sem relatar erro.
+    // Para a thread (como stop()) e fecha o store sem relatar erro. Chamar submit() de outra
+    // thread durante ou depois da destruição é uso incorreto: a parada só protege os submit()
+    // que começaram antes de a dona sair (o objeto deixa de existir depois). Quem pode enviar
+    // pedidos tem de parar de enviar antes de destruir a CacheOwner; stop() continua seguro.
     ~CacheOwner();
     CacheOwner(const CacheOwner&) = delete;
     CacheOwner& operator=(const CacheOwner&) = delete;
@@ -159,6 +162,7 @@ public:
     [[nodiscard]] uint32_t pieces() const noexcept; // peças publicadas no índice
 
 private:
+    friend struct CacheOwnerTestHook; // src/cache_owner_testing.hpp, só para os testes
     struct Impl;
     explicit CacheOwner(std::unique_ptr<Impl> impl) noexcept;
     std::unique_ptr<Impl> impl_;

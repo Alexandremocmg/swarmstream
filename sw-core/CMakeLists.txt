@@ -73,6 +73,11 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     # F1-12: thread dona do cache e fila MPSC (16 leitoras; o job TSan do CI roda este teste).
     add_executable(sw-core-owner-tests tests/test_cache_owner.cpp)
     target_link_libraries(sw-core-owner-tests PRIVATE sw-core)
+    # src/: cache_owner_testing.hpp (ganchos de teste, fora da API instalada).
+    target_include_directories(sw-core-owner-tests PRIVATE src)
+    if(SANITIZE_THREAD)
+        target_compile_definitions(sw-core-owner-tests PRIVATE SW_EXPECT_TSAN)
+    endif()
     add_test(NAME sw-core-owner COMMAND sw-core-owner-tests)
     set_tests_properties(sw-core-owner PROPERTIES TIMEOUT 300)
     # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
