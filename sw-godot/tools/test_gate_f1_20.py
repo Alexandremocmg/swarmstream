@@ -13,9 +13,7 @@ import gate_f1_20 as gate
 
 # Imprime uma linha, descarrega o buffer e fica preso além do timeout.
 HANG_AFTER_PRINT = (
-    "import sys, time\n"
-    "print('[gate] antes do travamento', flush=True)\n"
-    "time.sleep(30)\n"
+    "import sys, time\n" "print('[gate] antes do travamento', flush=True)\n" "time.sleep(30)\n"
 )
 
 
@@ -27,9 +25,9 @@ class RunTimeoutTests(unittest.TestCase):
         self.assertIn("TIMEOUT depois de 2 s", out)
 
     def test_timeout_with_bytes_output_is_decoded_not_dropped(self) -> None:
-        # No POSIX, TimeoutExpired.stdout chega como bytes mesmo com text=True (causa do CI do Ubuntu).
+        # No POSIX, TimeoutExpired.stdout vem em bytes mesmo com text=True (CI do Ubuntu).
         expired = subprocess.TimeoutExpired(["godot"], 120, output=b"[gate] carregou\n")
-        with mock.patch.object(gate.subprocess, "run", side_effect=expired):
+        with mock.patch("subprocess.run", side_effect=expired):
             code, out = gate.run(["godot"], timeout_s=120)
         self.assertEqual(code, 124)
         self.assertIn("[gate] carregou", out)
