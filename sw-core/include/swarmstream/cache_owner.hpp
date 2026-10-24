@@ -25,9 +25,22 @@
 //   journal; depois grava um checkpoint novo. O relatório fica em recovery().
 // - Falha de sync no store ou no journal deixa o cache quebrado (broken()): tudo dá IoError
 //   até stop() e um start() novo, que refaz a recuperação. Nunca se repete um sync que falhou.
-// - Ainda não há leases (F1-13): Get COPIA a peça para o buffer de quem pede, e Remove libera
-//   o slot na hora. Como a dona faz as duas coisas, uma leitura nunca vê meia escrita nem um
-//   slot reaproveitado por outra peça.
+// - Get COPIA a peça para o buffer de quem pede. Como a dona faz a leitura e a escrita, uma
+//   leitura nunca vê meia escrita nem um slot reaproveitado por outra peça.
+// - Leases (F1-13, ADR-0005): Acquire prende a peça num PieceLease. Enquanto houver um lease
+//   da peça, ela NUNCA sai do cache nem tem o slot reaproveitado: Remove devolve SlotBusy sem
+//   gravar nada; um bloco que não confere no Get marca a peça como estragada (Get e Acquire
+//   passam a devolver CorruptedChecksum, nada estragado sai do cache), mas o slot só é liberado
+//   no primeiro pedido que tocar a peça depois do último lease solto. A remoção CLOCK (F1-14)
+//   tem de pular os slots presos pelo mesmo motivo.
+//   * A contagem é um atômico por slot. Só a dona soma (no Acquire); qualquer thread subtrai
+//     (PieceLease::reset), sem fila, sem trava e sem alocar. A dona só libera um slot dentro
+//     de invalidate(), depois de ler a contagem com acquire e vê-la em zero. Como só ela soma,
+//     nenhum lease novo aparece entre a leitura e a liberação; um lease solto no meio só deixa
+//     a remoção recusada (conservador).
+//   * O lease vale para a CacheOwner que o deu. Depois de stop() ninguém remove nada; um lease
+//     que sobreviver à CacheOwner continua seguro de soltar (a tabela é compartilhada), mas não
+//     prende nada numa CacheOwner nova (start() de novo começa sem leases).
 // - A peça é identificada pela raiz Merkle (`PieceId::hash`, ADR-0007); o índice da peça no
 //   manifesto (`PieceId::index`) não entra no cache em disco.
 
@@ -55,14 +68,54 @@ using CrashHook = void (*)(CrashPoint point, void* context);
 } // namespace detail
 
 enum class CacheOp : uint8_t {
-    Put,    // grava `input` como a peça; sucesso devolve o tamanho
-    Get,    // copia a peça para `output` e confere os blocos; sucesso devolve o tamanho
-    Remove, // tira a peça do cache e libera o slot; sucesso devolve 0
+    Put,     // grava `input` como a peça; sucesso devolve o tamanho
+    Get,     // copia a peça para `output` e confere os blocos; sucesso devolve o tamanho
+    Remove,  // tira a peça do cache e libera o slot; sucesso devolve 0; SlotBusy com lease
+    Acquire, // prende a peça no PieceLease de quem pede (F1-13); sucesso devolve o tamanho;
+             // pedido sem PieceLease (construtor genérico) dá InvalidSize
+};
+
+namespace detail {
+struct LeaseTable;  // contagem de leases por slot (cache_owner.cpp)
+struct LeaseAccess; // a dona preenche o PieceLease (cache_owner.cpp)
+} // namespace detail
+
+// Um lease de uma peça do cache em disco (F1-13, ADR-0005): enquanto ele existir, a peça não
+// sai do cache nem tem o slot reaproveitado. Vem de um pedido Acquire. Só se move; soltar
+// (reset() ou destrutor) vale em qualquer thread, nunca espera a dona e não aloca. Não é
+// thread-safe: um mesmo PieceLease não pode ser usado por duas threads ao mesmo tempo.
+class PieceLease
+{
+public:
+    PieceLease() noexcept = default;
+    ~PieceLease() { reset(); }
+    PieceLease(const PieceLease&) = delete;
+    PieceLease& operator=(const PieceLease&) = delete;
+    PieceLease(PieceLease&& other) noexcept;
+    PieceLease& operator=(PieceLease&& other) noexcept;
+
+    [[nodiscard]] bool valid() const noexcept { return table_ != nullptr; }
+    [[nodiscard]] explicit operator bool() const noexcept { return valid(); }
+    [[nodiscard]] const PieceHash& piece() const noexcept { return piece_; }
+    [[nodiscard]] SlotId slot() const noexcept { return slot_; } // kInvalidSlot se vazio
+    [[nodiscard]] uint32_t size() const noexcept { return size_; } // bytes da peça
+
+    // Solta o lease (se houver). Depois disso a peça pode ser removida.
+    void reset() noexcept;
+
+private:
+    friend struct detail::LeaseAccess;
+    std::shared_ptr<detail::LeaseTable> table_;
+    PieceHash piece_{};
+    SlotId slot_ = kInvalidSlot;
+    uint32_t size_ = 0;
 };
 
 // Um pedido à thread dona. É de quem pede e não se move (o nó da fila mora dentro dele).
 // Regras:
-// - `input` (Put), `output` (Get) e `blocks` têm de continuar válidos até o pedido terminar.
+// - `input` (Put), `output` (Get), `lease` (Acquire) e `blocks` têm de continuar válidos até o
+//   pedido terminar. Acquire com sucesso troca o lease que `lease` tinha pelo novo; com erro,
+//   não mexe em `lease`.
 // - `blocks`: o tamanho gravado de cada bloco da peça, na ordem (do manifesto, 03 §5). Vazio
 //   = a peça é um bloco só. Put calcula um XXH3-64 por bloco; Get precisa da mesma lista para
 //   conferir (InvalidOffset se ela não bate com a peça gravada).
@@ -75,6 +128,7 @@ class CacheRequest : private MpscNode
 public:
     CacheRequest(CacheOp op, const PieceId& piece, std::span<const std::byte> input,
                  std::span<std::byte> output, std::span<const uint32_t> blocks = {}) noexcept;
+    CacheRequest(const PieceId& piece, PieceLease& lease) noexcept; // Acquire
     ~CacheRequest();
     CacheRequest(const CacheRequest&) = delete;
     CacheRequest& operator=(const CacheRequest&) = delete;
@@ -92,6 +146,10 @@ public:
     [[nodiscard]] static CacheRequest remove(const PieceId& piece) noexcept
     {
         return CacheRequest(CacheOp::Remove, piece, {}, {});
+    }
+    [[nodiscard]] static CacheRequest acquire(const PieceId& piece, PieceLease& lease) noexcept
+    {
+        return CacheRequest(piece, lease);
     }
 
     // true quando a resposta chegou. Nunca bloqueia: se a dona estiver gravando a resposta
@@ -126,6 +184,7 @@ private:
     std::span<const std::byte> input_;
     std::span<std::byte> output_;
     std::span<const uint32_t> blocks_;
+    PieceLease* lease_ = nullptr; // Acquire
 
     std::atomic<bool> pending_{false}; // entre arm() e complete()
     mutable std::mutex mutex_;
@@ -196,6 +255,8 @@ public:
     [[nodiscard]] uint64_t requests_processed() const noexcept;
     [[nodiscard]] uint64_t sleeps() const noexcept; // vezes que a dona dormiu sem pedidos
     [[nodiscard]] uint32_t pieces() const noexcept; // peças publicadas no índice
+    // Leases dados por esta CacheOwner e ainda não soltos (F1-13).
+    [[nodiscard]] uint64_t leases() const noexcept;
     // true depois de uma falha de sync: só stop() e um start() novo resolvem.
     [[nodiscard]] bool broken() const noexcept;
     // O que start() encontrou. Escrito antes de a dona existir; só leitura depois.

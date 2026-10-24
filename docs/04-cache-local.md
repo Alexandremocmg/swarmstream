@@ -161,6 +161,7 @@ Ao inicializar o subsistema de cache:
 
 - **Uma única thread de I/O é dona** do índice e dos slots. As outras só mandam pedidos e recebem respostas.
 - **Leases**: ler um bloco devolve um lease (contagem de referência). Peça com lease ativo **nunca** é removida nem sobrescrita.
+  - **Como a F1-13 faz:** o lease é da peça inteira, pedido à dona (`CacheOp::Acquire`) e devolvido num `PieceLease` (RAII, só se move). A contagem é um atômico por slot: só a dona soma; qualquer thread solta, sem fila, sem trava e sem alocar (`release`), e a dona lê com `acquire` antes de liberar um slot. O único ponto que libera slot de peça (`invalidate`) recusa com `SlotBusy` se houver lease: `Remove` de peça presa devolve `SlotBusy` sem gravar `FREE_SLOT`. Um bloco que não confere numa peça presa a marca como estragada: ela nunca mais é servida (`CorruptedChecksum`), mas o slot só sai no primeiro pedido que a tocar depois do último lease. Leases não sobrevivem a fechar e abrir o cache. A remoção CLOCK (F1-14) tem de pular slots presos.
 - **Leitura de acerto** pode ser servida sem passar pela thread de I/O (leitura direta do arquivo mapeado ou com `pread`) se o lease já estiver pego — o caminho quente não depende de fila.
 - A thread principal do jogo **nunca** bloqueia em remoção, compactação ou gravação.
 

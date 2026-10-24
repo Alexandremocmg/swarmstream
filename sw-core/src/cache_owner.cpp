@@ -16,6 +16,7 @@
 #include <system_error>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace swarmstream {
 
@@ -24,6 +25,11 @@ namespace swarmstream {
 CacheRequest::CacheRequest(CacheOp op, const PieceId& piece, std::span<const std::byte> input,
                            std::span<std::byte> output, std::span<const uint32_t> blocks) noexcept
     : op_(op), piece_(piece), input_(input), output_(output), blocks_(blocks)
+{
+}
+
+CacheRequest::CacheRequest(const PieceId& piece, PieceLease& lease) noexcept
+    : op_(CacheOp::Acquire), piece_(piece), lease_(&lease)
 {
 }
 
@@ -80,6 +86,72 @@ Result<size_t, CacheErrorCode> CacheRequest::result() const
     return bytes_;
 }
 
+// ---------------------------------------------------------------- PieceLease
+
+namespace detail {
+
+// Contagem de leases por slot (F1-13). Compartilhada com os PieceLease: soltar um lease depois
+// de a CacheOwner ser destruída ainda toca em memória válida. A contagem é de 32 bits: estourar
+// exigiria 2^32 PieceLease vivos de um mesmo slot (centenas de GB só de objetos).
+struct LeaseTable
+{
+    explicit LeaseTable(uint32_t slots)
+        : counts(std::make_unique<std::atomic<uint32_t>[]>(slots)) // começa em zero
+    {
+    }
+    std::unique_ptr<std::atomic<uint32_t>[]> counts; // um por slot; só a dona soma
+    std::atomic<uint64_t> total{0};                  // leases vivos (telemetria e testes)
+};
+
+struct LeaseAccess
+{
+    // Só na thread dona (é a única que soma). Não aloca: copia o shared_ptr.
+    static void grant(PieceLease& out, const std::shared_ptr<LeaseTable>& table,
+                      const PieceHash& piece, SlotId slot, uint32_t size) noexcept
+    {
+        table->counts[slot].fetch_add(1, std::memory_order_relaxed);
+        table->total.fetch_add(1, std::memory_order_relaxed);
+        out.reset(); // depois de somar: trocar por um lease do mesmo slot nunca passa por zero
+        out.table_ = table;
+        out.piece_ = piece;
+        out.slot_ = slot;
+        out.size_ = size;
+    }
+};
+
+} // namespace detail
+
+PieceLease::PieceLease(PieceLease&& other) noexcept
+    : table_(std::move(other.table_)), piece_(std::exchange(other.piece_, PieceHash{})),
+      slot_(std::exchange(other.slot_, kInvalidSlot)), size_(std::exchange(other.size_, 0))
+{
+}
+
+PieceLease& PieceLease::operator=(PieceLease&& other) noexcept
+{
+    if (this != &other) {
+        reset();
+        table_ = std::move(other.table_);
+        piece_ = std::exchange(other.piece_, PieceHash{});
+        slot_ = std::exchange(other.slot_, kInvalidSlot);
+        size_ = std::exchange(other.size_, 0);
+    }
+    return *this;
+}
+
+void PieceLease::reset() noexcept
+{
+    if (!table_) return;
+    // release: tudo o que quem tinha o lease fez com a peça acontece antes de a dona ver a
+    // contagem em zero (ela lê com acquire) e reaproveitar o slot.
+    table_->counts[slot_].fetch_sub(1, std::memory_order_release);
+    table_->total.fetch_sub(1, std::memory_order_relaxed);
+    table_.reset();
+    piece_ = {};
+    slot_ = kInvalidSlot;
+    size_ = 0;
+}
+
 // ---------------------------------------------------------------- CacheOwner
 
 struct CacheOwner::Impl
@@ -89,10 +161,15 @@ struct CacheOwner::Impl
         SlotId slot = kInvalidSlot;
         uint32_t size = 0;
         std::vector<uint64_t> blocks; // XXH3-64 por bloco; reservado na escrita, nunca na leitura
+        // F1-13: um bloco não conferiu com a peça presa por lease. Nunca é servida; o slot sai
+        // no primeiro pedido que tocar a peça sem lease. Só vale em memória: o checkpoint grava
+        // a entrada como as outras e, depois de reabrir, o XXH3 do bloco a pega de novo.
+        bool corrupt = false;
     };
 
     Impl(StoreFiles s, CacheOwnerConfig c)
-        : store(std::move(s)), slots(c.total_slots), config(std::move(c))
+        : store(std::move(s)), slots(c.total_slots), config(std::move(c)),
+          leases(std::make_shared<detail::LeaseTable>(config.total_slots))
     {
     }
 
@@ -101,6 +178,9 @@ struct CacheOwner::Impl
     StoreFiles store;
     SlotAllocator slots;
     CacheOwnerConfig config;
+    // F1-13: contagem de leases por slot. A dona soma (Acquire) e lê (invalidate); os
+    // PieceLease subtraem de qualquer thread. Criada antes de a thread existir.
+    std::shared_ptr<detail::LeaseTable> leases;
     std::unordered_map<PieceHash, Entry> index; // chave: a raiz Merkle (ADR-0007)
     detail::Journal journal;
     uint64_t next_lsn = 1;
@@ -113,6 +193,7 @@ struct CacheOwner::Impl
     std::atomic<bool> fail_next_store_sync{false};
     std::atomic<bool> fail_next_journal_sync{false};
     std::atomic<bool> skip_stop_checkpoint{false}; // simula queda: o journal fica com os registros
+    std::atomic<bool> corrupt_next_read{false};    // F1-13: o próximo Get vê um byte trocado
 
     MpscQueue queue;
 
@@ -170,6 +251,13 @@ struct CacheOwner::Impl
     [[nodiscard]] CacheErrorCode checkpoint();
     [[nodiscard]] CacheErrorCode append_and_sync(detail::JournalRecord& rec);
     [[nodiscard]] CacheErrorCode invalidate(PieceHash piece);
+    [[nodiscard]] CacheErrorCode drop_corrupt(PieceHash piece);
+    // Leitura com acquire: o uso da peça por quem soltou o lease (release) acontece antes de o
+    // slot ser reaproveitado.
+    [[nodiscard]] bool leased(SlotId slot) const noexcept
+    {
+        return leases->counts[slot].load(std::memory_order_acquire) != 0;
+    }
 
     void run() noexcept;
     void process(CacheRequest& r) noexcept;
@@ -177,6 +265,7 @@ struct CacheOwner::Impl
     void put(CacheRequest& r);
     void get(CacheRequest& r);
     void remove(CacheRequest& r);
+    void acquire(CacheRequest& r) noexcept;
 };
 
 // 04 §5. Índice do último checkpoint + registros do journal com LSN maior; depois descarta o
@@ -328,10 +417,13 @@ CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
 
 // Tira a peça do cache: FREE_SLOT no journal (sincronizado) ANTES de o slot poder ser
 // reaproveitado; senão uma queda deixaria o journal apontando para dado de outra peça.
+// É o ÚNICO lugar que libera o slot de uma peça (F1-13): com lease, devolve SlotBusy sem gravar
+// nada. Como só a dona soma leases, nenhum aparece entre a leitura da contagem e a liberação.
 CacheErrorCode CacheOwner::Impl::invalidate(PieceHash piece)
 {
     const auto it = index.find(piece);
     if (it == index.end()) return CacheErrorCode::PieceNotFound;
+    if (leased(it->second.slot)) return CacheErrorCode::SlotBusy;
     detail::JournalRecord rec;
     rec.type = detail::JournalType::FreeSlot;
     rec.piece = piece;
@@ -341,7 +433,6 @@ CacheErrorCode CacheOwner::Impl::invalidate(PieceHash piece)
         mark_broken();
         return CacheErrorCode::IoError;
     }
-    // Sem leases ainda (F1-13): nenhuma leitura segura o slot fora da dona.
     if (auto rel = slots.release(it->second.slot); !rel) {
         mark_broken(); // índice e alocador discordam: não deveria ocorrer
         return CacheErrorCode::IoError;
@@ -349,6 +440,18 @@ CacheErrorCode CacheOwner::Impl::invalidate(PieceHash piece)
     index.erase(it);
     pieces.fetch_sub(1, std::memory_order_relaxed);
     return CacheErrorCode::Success;
+}
+
+// Peça estragada (Entry::corrupt, ou um bloco que acabou de não conferir): nunca é servida.
+// Tenta tirá-la agora; com lease, fica marcada até o último sair. Devolve o código para quem
+// pediu: CorruptedChecksum, ou o erro do FREE_SLOT (IoError).
+CacheErrorCode CacheOwner::Impl::drop_corrupt(PieceHash piece)
+{
+    if (const auto it = index.find(piece); it != index.end()) it->second.corrupt = true;
+    const CacheErrorCode rc = invalidate(piece);
+    return rc == CacheErrorCode::Success || rc == CacheErrorCode::SlotBusy
+               ? CacheErrorCode::CorruptedChecksum
+               : rc;
 }
 
 void CacheOwner::Impl::run() noexcept
@@ -396,6 +499,7 @@ void CacheOwner::Impl::process(CacheRequest& r) noexcept
         case CacheOp::Put: put(r); return;
         case CacheOp::Get: get(r); return;
         case CacheOp::Remove: remove(r); return;
+        case CacheOp::Acquire: acquire(r); return;
         }
     } catch (...) { // sem memória para o índice ou o buffer do journal
         mark_broken();
@@ -426,8 +530,15 @@ void CacheOwner::Impl::put(CacheRequest& r)
         return;
     }
     if (const auto it = index.find(r.piece_.hash); it != index.end()) {
-        r.complete(CacheErrorCode::Success, it->second.size); // já está: não regrava
-        return;
+        if (!it->second.corrupt) {
+            r.complete(CacheErrorCode::Success, it->second.size); // já está: não regrava
+            return;
+        }
+        // Estragada: sai antes de gravar de novo; com lease (SlotBusy), o slot dela não muda.
+        if (const CacheErrorCode rc = invalidate(r.piece_.hash); rc != CacheErrorCode::Success) {
+            r.complete(rc, 0);
+            return;
+        }
     }
     const auto slot = slots.allocate();
     if (!slot) {
@@ -495,6 +606,10 @@ void CacheOwner::Impl::get(CacheRequest& r)
         return;
     }
     const Entry& e = it->second;
+    if (e.corrupt) {
+        r.complete(drop_corrupt(r.piece_.hash), 0);
+        return;
+    }
     if (r.output_.size() < e.size) {
         r.complete(CacheErrorCode::InvalidSize, 0);
         return;
@@ -509,6 +624,10 @@ void CacheOwner::Impl::get(CacheRequest& r)
     if (auto rd = store.read(e.slot, 0, out); !rd) {
         r.complete(rd.error(), 0);
         return;
+    }
+    // CacheOwnerTestHook: fora dos testes, custa uma leitura relaxada.
+    if (corrupt_next_read.load(std::memory_order_relaxed) && corrupt_next_read.exchange(false)) {
+        out[0] ^= std::byte{0xFF};
     }
     // 04 §5, passo 5: nada sai do cache sem o XXH3 do próprio bloco conferir. Um bloco ruim
     // invalida a peça inteira, que é pedida de novo.
@@ -525,11 +644,30 @@ void CacheOwner::Impl::get(CacheRequest& r)
         ok = ok && off == out.size();
     }
     if (!ok) {
-        const CacheErrorCode inv = invalidate(r.piece_.hash);
-        r.complete(inv == CacheErrorCode::Success ? CacheErrorCode::CorruptedChecksum : inv, 0);
+        r.complete(drop_corrupt(r.piece_.hash), 0); // com lease, fica marcada e presa
         return;
     }
     r.complete(CacheErrorCode::Success, e.size);
+}
+
+void CacheOwner::Impl::acquire(CacheRequest& r) noexcept
+{
+    if (r.lease_ == nullptr) { // CacheRequest(CacheOp::Acquire, ...) sem destino
+        r.complete(CacheErrorCode::InvalidSize, 0);
+        return;
+    }
+    const auto it = index.find(r.piece_.hash);
+    if (it == index.end()) {
+        r.complete(CacheErrorCode::PieceNotFound, 0);
+        return;
+    }
+    if (it->second.corrupt) {
+        r.complete(drop_corrupt(r.piece_.hash), 0);
+        return;
+    }
+    detail::LeaseAccess::grant(*r.lease_, leases, r.piece_.hash, it->second.slot,
+                               it->second.size);
+    r.complete(CacheErrorCode::Success, it->second.size);
 }
 
 void CacheOwner::Impl::remove(CacheRequest& r)
@@ -654,6 +792,11 @@ uint32_t CacheOwner::pieces() const noexcept
     return impl_->pieces.load(std::memory_order_relaxed);
 }
 
+uint64_t CacheOwner::leases() const noexcept
+{
+    return impl_->leases->total.load(std::memory_order_relaxed);
+}
+
 bool CacheOwner::broken() const noexcept
 {
     return impl_->broken_flag.load(std::memory_order_relaxed);
@@ -728,6 +871,11 @@ uint64_t CacheOwnerTestHook::journal_syncs(const CacheOwner& owner) noexcept
 void CacheOwnerTestHook::skip_checkpoint_on_stop(CacheOwner& owner) noexcept
 {
     owner.impl_->skip_stop_checkpoint.store(true);
+}
+
+void CacheOwnerTestHook::corrupt_next_read(CacheOwner& owner) noexcept
+{
+    owner.impl_->corrupt_next_read.store(true);
 }
 
 bool CacheOwnerTestHook::wait_owner_left_loop(CacheOwner& owner,
