@@ -31,6 +31,7 @@ python sw-pack/testdata/verify_vectors.py
 python sw-godot/tools/baseline.py --godot <godot_console.exe> --check r1.json r2.json r3.json --limits docs/medicoes/baseline-limits.json
 ```
 O CI roda: build e teste em Ubuntu e Windows (MSVC), ASan+UBSan em Ubuntu e lint. **Os quatro precisam estar verdes.**
+- **Quando o CI roda (F1-54):** `pull_request` em todo PR; `push` só na `main` (em branch o push não dispara nada, o PR cobre). Mudança que toque **só** `tarefas/**`, `docs/**` ou `**/*.md` não roda o CI de C++ nem o lint (`paths-ignore` em `ci.yml` e `lint.yml`; nenhum passo do lint olha `.md`). No Windows, Debug (build+test) e Release (testes com NDEBUG) rodam num job só: os passos `[Release] ...` identificam a falha. Cada push num PR gasta cota: rode os testes localmente e junte as mudanças num push só.
 
 ## Git e PR
 - Crie um branch a partir de `origin/main`: `tipo/ID-descricao-curta` (ex.: `feat/F1-36-checagem-vazia`). **Nunca faça push direto na `main`. Nunca use `--force`.**

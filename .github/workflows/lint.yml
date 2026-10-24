@@ -1,8 +1,23 @@
 name: lint
 
+# F1-54: push só na main; mudança só em tarefas/ ou em documentação não roda o lint (nenhum passo
+# abaixo olha .md nem esses diretórios; lista também no CLAUDE.md).
 on:
   pull_request:
+    paths-ignore:
+      - "tarefas/**"
+      - "docs/**"
+      - "**/*.md"
   push:
+    branches: [main]
+    paths-ignore:
+      - "tarefas/**"
+      - "docs/**"
+      - "**/*.md"
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:

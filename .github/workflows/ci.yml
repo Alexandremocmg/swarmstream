@@ -1,8 +1,19 @@
 name: ci
 
+# F1-54: push só na main (nos branches roda só o pull_request); mudança só em tarefas/ ou em
+# documentação não roda o CI de C++ (lista também no CLAUDE.md).
 on:
   pull_request:
+    paths-ignore:
+      - "tarefas/**"
+      - "docs/**"
+      - "**/*.md"
   push:
+    branches: [main]
+    paths-ignore:
+      - "tarefas/**"
+      - "docs/**"
+      - "**/*.md"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -57,26 +68,42 @@ jobs:
         shell: bash
         run: ctest --test-dir build --build-config Debug --output-on-failure --timeout 120
 
-  # F1-46: build com NDEBUG. O `assert` some nesse build; os testes usam SW_CHECK (tests/check.hpp),
+      # F1-54: no Windows o Release (F1-46) roda neste mesmo job, depois do Debug, para pagar uma
+      # só vez o checkout e a preparação do runner. Os passos [Release] rodam mesmo se o Debug
+      # falhar, e o nome do passo diz qual configuração quebrou.
+      - name: "[Release] Configure (NDEBUG, vcpkg toolchain)"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: bash
+        run: |
+          cmake -S . -B build-release             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=ON             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake'
+
+      - name: "[Release] Confirma que Release define NDEBUG"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: bash
+        run: grep -E 'CMAKE_CXX_FLAGS_RELEASE:STRING=.*NDEBUG' build-release/CMakeCache.txt
+
+      - name: "[Release] Build"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: cmake --build build-release --config Release --parallel
+
+      - name: "[Release] Test"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: bash
+        run: ctest --test-dir build-release --build-config Release --output-on-failure --timeout 120
+
+  # F1-46: build com NDEBUG. No Windows este teste roda dentro do job build-test (F1-54). O `assert` some nesse build; os testes usam SW_CHECK (tests/check.hpp),
   # então este job pega teste que só passaria "por não verificar nada".
   release-tests:
-    name: release tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: release tests (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure (Release, vcpkg toolchain)
         shell: bash
         run: |
-          case "${{ matrix.os }}" in
-            windows-*) VCPKG_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake' ;;
-            *)         VCPKG_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ;;
-          esac
+          VCPKG_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           cmake -S . -B build             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=ON             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_FILE"
 
       - name: Confirma que Release define NDEBUG
