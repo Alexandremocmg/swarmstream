@@ -45,6 +45,7 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-24 | **Repositório público novo** `Alexandremocmg/swarmstream` (só `main` e branches, sem `refs/pull`) para ter Actions sem limite; o antigo foi renomeado `swarmstream-privado-antigo` e segue privado. PRs abertos reabertos como #1 (F1-11), #2 (F1-49) e #3 (F1-54). Números de PR citados antes desta data referem-se ao repositório antigo |
 | 2026-10-24 | PR #1 (F1-11, crítico, revisado pela Sênior no PR antigo #34; CI 14/14 verde) aceito e mesclado (`6fc2d76`); Arquiteto liberado para o F1-13 |
 | 2026-10-24 | PRs #2 (F1-49, `d880526`) e #3 (F1-54, `a95f46e`) aceitos e mesclados no repositório público, com CI verde. Pleno liberada para o F1-53; Sênior para o item D do F1-54 (`extension.yml`), no cartão novo F1-55 |
+| 2026-10-25 | PRs #4 (F1-55, `5b32d8e`) e #5 (F1-53, `3f8b07d`) aceitos e mesclados. Dono definiu que a gestão escolhe e aciona o revisor do #6 (F1-13): sessão Sênior de F1-55, Sonnet em esforço alto (não foi possível abrir Opus). Avaliação do ChatGPT como agente de código: tarefa F1-29 entregue, compilada e mutada pela gestão, PR #7 |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_2e2d3843-77d4-4cf1-8782-427f70498d9c`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 
 ## Pendências do dono do produto

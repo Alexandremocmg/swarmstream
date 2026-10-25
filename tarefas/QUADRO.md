@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 34 | 15 |
+| 3 | 0 | 1 | 0 | 32 | 17 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -40,8 +40,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
 | [F1-50](cartoes/F1-50.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-20 | Trocar uma thread por peça e por ensure por um pool de threads (loader e mock) |
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
-| [F1-53](cartoes/F1-53.md) | R3 | Sonnet 5.5, esforço alto | não | sim | Corrigir a limitação de banda do sw-netlab (fatias antes de enviar e banda do enlace inteiro) |
-| [F1-55](cartoes/F1-55.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Reduzir o custo do CI da extensão do Godot (item D do F1-54) |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -71,4 +69,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-48](cartoes/F1-48.md): Método do percentil e mínimo de amostras para o p99 da espera no Portão 1
 - [F1-49](cartoes/F1-49.md): CI compila a extensão do Godot (loader) e roda o portão sem janela
 - [F1-51](cartoes/F1-51.md): Vetor de bordas do chunker e esclarecimentos da spec 03 §11.1 e do README dos vetores
+- [F1-53](cartoes/F1-53.md): Corrigir a limitação de banda do sw-netlab (fatias antes de enviar e banda do enlace inteiro)
 - [F1-54](cartoes/F1-54.md): Reduzir o custo do CI sem tirar checks dos PRs
+- [F1-55](cartoes/F1-55.md): Reduzir o custo do CI da extensão do Godot (item D do F1-54)
