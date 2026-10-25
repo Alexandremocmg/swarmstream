@@ -151,8 +151,8 @@ void test_profiles()
     std::mt19937 random{20261025u};
     // Escala a saída do gerador diretamente: sequência igual entre bibliotecas padrão.
     const auto jitter = [&random]() {
-        return 0.9 + 0.2 * static_cast<double>(random()) /
-                         static_cast<double>((std::mt19937::max)());
+        return 0.9 +
+               0.2 * static_cast<double>(random()) / static_cast<double>((std::mt19937::max)());
     };
     for (const auto& profile : profiles) {
         SourceEstimator estimator;
@@ -172,8 +172,8 @@ void test_profiles()
             std::abs(*estimator.bandwidth_bytes_per_sec() / profile.bandwidth - 1.0);
         SW_CHECK(rtt_error < 0.20);
         SW_CHECK(bandwidth_error < 0.20);
-        std::printf("%s: erro RTT %.2f%%, banda %.2f%%: ok\n", profile.name,
-                    rtt_error * 100.0, bandwidth_error * 100.0);
+        std::printf("%s: erro RTT %.2f%%, banda %.2f%%: ok\n", profile.name, rtt_error * 100.0,
+                    bandwidth_error * 100.0);
     }
 }
 
