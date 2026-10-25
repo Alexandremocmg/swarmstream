@@ -45,6 +45,9 @@ struct CacheOwnerTestHook
     static uint64_t journal_syncs(const CacheOwner& owner) noexcept;
     // stop() não grava o checkpoint final: a próxima abertura tem de reler o journal.
     static void skip_checkpoint_on_stop(CacheOwner& owner) noexcept;
+    // F1-13: o próximo Get troca um byte da cópia lida do store antes de conferir o XXH3, como
+    // um defeito de disco (o arquivo não muda).
+    static void corrupt_next_read(CacheOwner& owner) noexcept;
 };
 
 } // namespace swarmstream

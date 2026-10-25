@@ -97,6 +97,16 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
     add_test(NAME sw-core-owner COMMAND sw-core-owner-tests)
     set_tests_properties(sw-core-owner PROPERTIES TIMEOUT 300)
+    # F1-13: leases com contagem de referência (estresse: peça com lease nunca é removida; o
+    # job TSan roda este teste, porque soltar o lease é um atômico fora da dona).
+    add_executable(sw-core-lease-tests tests/test_cache_leases.cpp)
+    target_link_libraries(sw-core-lease-tests PRIVATE sw-core)
+    target_include_directories(sw-core-lease-tests PRIVATE src)
+    if(SANITIZE_THREAD)
+        target_compile_definitions(sw-core-lease-tests PRIVATE SW_EXPECT_TSAN)
+    endif()
+    add_test(NAME sw-core-lease COMMAND sw-core-lease-tests)
+    set_tests_properties(sw-core-lease PROPERTIES TIMEOUT 300)
     # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
     # está ligado; sem isso, "nenhuma corrida" não provaria nada).
     if(SANITIZE_THREAD)
