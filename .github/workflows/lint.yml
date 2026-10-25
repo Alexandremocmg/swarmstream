@@ -58,6 +58,9 @@ jobs:
           python -m unittest discover -s sw-godot/tools -p test_compare_profiles.py -v
       - name: Gate runner tests (F1-20 timeout output)
         run: python -m unittest discover -s sw-godot/tools -p test_gate_f1_20.py -v
+      - name: Netlab shaping tests (F1-53)
+        run: python -m unittest test_shaping -v
+        working-directory: sw-netlab
       - name: Install clang analysis tools
         run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy cmake g++
       - name: C++ format

@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import argparse
 import math
+import socket
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,19 +32,66 @@ PROFILES = {
 }
 
 
-def wait_latency(milliseconds: float) -> None:
-    """Wait for the requested delay without inheriting coarse Windows timer ticks."""
-    deadline = time.perf_counter() + milliseconds / 1000
+def wait_until(deadline: float) -> None:
+    """Wait until a perf_counter deadline without spinning (spinning starves the GIL)."""
     while (remaining := deadline - time.perf_counter()) > 0.001:
         time.sleep(remaining - 0.0005)
 
 
-def make_handler(root: Path, profile: NetworkProfile) -> type[BaseHTTPRequestHandler]:
-    """Create an HTTP handler bounded to root and shaped to profile."""
+def wait_latency(milliseconds: float) -> None:
+    """Wait for the requested delay."""
+    wait_until(time.perf_counter() + milliseconds / 1000)
+
+
+SLICE_BYTES = 64 * 1024
+
+
+class LinkShaper:
+    """One shared link: all connections draw from the same serialized byte budget."""
+
+    def __init__(self, bandwidth_mbps: float) -> None:
+        self._seconds_per_byte = 8 / (bandwidth_mbps * 1_000_000)
+        self._lock = threading.Lock()
+        self._free_at = 0.0
+        self._active = 0
+
+    @contextmanager
+    def transfer(self) -> Iterator[None]:
+        """Mark a body as in flight; the first one on an idle link starts a fresh schedule."""
+        with self._lock:
+            if self._active == 0:
+                self._free_at = time.perf_counter()
+            self._active += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._active -= 1
+
+    def pace(self, nbytes: int) -> None:
+        """Block until nbytes have fully crossed the link; call this before writing them."""
+        with self._lock:
+            # A late wake-up (timer jitter) keeps its place in the schedule: restarting at "now"
+            # would lose bandwidth on every slice. Idle links are reset in transfer().
+            self._free_at += nbytes * self._seconds_per_byte
+            finish = self._free_at
+        wait_until(finish)
+
+
+def make_handler(
+    root: Path, profile: NetworkProfile, shaper: LinkShaper | None = None
+) -> type[BaseHTTPRequestHandler]:
+    """Create an HTTP handler bounded to root and shaped to profile (one shared link)."""
+    link = shaper if shaper is not None else LinkShaper(profile.bandwidth_mbps)
 
     class RangeHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "SwarmstreamNetlab/1.0"
+
+        def setup(self) -> None:
+            super().setup()
+            # Sliced writes must reach the wire at once; Nagle would batch and delay them.
+            self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
         def do_GET(self) -> None:
             path = self._resolve_path()
@@ -79,19 +130,15 @@ def make_handler(root: Path, profile: NetworkProfile) -> type[BaseHTTPRequestHan
             if self.headers.get("Connection", "").lower() == "close":
                 self.close_connection = True
             sent = 0
-            started = time.monotonic()
-            with path.open("rb") as source:
+            with link.transfer(), path.open("rb") as source:
                 source.seek(start)
                 while sent < length:
-                    chunk = source.read(min(1024 * 1024, length - sent))
+                    chunk = source.read(min(SLICE_BYTES, length - sent))
                     if not chunk:
                         break
+                    link.pace(len(chunk))
                     self.wfile.write(chunk)
                     sent += len(chunk)
-                    target_seconds = sent * 8 / (profile.bandwidth_mbps * 1_000_000)
-                    delay = target_seconds - (time.monotonic() - started)
-                    if delay > 0:
-                        time.sleep(delay)
 
         def do_HEAD(self) -> None:
             is_latency_probe = urlsplit(self.path).path == "/__netlab_latency_probe__"
