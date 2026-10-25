@@ -8,9 +8,22 @@
 
 name: extension
 
+# F1-55: só roda quando mudar a extensão, o núcleo ou este workflow. No PR, só Ubuntu (com o
+# portão); o Windows roda no push da main e uma vez por semana (schedule, que ignora `paths`).
 on:
   pull_request:
+    paths:
+      - "sw-godot/**"
+      - "sw-core/**"
+      - ".github/workflows/extension.yml"
   push:
+    branches: [main]
+    paths:
+      - "sw-godot/**"
+      - "sw-core/**"
+      - ".github/workflows/extension.yml"
+  schedule:
+    - cron: "17 5 * * 1"
 
 concurrency:
   group: extension-${{ github.ref }}
@@ -29,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     steps:
       - uses: actions/checkout@v4
 
