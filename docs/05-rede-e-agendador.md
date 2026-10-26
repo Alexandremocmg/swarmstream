@@ -15,6 +15,18 @@ Toda peça pedida carrega um **prazo** (quando o jogo vai precisar dela):
 
 O agendador reavalia a fila continuamente. Se uma peça pedida a um peer não vai chegar antes do prazo (pela taxa observada), ela é **pedida também à CDN** ("hedging"), e o que chegar primeiro vence. Ver [ADR-0003](adr/0003-agendador-por-prazo.md).
 
+### Agendador v1 (F1-28): uma fonte, sem hedging
+
+O primeiro agendador (`DeadlineScheduler`, regras em `sw-core/include/swarmstream/deadline_scheduler.hpp`) tem uma fonte só, então ainda não escolhe a fonte nem duplica pedidos. O que ele faz:
+
+- **Demanda** (leitura, `sw_ensure_async`) sai **sempre antes** de **prefetch** (dicas); dentro de cada tipo, o prazo mais cedo primeiro. Prefetch é palpite e não disputa vaga com o jogo, nem quando o prazo dele é mais cedo.
+- Limite de pedidos na fonte ao mesmo tempo, com **vagas reservadas para demanda**: uma falta nunca espera um prefetch já em andamento terminar.
+- Pedidos da mesma peça viram um só; o prazo é o menor entre eles e a peça vira demanda se algum pedido for demanda.
+- Prefetch cujo prazo passa antes de sair para a fonte é descartado (nunca vira urgente). Demanda atrasada continua: o prazo é prioridade, não limite.
+- Cancelamento por pedido; se era o último da peça, cancela na fonte.
+
+O estimador de banda e RTT (F1-29) entra quando houver mais de uma fonte (peers e CDN), para decidir o hedging.
+
 ## Implementação inicial: libtorrent-rasterbar
 
 | Necessidade | Recurso do libtorrent |
