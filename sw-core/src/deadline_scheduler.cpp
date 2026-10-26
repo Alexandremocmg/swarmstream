@@ -186,7 +186,7 @@ private:
         State state = State::Queued;
         RequestKind sent_as = RequestKind::Prefetch; // tipo quando saiu para a fonte
         bool forgotten = false;                      // fora de by_piece_
-        bool cancel_source = false;                  // ninguém espera a resposta: cancelar na fonte
+        bool cancel_source = false; // ninguém espera a resposta: cancelar na fonte
         RequestId source_id = kInvalidRequestId;
     };
 
