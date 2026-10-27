@@ -231,6 +231,34 @@ void test_corrupted_block_is_never_served()
     cleanup(dir);
 }
 
+void test_tamper_in_any_block_is_detected_and_refetched()
+{
+    std::cout << "[Test] F1-16: byte trocado em qualquer bloco (inicio, fim) e detectado e a peca "
+                 "e pedida de novo\n";
+    const Content c = content(1);
+    const uint64_t b0 = c.blocks[0], b1 = c.blocks[1];
+    const uint64_t offsets[] = {0, b0 - 1, b0, b0 + b1 - 1, b0 + b1, c.bytes.size() - 1};
+    for (const uint64_t off : offsets) {
+        const fs::path dir = fresh_dir("tamper");
+        {
+            auto o = open_owner(dir, 4);
+            SW_CHECK(put(*o, 1).has_value() && get_checked(*o, 1).has_value());
+            SW_CHECK(o->stop().has_value());
+        }
+        flip_byte(StoreFiles::file_path(dir, 0), off); // peca 1 esta no slot 0
+        {
+            auto o = open_owner(dir, 4);
+            auto r = get_checked(*o, 1);
+            SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::CorruptedChecksum);
+            r = get_checked(*o, 1);
+            SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::PieceNotFound);
+            SW_CHECK(put(*o, 1).has_value()); // pedida de novo
+            SW_CHECK(get_checked(*o, 1).has_value());
+        }
+        cleanup(dir);
+    }
+}
+
 void test_block_list_rules()
 {
     std::cout << "[Test] recuperação: lista de blocos errada é recusada (Put e Get)\n";
@@ -543,6 +571,7 @@ int main()
     swarmstream::test_persists_across_restart();
     swarmstream::test_many_checkpoints();
     swarmstream::test_corrupted_block_is_never_served();
+    swarmstream::test_tamper_in_any_block_is_detected_and_refetched();
     swarmstream::test_block_list_rules();
     swarmstream::test_missing_store_file_loses_pieces();
     swarmstream::test_smaller_ceiling();
