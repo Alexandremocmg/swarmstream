@@ -296,6 +296,31 @@ void test_flush_failure_is_counted()
     cleanup(dir);
 }
 
+// O resumo final tem de bater com o arquivo depois do encerramento, mesmo para eventos emitidos
+// logo antes do destrutor (sem flush): é o commit final da gravadora que os conta.
+void test_summary_matches_file()
+{
+    const fs::path dir = fresh_dir("summary");
+    const fs::path file = dir / "t.jsonl";
+    constexpr uint64_t kEmitted = 300;
+    uint64_t dropped = 0;
+    {
+        auto log = TelemetryLog::open(file, 1024);
+        SW_CHECK(log != nullptr);
+        for (uint64_t i = 0; i < kEmitted; ++i)
+            (void)log->emit_eviction(i, i);
+        dropped = log->dropped();
+    } // sem flush()
+    const auto lines = read_lines(file);
+    SW_CHECK(lines.size() >= 1);
+    const std::string& summary = lines.back();
+    SW_CHECK(has(summary, "\"event\":\"telemetry_summary\""));
+    SW_CHECK(num(summary, "written") == lines.size() - 1);
+    SW_CHECK(num(summary, "dropped") == dropped && num(summary, "write_errors") == 0);
+    SW_CHECK(num(summary, "written") + dropped == kEmitted);
+    cleanup(dir);
+}
+
 // "Não aloca": 80 mil emits dos 4 tipos, com e sem anel cheio, sem nenhuma alocação na thread
 // que emite. O controle positivo prova que o contador funciona.
 void test_emit_does_not_allocate()
@@ -306,9 +331,11 @@ void test_emit_does_not_allocate()
 
     g_allocs = 0;
     g_count_allocs = true;
-    auto* control = new int(1); // controle positivo
+    // Controle positivo: operator new direto com ponteiro volatile, que o otimizador não elide
+    // (um `new int` sem uso some em -O1 no GCC).
+    void* volatile control = ::operator new(sizeof(int));
     g_count_allocs = false;
-    delete control;
+    ::operator delete(control);
     SW_CHECK(g_allocs == 1);
 
     g_allocs = 0;
@@ -385,6 +412,7 @@ int main()
     test_drop_is_counted();
     test_multi_producer_stress();
     test_flush_failure_is_counted();
+    test_summary_matches_file();
     test_emit_does_not_allocate();
     test_cache_owner_eviction_events();
     std::cout << "telemetry: ok\n";
