@@ -9,6 +9,13 @@
 // de verdade. Os demais testes fixam as regras: conteúdo, CLOCK, lease nunca removido, abortar
 // devolve o buffer, duplicidade e um estresse com threads (o job TSan do CI roda este
 // executável).
+//
+// Limites da medição de alocações (revisão independente): o contador substitui só
+// `operator new(size_t)` (`new[]` e `nothrow` passam por ele na libstdc++). Alocação alinhada
+// (`align_val_t`) e `malloc` direto NÃO são contados; este código não usa nenhum dos dois, mas
+// quem trocar o alocador do pool (ex.: alinhar à página) precisa contar `align_val_t`. O GCC
+// elimina o par `new`/`delete` quando o resultado não é usado (`delete new int`), por isso o
+// controle e o mutante usam `::operator new` chamado direto com o ponteiro guardado.
 
 #include "check.hpp"
 #include "swarmstream/block_ram_cache.hpp"
@@ -174,20 +181,22 @@ void test_leased_block_never_evicted()
 
 void test_clock_second_chance()
 {
-    std::cout << "[Test] bloco: CLOCK dá segunda chance a quem foi lido\n";
+    std::cout << "[Test] bloco: CLOCK remove exatamente a vítima sem marca\n";
     BlockRamCache c(4 * kBuf, kBuf);
     for (uint32_t b = 0; b < 4; ++b)
-        SW_CHECK(insert(c, key(1, b)));
-    // Um insert força a primeira volta (apaga as marcas e remove um). Depois, ler 1,2,3 deixa
-    // só o bloco novo sem leitura: o próximo insert tem de tirar o novo, não os lidos.
-    SW_CHECK(insert(c, key(2, 0)));
-    for (uint32_t b = 0; b < 4; ++b)
-        (void)c.acquire(key(1, b)); // marca os que ainda existem
-    SW_CHECK(insert(c, key(2, 1)));
-    uint32_t survivors = 0;
-    for (uint32_t b = 0; b < 4; ++b)
-        survivors += c.acquire(key(1, b)).valid() ? 1 : 0;
-    SW_CHECK(survivors >= 2); // os lidos sobrevivem à chegada de um bloco só
+        SW_CHECK(insert(c, key(2, b)));
+    // O 5º bloco dá a primeira volta: apaga as marcas e remove o 0; a mão para no 1.
+    SW_CHECK(insert(c, key(2, 4)));
+    SW_CHECK(!c.acquire(key(2, 0)).valid());
+    // Marca o 1 e o 3 (sem usar acquire de verificação antes: ele também marcaria).
+    (void)c.acquire(key(2, 1));
+    (void)c.acquire(key(2, 3));
+    // Mão no 1: marcado (perde a marca), 2 sem marca => sai o 2, e só ele. Sem a segunda chance
+    // sairia o 1.
+    SW_CHECK(insert(c, key(2, 5)));
+    SW_CHECK(!c.acquire(key(2, 2)).valid());
+    SW_CHECK(c.acquire(key(2, 1)).valid() && c.acquire(key(2, 3)).valid());
+    SW_CHECK(c.acquire(key(2, 4)).valid() && c.acquire(key(2, 5)).valid());
 }
 
 void test_hot_path_does_not_allocate()
@@ -286,6 +295,123 @@ void test_stress_threads()
     SW_CHECK(s.evictions > 0);
 }
 
+void test_lease_held_long_under_churn()
+{
+    std::cout << "[Test] bloco: lease segurado por tempo: o conteudo nao muda sob troca intensa\n";
+    BlockRamCache c(8 * kBuf, kBuf);
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> bad{0};
+    std::atomic<uint64_t> held_checks{0};
+    auto worker = [&](uint32_t seed) {
+        uint32_t x = seed * 2654435761u + 1;
+        while (!stop.load(std::memory_order_relaxed)) {
+            x = x * 1664525u + 1013904223u;
+            const BlockKey k = key(x % 40, (x >> 8) % 3);
+            BlockLease l = c.acquire(k);
+            if (!l.valid()) {
+                auto f = c.reserve(k, 1000);
+                if (!f.has_value()) continue;
+                auto buf = f.value().buffer();
+                for (size_t i = 0; i < buf.size(); ++i)
+                    buf[i] = expected_byte(k, i);
+                l = f.value().commit();
+            }
+            // segura o lease enquanto os outros trocam; confere antes e depois
+            for (int rep = 0; rep < 3; ++rep) {
+                for (size_t i = 0; i < l.size(); ++i) {
+                    if (l.data()[i] != expected_byte(k, i)) bad.fetch_add(1);
+                }
+                std::this_thread::sleep_for(std::chrono::microseconds(50 + (x >> 20) % 200));
+            }
+            held_checks.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::vector<std::thread> ts;
+    for (uint32_t t = 0; t < 8; ++t)
+        ts.emplace_back(worker, t + 11);
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    stop.store(true);
+    for (auto& t : ts)
+        t.join();
+    const auto s = c.stats();
+    std::cout << "    " << held_checks.load() << " leases segurados, " << s.evictions
+              << " remocoes, " << s.hits << " acertos\n";
+    SW_CHECK(bad.load() == 0);
+    SW_CHECK(s.leased_blocks == 0 && held_checks.load() > 100);
+}
+
+void test_same_block_race()
+{
+    std::cout << "[Test] bloco: duas (ou mais) faltas do mesmo bloco: so uma preenche\n";
+    for (int round = 0; round < 300; ++round) {
+        BlockRamCache c(4 * kBuf, kBuf);
+        std::atomic<int> go{0};
+        std::atomic<int> winners{0};
+        std::atomic<int> others{0};
+        auto worker = [&] {
+            while (go.load() == 0) {
+            }
+            auto f = c.reserve(key(7, 7), 100);
+            if (f.has_value()) {
+                winners.fetch_add(1);
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+                BlockLease l = f.value().commit();
+                SW_CHECK(l.valid());
+            } else {
+                const auto e = f.error();
+                SW_CHECK(e == BlockCacheError::Filling || e == BlockCacheError::Exists);
+                others.fetch_add(1);
+            }
+        };
+        std::vector<std::thread> ts;
+        for (int t = 0; t < 6; ++t)
+            ts.emplace_back(worker);
+        go.store(1);
+        for (auto& t : ts)
+            t.join();
+        SW_CHECK(winners.load() == 1 && others.load() == 5);
+        const auto s = c.stats();
+        SW_CHECK(s.resident_blocks == 1 && s.leased_blocks == 0);
+    }
+}
+
+void test_tiny_pool_never_blocks()
+{
+    std::cout
+        << "[Test] bloco: pool de 2 buffers com 8 threads: OutOfBuffers, sem travar nem estourar\n";
+    BlockRamCache c(2 * kBuf, kBuf);
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> oob{0};
+    std::atomic<uint64_t> ok{0};
+    auto worker = [&](uint32_t seed) {
+        uint32_t x = seed * 2654435761u + 1;
+        while (!stop.load(std::memory_order_relaxed)) {
+            x = x * 1664525u + 1013904223u;
+            const BlockKey k = key(x % 30, 0);
+            auto f = c.reserve(k, 500);
+            if (!f.has_value()) {
+                if (f.error() == BlockCacheError::OutOfBuffers) oob.fetch_add(1);
+                continue;
+            }
+            BlockLease l = f.value().commit();
+            if (x & 1) {
+                std::this_thread::sleep_for(std::chrono::microseconds(100)); // preso um tempo
+            }
+            ok.fetch_add(1);
+        }
+    };
+    std::vector<std::thread> ts;
+    for (uint32_t t = 0; t < 8; ++t)
+        ts.emplace_back(worker, t + 3);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    stop.store(true);
+    for (auto& t : ts)
+        t.join(); // se algo bloqueasse, o join nao voltaria
+    const auto s = c.stats();
+    std::cout << "    " << ok.load() << " ok, " << oob.load() << " OutOfBuffers\n";
+    SW_CHECK(s.leased_blocks == 0 && s.resident_blocks <= 2 && oob.load() > 0);
+}
+
 } // namespace
 } // namespace swarmstream
 
@@ -299,6 +425,9 @@ int main()
     test_clock_second_chance();
     test_hot_path_does_not_allocate();
     test_stress_threads();
+    test_lease_held_long_under_churn();
+    test_same_block_race();
+    test_tiny_pool_never_blocks();
     std::cout << "OK\n";
     return 0;
 }
