@@ -31,6 +31,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # O port do libsodium do vcpkg compila com autotools no Linux e exige estes pacotes do sistema.
+      - name: Instala as ferramentas autotools do port do libsodium (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool
+
+      # O clone do vcpkg do runner pode não ter o commit do builtin-baseline do vcpkg.json (F1-04):
+      # busca só esse commit (raso); se falhar, busca normal.
+      - name: Busca o baseline do vcpkg no clone do runner
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            windows-*) VCPKG_DIR='C:/vcpkg' ;;
+            *)         VCPKG_DIR="$VCPKG_INSTALLATION_ROOT" ;;
+          esac
+          git -C "$VCPKG_DIR" fetch --depth=1 origin e456309491fd875487bf02b8a0dca76c1b1b00cc             || git -C "$VCPKG_DIR" fetch origin e456309491fd875487bf02b8a0dca76c1b1b00cc
+
       - name: Configure (vcpkg toolchain)
         shell: bash
         run: |
@@ -42,6 +58,38 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_FILE"
+
+      # Licença do libsodium (F1-04, NOTICE): só informa (não falha o job), mas SEMPRE diz o que houve:
+      # arquivo ausente (comparação NÃO realizada), erro do diff, divergência (com o diff) ou igualdade.
+      # "igual" só é dito quando o diff rodou e devolveu 0.
+      - name: Licença do libsodium instalada pelo vcpkg (Linux, informativo)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ref=third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt
+          found=""
+          for f in build/vcpkg_installed/*/share/libsodium/copyright; do
+            if [ -f "$f" ]; then found="$f"; break; fi
+          done
+          if [ -z "$found" ]; then
+            echo "::warning::copyright do vcpkg não encontrado em build/vcpkg_installed/*/share/libsodium/copyright; comparação NÃO realizada"
+            exit 0
+          fi
+          if [ ! -f "$ref" ]; then
+            echo "::warning::texto guardado $ref não encontrado; comparação NÃO realizada"
+            exit 0
+          fi
+          echo "arquivo do vcpkg: $found"
+          cat "$found"
+          rc=0
+          diff -u "$ref" "$found" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "Licença do vcpkg IGUAL ao texto guardado ($ref)"
+          elif [ "$rc" -eq 1 ]; then
+            echo "::warning::copyright do vcpkg DIFERE do texto guardado em $ref (diff acima); conferir se o texto do NOTICE continua valendo"
+          else
+            echo "::warning::diff falhou (código $rc); comparação NÃO realizada"
+          fi
 
       - name: Build
         run: cmake --build build --config Debug --parallel
@@ -100,6 +148,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # O port do libsodium do vcpkg compila com autotools no Linux e exige estes pacotes do sistema.
+      - name: Instala as ferramentas autotools do port do libsodium (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool
+
+      - name: Busca o baseline do vcpkg no clone do runner
+        shell: bash
+        run: |
+          git -C "$VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin e456309491fd875487bf02b8a0dca76c1b1b00cc             || git -C "$VCPKG_INSTALLATION_ROOT" fetch origin e456309491fd875487bf02b8a0dca76c1b1b00cc
+
       - name: Configure (Release, vcpkg toolchain)
         shell: bash
         run: |
@@ -127,6 +185,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # libsodium (F1-04, ADR-0012): estes jobs não usam o toolchain do vcpkg, então o sw-pack
+      # acha o libsodium do sistema pelo pkg-config (ver sw-pack/CMakeLists.txt).
+      - name: Instala libsodium (sem vcpkg)
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
+
       - name: Configure (ASan + UBSan)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE=ON
 
@@ -152,6 +215,11 @@ jobs:
       # ("unexpected memory mapping"). 28 é o valor que o TSan suporta.
       - name: Ajusta o ASLR para o TSan
         run: sudo sysctl vm.mmap_rnd_bits=28
+
+      # libsodium (F1-04, ADR-0012): estes jobs não usam o toolchain do vcpkg, então o sw-pack
+      # acha o libsodium do sistema pelo pkg-config (ver sw-pack/CMakeLists.txt).
+      - name: Instala libsodium (sem vcpkg)
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
 
       - name: Configure (TSan)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE_THREAD=ON

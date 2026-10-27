@@ -2,5 +2,8 @@
     "name": "swarmstream",
     "version-string": "0.1.0",
     "description": "Plataforma híbrida de distribuição e streaming de assets de jogos (monorepo)",
-    "dependencies": []
+    "dependencies": [
+        "libsodium"
+    ],
+    "builtin-baseline": "e456309491fd875487bf02b8a0dca76c1b1b00cc"
 }

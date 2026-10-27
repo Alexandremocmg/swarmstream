@@ -3,6 +3,7 @@
 
 #include "swarmstream/chunker.hpp"
 
+#include "swarmstream/crypto.hpp"
 #include "swarmstream/sha256.hpp"
 
 #include <algorithm>
@@ -50,6 +51,9 @@ std::optional<Chunker> Chunker::make(ChunkerParams params) noexcept
     if (params.min_size == 0 || params.min_size > params.avg_size ||
         params.avg_size > params.max_size || !std::has_single_bit(params.avg_size) ||
         params.avg_size < 8) {
+        return std::nullopt;
+    }
+    if (!crypto_ready()) { // a tabela gear usa SHA-256
         return std::nullopt;
     }
     const auto log2_avg = static_cast<unsigned>(std::bit_width(params.avg_size) - 1);
