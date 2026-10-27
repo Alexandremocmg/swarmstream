@@ -179,6 +179,15 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/crash_test.py
                 $<TARGET_FILE:sw-core-crash-tool> 120)
         set_tests_properties(sw-core-crash PROPERTIES TIMEOUT 900 LABELS crash)
+        # F1-31: 1.000 quedas (ponto exato + processo morto). Longo: fora do CI, só com
+        # -DSW_CRASH_LONG=ON (ctest -L crash-long).
+        option(SW_CRASH_LONG "Registra o teste de queda longo (1.000 quedas, F1-31)" OFF)
+        if(SW_CRASH_LONG)
+            add_test(NAME sw-core-crash-1000
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/crash_test.py
+                    $<TARGET_FILE:sw-core-crash-tool> --quedas 1000)
+            set_tests_properties(sw-core-crash-1000 PROPERTIES TIMEOUT 7200 LABELS crash-long)
+        endif()
     else()
         message(STATUS "Python3 nao encontrado: teste de queda sw-core-crash nao sera registrado")
     endif()
