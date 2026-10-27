@@ -2,11 +2,11 @@
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
 // Testes do manifesto v0 e das primitivas que ele usa (F1-04):
-//   SHA-512 e Ed25519 contra vetores conhecidos (NIST, RFC 8032) e contra vectors-v0.json;
+//   Ed25519 (libsodium) contra o RFC 8032, vectors-v0.json e 96 pares gerados pelo OpenSSL;
 //   leitura dos vetores de envelope (recusas e sondagem do min_reader);
 //   manifesto lido de volta idêntico; adulterado recusado (todo byte, toda regra do §8);
 //   payload malformado com assinatura válida nunca derruba o leitor.
-//   sw-pack-manifest-tests <vectors-v0.json>
+//   sw-pack-manifest-tests <vectors-v0.json> <ed25519-vectors.txt>
 
 #include "check.hpp"
 #include "json_min.hpp"
@@ -14,7 +14,6 @@
 #include "swarmstream/ed25519.hpp"
 #include "swarmstream/manifest.hpp"
 #include "swarmstream/sha256.hpp"
-#include "swarmstream/sha512.hpp"
 
 #include <algorithm>
 #include <array>
@@ -74,11 +73,6 @@ std::string hex_of(const std::array<std::uint8_t, N>& a)
     return sp::to_hex(a);
 }
 
-std::span<const std::byte> as_span(std::string_view text)
-{
-    return std::as_bytes(std::span<const char>(text.data(), text.size()));
-}
-
 // A chave de teste (semente 00..1f) publicada em sw-pack/testdata (ADR-0012, item 4). Fica só
 // nos testes: a biblioteca não a conhece, e nenhum build de release pode confiar nela.
 sp::Ed25519Seed test_seed()
@@ -97,6 +91,21 @@ sp::Ed25519Seed other_seed()
     return seed;
 }
 
+// O libsodium iniciou e derivou/assinou; senão o teste nem faz sentido.
+sp::Ed25519PublicKey public_key_of(const sp::Ed25519Seed& seed)
+{
+    const auto key = sp::ed25519_public_key(seed);
+    SW_CHECK(key.has_value());
+    return *key;
+}
+
+sp::Ed25519Signature sign_of(const sp::Ed25519Seed& seed, sp::MessageParts message)
+{
+    const auto signature = sp::ed25519_sign(seed, message);
+    SW_CHECK(signature.has_value());
+    return *signature;
+}
+
 sp::ReadOptions trusting(const std::array<sp::Ed25519PublicKey, 1>& keys)
 {
     sp::ReadOptions options;
@@ -111,73 +120,7 @@ sp::ManifestStatus open_bytes(const Bytes& bytes, const sp::ReadOptions& options
     return sp::ManifestView::open(bytes, options, out != nullptr ? *out : local);
 }
 
-// ---------------------------------------------------------------- SHA-512 e Ed25519
-
-void test_sha512()
-{
-    const auto digest_hex = [](std::span<const std::byte> data) {
-        return hex_of(sp::sha512(data));
-    };
-    SW_CHECK(digest_hex(as_span("abc")) ==
-             "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
-             "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
-    // FIPS 180-4, mensagem de 896 bits (dois blocos).
-    SW_CHECK(digest_hex(as_span("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn"
-                                "hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")) ==
-             "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018"
-             "501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909");
-
-    // Fronteiras do preenchimento (111/112/113, 127/128/129...), calculadas com hashlib do
-    // Python sobre byte[i] = (i*7 + 3) mod 256.
-    struct Case
-    {
-        std::size_t n;
-        const char* hex;
-    };
-    const Case cases[] = {
-        {0, "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
-            "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"},
-        {111, "68cffa6d0d76f309c9ce0d35280939f8e25990c43b7b086ccdf709be35b07d4d"
-              "dba599541ff2b1c19d34ea49aeafb9659adb7ac3c0b078bb30a22d57fc6687ef"},
-        {112, "d0865c524d1dddf7c23b799c413f5adcd7caefd3f66a9b49750ec81066012c25"
-              "a8bcf94ddea6dc525691673097ca40e0101e897fc97218cfdb0704084e2bef4b"},
-        {113, "606314353bd419f9f7720e8297f2af8a9ed5f0bb0bed29b716bf18e34577623a"
-              "e7effa46f496bd4282134e7e895284a4760a910d2ad8ec11e9dd75863058cd9c"},
-        {127, "e0b6a20f1c0c88970a9340152cd5a1c1ecf3d3b8de55102741879438079473540"
-              "133b812706e5dbec322c8c9523b6fc8c6d16ee626e87ad5fe3d2916afedc369"},
-        {128, "99b16f17aa0b969a5b8f08f367719d516e330ccd2660b6f0688ec031dbc783de"
-              "50a1cd185a2568dba75070a2403d17d4741d163578515dfd2ff756ddfe4d47b1"},
-        {129, "a1556e29185778aa5991e34b8884c840d589f0fbb4b8ed590e51e9ac4eb03a00"
-              "8125000db2671f8fe7f485b59a77b518670078ecb41a54b4cd02a7f1d2ca4c6d"},
-        {255, "c2e3bb67012f9eb526202efa59997933f7d3e75e7ded738818bc27d94977f457"
-              "3afddb1b2793745701e62affa3b7a1c8262c992a321f488a6b1942a4795bab98"},
-        {256, "e49c208e41556e859d1a52d14784a061c2d5ae2c8690a5360e9f9344f60861c1"
-              "362a9ec05a9f08a4167b3da41bdd122a387413dd06976470e4beff5053f2ac71"},
-    };
-    for (const Case& c : cases) {
-        Bytes data(c.n);
-        for (std::size_t i = 0; i < c.n; ++i) {
-            data[i] = static_cast<std::byte>((i * 7 + 3) & 255);
-        }
-        SW_CHECK(digest_hex(data) == c.hex);
-        // Mesmo resultado entregando o dado em pedaços de 1 byte.
-        sp::Sha512 hasher;
-        for (std::size_t i = 0; i < c.n; ++i) {
-            hasher.update(std::span<const std::byte>(&data[i], 1));
-        }
-        SW_CHECK(hex_of(hasher.finish()) == c.hex);
-    }
-
-    // Um milhão de 'a' (FIPS 180-4).
-    sp::Sha512 hasher;
-    const Bytes chunk(1000, static_cast<std::byte>('a'));
-    for (int i = 0; i < 1000; ++i) {
-        hasher.update(chunk);
-    }
-    SW_CHECK(hex_of(hasher.finish()) ==
-             "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973eb"
-             "de0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b");
-}
+// ---------------------------------------------------------------- Ed25519 (libsodium)
 
 void test_ed25519_rfc8032()
 {
@@ -185,9 +128,9 @@ void test_ed25519_rfc8032()
     {
         const auto seed =
             array_from_hex<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        const auto pk = sp::ed25519_public_key(seed);
+        const auto pk = public_key_of(seed);
         SW_CHECK(hex_of(pk) == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
-        const auto sig = sp::ed25519_sign(seed, {});
+        const auto sig = sign_of(seed, {});
         SW_CHECK(hex_of(sig) ==
                  "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bac"
                  "c61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b");
@@ -196,27 +139,53 @@ void test_ed25519_rfc8032()
     {
         const auto seed =
             array_from_hex<32>("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
-        const auto pk = sp::ed25519_public_key(seed);
+        const auto pk = public_key_of(seed);
         SW_CHECK(hex_of(pk) == "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
         const std::byte msg[1] = {std::byte{0x72}};
-        const auto sig = sp::ed25519_sign(seed, {std::span<const std::byte>(msg)});
+        const auto sig = sign_of(seed, {std::span<const std::byte>(msg)});
         SW_CHECK(hex_of(sig) ==
                  "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e"
                  "458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00");
         SW_CHECK(sp::ed25519_verify(pk, sig, {std::span<const std::byte>(msg)}));
         // A mesma mensagem em duas partes dá a mesma assinatura (sem copiar o payload).
         const std::byte empty[1] = {};
-        SW_CHECK(sp::ed25519_sign(seed, {std::span<const std::byte>(empty, 0),
-                                         std::span<const std::byte>(msg)}) == sig);
+        SW_CHECK(sign_of(seed, {std::span<const std::byte>(empty, 0),
+                                std::span<const std::byte>(msg)}) == sig);
     }
+}
+
+// Pares (semente, chave, mensagem, assinatura) gerados pelo OpenSSL
+// (testdata/gen_ed25519_vectors.py): o libsodium tem de reproduzir chave pública e assinatura byte
+// a byte e aceitar a assinatura.
+void test_ed25519_openssl_vectors(const char* path)
+{
+    std::ifstream file(path);
+    SW_CHECK(file.good());
+    std::string seed_hex, key_hex, message_hex, signature_hex;
+    std::size_t cases = 0;
+    while (file >> seed_hex >> key_hex >> message_hex >> signature_hex) {
+        const auto seed = array_from_hex<32>(seed_hex);
+        const Bytes message = message_hex == "-" ? Bytes{} : bytes_from_hex(message_hex);
+        const auto key = array_from_hex<32>(key_hex);
+        const auto signature = array_from_hex<64>(signature_hex);
+        SW_CHECK(public_key_of(seed) == key);
+        SW_CHECK(sign_of(seed, {message}) == signature);
+        SW_CHECK(sp::ed25519_verify(key, signature, {message}));
+        // Em duas partes (como o envelope) dá o mesmo.
+        const std::span<const std::byte> all(message);
+        SW_CHECK(sign_of(seed, {all.first(message.size() / 2), all.subspan(message.size() / 2)}) ==
+                 signature);
+        ++cases;
+    }
+    SW_CHECK(cases == 96);
 }
 
 void test_ed25519_strict_verification()
 {
     const sp::Ed25519Seed seed = test_seed();
-    const auto pk = sp::ed25519_public_key(seed);
+    const auto pk = public_key_of(seed);
     const Bytes msg = bytes_from_hex("00112233445566778899aabbccddeeff");
-    const auto sig = sp::ed25519_sign(seed, {msg});
+    const auto sig = sign_of(seed, {msg});
     SW_CHECK(sp::ed25519_verify(pk, sig, {msg}));
 
     // Qualquer bit da assinatura, da chave ou da mensagem muda o resultado.
@@ -258,7 +227,7 @@ void test_envelope_vectors(const Json& envelope)
     const auto seed = array_from_hex<32>(envelope.at("test_key_seed_hex").as_string());
     SW_CHECK(seed == test_seed());
     const auto pk = array_from_hex<32>(envelope.at("test_public_key_hex").as_string());
-    SW_CHECK(sp::ed25519_public_key(seed) == pk);
+    SW_CHECK(public_key_of(seed) == pk);
     SW_CHECK(hex_of(sp::key_id_of(pk)) == envelope.at("key_id_hex").as_string());
     const std::array<sp::Ed25519PublicKey, 1> trusted = {pk};
     const sp::ReadOptions options = trusting(trusted);
@@ -268,7 +237,7 @@ void test_envelope_vectors(const Json& envelope)
     const Bytes manifest = bytes_from_hex(envelope.at("manifest_hex").as_string());
     const Bytes msg = bytes_from_hex(envelope.at("msg_hex").as_string());
     const auto signature = array_from_hex<64>(envelope.at("signature_hex").as_string());
-    SW_CHECK(sp::ed25519_sign(seed, {msg}) == signature);
+    SW_CHECK(sign_of(seed, {msg}) == signature);
     SW_CHECK(sp::ed25519_verify(pk, signature, {msg}));
     SW_CHECK(hex_of(sp::sha256(manifest)) == envelope.at("manifest_id_hex").as_string());
     // O payload desse vetor é opaco (não é FlatBuffers): a assinatura passa e o leitor o
@@ -374,7 +343,7 @@ void check_view_matches(const sp::ManifestModel& model, const sp::ManifestView& 
 void check_round_trip(const sp::ManifestModel& model)
 {
     const sp::Ed25519Seed seed = test_seed();
-    const std::array<sp::Ed25519PublicKey, 1> trusted = {sp::ed25519_public_key(seed)};
+    const std::array<sp::Ed25519PublicKey, 1> trusted = {public_key_of(seed)};
 
     const sp::BuildResult built = sp::build_manifest(model, seed);
     if (!built.status.ok()) {
@@ -450,7 +419,7 @@ void test_round_trips()
 void test_tamper_every_byte()
 {
     const sp::Ed25519Seed seed = test_seed();
-    const std::array<sp::Ed25519PublicKey, 1> trusted = {sp::ed25519_public_key(seed)};
+    const std::array<sp::Ed25519PublicKey, 1> trusted = {public_key_of(seed)};
     const sp::ReadOptions options = trusting(trusted);
     const sp::ManifestModel model = st::make_synthetic_model(3, 2, 3);
     const Bytes good = sp::build_manifest(model, seed).bytes;
@@ -498,8 +467,7 @@ void test_tamper_every_byte()
     {
         const Bytes foreign = sp::build_manifest(model, other_seed()).bytes;
         SW_CHECK(open_bytes(foreign, options).code == sp::ManifestError::SignatureInvalid);
-        const std::array<sp::Ed25519PublicKey, 1> foreign_key = {
-            sp::ed25519_public_key(other_seed())};
+        const std::array<sp::Ed25519PublicKey, 1> foreign_key = {public_key_of(other_seed())};
         SW_CHECK(open_bytes(foreign, trusting(foreign_key)).ok());
         // Sem nenhuma chave confiável, nada passa.
         SW_CHECK(open_bytes(good, sp::ReadOptions{}).code == sp::ManifestError::SignatureInvalid);
@@ -517,7 +485,7 @@ struct Mutation
 void test_semantic_rejections()
 {
     const sp::Ed25519Seed seed = test_seed();
-    const std::array<sp::Ed25519PublicKey, 1> trusted = {sp::ed25519_public_key(seed)};
+    const std::array<sp::Ed25519PublicKey, 1> trusted = {public_key_of(seed)};
     const sp::ReadOptions options = trusting(trusted);
     sp::ManifestModel base = st::make_synthetic_model(60, 4, 11);
     SW_CHECK(sp::build_manifest(base, seed).status.ok());
@@ -685,7 +653,7 @@ void test_semantic_rejections()
 void test_signed_garbage_payloads()
 {
     const sp::Ed25519Seed seed = test_seed();
-    const std::array<sp::Ed25519PublicKey, 1> trusted = {sp::ed25519_public_key(seed)};
+    const std::array<sp::Ed25519PublicKey, 1> trusted = {public_key_of(seed)};
     const sp::ReadOptions options = trusting(trusted);
     const Bytes good = sp::build_manifest(st::make_synthetic_model(12, 3, 2), seed).bytes;
     const auto* base = reinterpret_cast<const std::uint8_t*>(good.data()) + sp::kEnvelopeSize;
@@ -750,9 +718,8 @@ int main(int argc, char** argv)
         std::printf("%s (%.1f s)\n", what, std::chrono::duration<double>(now - t0).count());
         t0 = now;
     };
-    test_sha512();
-    lap("sha512 ok");
     test_ed25519_rfc8032();
+    test_ed25519_openssl_vectors(argv[2]);
     test_ed25519_strict_verification();
     lap("ed25519 ok");
     test_envelope_vectors(document.at("envelope"));

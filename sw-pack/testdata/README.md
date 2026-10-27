@@ -20,6 +20,7 @@
 python verify_vectors.py            # confere o JSON com implementação independente (~2 min; Python 3.14+ ou `pip install zstandard`)
 python verify_vectors.py --skip-zstd  # sem decodificador Zstd (Zstd fica só com o cabeçalho conferido)
 python test_properties.py -v        # propriedades e comparação entre as duas implementações (~30 s)
+python -I gen_ed25519_vectors.py > ed25519-vectors.txt  # 96 pares (semente, chave, mensagem, assinatura) do OpenSSL para o teste do libsodium (F1-04)
 python -I verify_manifest_independent.py m.bin  # manifesto gerado pelo sw-pack, conferido com cryptography e o runtime oficial do FlatBuffers (F1-04)
 python gen_vectors.py               # regenera o JSON (Python 3.14+ ou `zstandard`)
 ```

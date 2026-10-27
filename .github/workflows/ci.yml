@@ -127,6 +127,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # libsodium (F1-04, ADR-0012): estes jobs não usam o toolchain do vcpkg, então o sw-pack
+      # acha o libsodium do sistema pelo pkg-config (ver sw-pack/CMakeLists.txt).
+      - name: Instala libsodium (sem vcpkg)
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
+
       - name: Configure (ASan + UBSan)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE=ON
 
@@ -152,6 +157,11 @@ jobs:
       # ("unexpected memory mapping"). 28 é o valor que o TSan suporta.
       - name: Ajusta o ASLR para o TSan
         run: sudo sysctl vm.mmap_rnd_bits=28
+
+      # libsodium (F1-04, ADR-0012): estes jobs não usam o toolchain do vcpkg, então o sw-pack
+      # acha o libsodium do sistema pelo pkg-config (ver sw-pack/CMakeLists.txt).
+      - name: Instala libsodium (sem vcpkg)
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
 
       - name: Configure (TSan)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE_THREAD=ON

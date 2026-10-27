@@ -695,8 +695,11 @@ std::vector<std::uint8_t> encode_payload(const ManifestModel& m)
 std::vector<std::byte> envelope_and_sign(std::span<const std::uint8_t> payload,
                                          const Ed25519Seed& seed)
 {
-    const Ed25519PublicKey public_key = ed25519_public_key(seed);
-    const KeyId key_id = key_id_of(public_key);
+    const std::optional<Ed25519PublicKey> public_key = ed25519_public_key(seed);
+    if (!public_key) {
+        return {};
+    }
+    const KeyId key_id = key_id_of(*public_key);
 
     std::vector<std::uint8_t> head;
     head.reserve(kEnvelopeSize);
@@ -715,9 +718,12 @@ std::vector<std::byte> envelope_and_sign(std::span<const std::uint8_t> payload,
     const auto as_span = [](const void* p, std::size_t n) {
         return std::span<const std::byte>(static_cast<const std::byte*>(p), n);
     };
-    const Ed25519Signature signature = ed25519_sign(
+    const std::optional<Ed25519Signature> signature = ed25519_sign(
         seed, {as_span(kSignaturePrefix.data(), kSignaturePrefix.size()),
                as_span(head.data(), kSignedHeaderSize), as_span(payload.data(), payload.size())});
+    if (!signature) {
+        return {};
+    }
 
     std::vector<std::byte> out;
     out.reserve(kEnvelopeSize + payload.size());
@@ -726,7 +732,7 @@ std::vector<std::byte> envelope_and_sign(std::span<const std::uint8_t> payload,
                    reinterpret_cast<const std::byte*>(p) + n);
     };
     append(head.data(), head.size());
-    append(signature.data(), signature.size());
+    append(signature->data(), signature->size());
     append(payload.data(), payload.size());
     return out;
 }
@@ -1385,10 +1391,17 @@ BuildResult build_manifest(const ManifestModel& model, const Ed25519Seed& signin
     BuildResult result;
     std::vector<std::byte> bytes = encode_manifest(model, signing_seed);
     if (bytes.empty()) {
-        result.status = fail(ManifestError::Invalid, "payload passa do limite de 256 MiB");
+        result.status = fail(ManifestError::Invalid,
+                             "payload passa de 256 MiB ou a assinatura falhou (libsodium)");
         return result;
     }
-    const std::array<Ed25519PublicKey, 1> trusted = {ed25519_public_key(signing_seed)};
+    const std::optional<Ed25519PublicKey> public_key = ed25519_public_key(signing_seed);
+    if (!public_key) {
+        result.status =
+            fail(ManifestError::SignatureInvalid, "libsodium nao derivou a chave publica");
+        return result;
+    }
+    const std::array<Ed25519PublicKey, 1> trusted = {*public_key};
     ManifestView view;
     ReadOptions options;
     options.trusted_keys = trusted;

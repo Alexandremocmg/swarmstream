@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Alexandre Aparecido Rodrigues Peres
 #
-# sw-pack: ferramenta de build do conteúdo (docs/03). Hoje: chunker FastCDC (F1-01), SHA-256/512,
-# Ed25519 e o manifesto v0 assinado (F1-04).
+# sw-pack: ferramenta de build do conteúdo (docs/03). Hoje: chunker FastCDC (F1-01), SHA-256,
+# Ed25519 (libsodium) e o manifesto v0 assinado (F1-04).
 
 cmake_minimum_required(VERSION 3.20)
 project(sw-pack LANGUAGES CXX)
@@ -11,13 +11,34 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# libsodium (ADR-0012): Ed25519 do manifesto. Com o toolchain do vcpkg (jobs de build/teste do CI e
+# o desenvolvimento normal) vem como `unofficial-sodium`; nos jobs sem vcpkg (sanitizers, TSan, lint)
+# vem do pacote do sistema (`libsodium-dev`) pelo pkg-config. Sem nenhum dos dois, falha aqui.
+find_package(unofficial-sodium CONFIG QUIET)
+if(TARGET unofficial-sodium::sodium)
+    set(SW_SODIUM_TARGET unofficial-sodium::sodium)
+else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SW_SODIUM IMPORTED_TARGET libsodium)
+    endif()
+    if(TARGET PkgConfig::SW_SODIUM)
+        set(SW_SODIUM_TARGET PkgConfig::SW_SODIUM)
+    else()
+        message(FATAL_ERROR
+            "libsodium nao encontrado. Use o toolchain do vcpkg "
+            "(-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake, o vcpkg.json declara "
+            "libsodium) ou instale libsodium-dev e pkg-config.")
+    endif()
+endif()
+
 add_library(sw-pack STATIC
     src/chunker.cpp
     src/sha256.cpp
-    src/sha512.cpp
     src/ed25519.cpp
     src/manifest.cpp
 )
+target_link_libraries(sw-pack PRIVATE ${SW_SODIUM_TARGET})
 target_include_directories(sw-pack PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -55,7 +76,8 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     set(SW_PACK_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/testdata/vectors-v0.json)
     add_test(NAME sw-pack-chunker COMMAND sw-pack-tests ${SW_PACK_VECTORS})
     set_tests_properties(sw-pack-chunker PROPERTIES TIMEOUT 300)
-    add_test(NAME sw-pack-manifest COMMAND sw-pack-manifest-tests ${SW_PACK_VECTORS})
+    add_test(NAME sw-pack-manifest COMMAND sw-pack-manifest-tests ${SW_PACK_VECTORS}
+             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/ed25519-vectors.txt)
     set_tests_properties(sw-pack-manifest PROPERTIES TIMEOUT 600)
 
     # Medição do manifesto (F1-04): tamanho do arquivo, tempo de abertura e memória residente.

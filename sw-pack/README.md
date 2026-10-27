@@ -4,8 +4,8 @@ Ferramenta de empacotamento de conteúdo do Swarmstream — trilha **T1
 (Conteúdo/build)**. Divide o build do jogo em blocos comprimidos, identificados
 por hash, e gera o manifesto assinado que a publisher distribui.
 
-> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), SHA-256/SHA-512,
-> Ed25519 e o manifesto v0 assinado (F1-04); o resto abaixo ainda não tem código.
+> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), SHA-256, Ed25519
+> (libsodium) e o manifesto v0 assinado (F1-04); o resto abaixo ainda não tem código.
 
 ## O que já existe
 
@@ -21,9 +21,12 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   (cabeçalho → chave → **assinatura** → sondagem do `min_reader` → verificador e validações do §8),
   sem cópia das tabelas colunares. O FlatBuffers é escrito e verificado à mão (esquema fixo e pequeno),
   então não há dependência nova; o layout é o do FlatBuffers e foi lido com o runtime oficial (ver abaixo).
-- `include/swarmstream/ed25519.hpp`, `sha512.hpp`: Ed25519 (RFC 8032, verificação estrita) e SHA-512,
-  sem dependências. A chave de teste (semente `00..1f`) fica só em `testdata/` e nos testes; nenhum build
-  de release pode confiá-la (ADR-0012, item 4).
+- `include/swarmstream/ed25519.hpp`, `src/ed25519.cpp`: interface fina (3 funções) sobre o **libsodium**
+  (`crypto_sign_seed_keypair`, `crypto_sign_detached`, `crypto_sign_verify_detached`, a verificação estrita).
+  `sodium_init()` é conferido: falha vira "assinatura inválida" ou `nullopt`, nunca aviso. O libsodium assina
+  mensagem contígua, então com várias partes a interface monta uma cópia temporária da mensagem (o payload).
+  A chave de teste (semente `00..1f`) fica só em `testdata/` e nos testes; nenhum build de release pode
+  confiá-la (ADR-0012, item 4).
 - `tools/sw_manifest_bench.cpp`: mede tamanho do arquivo, custo de abrir e memória residente
   (`sw-manifest-bench generate --blocks N --out m.bin`, depois `sw-manifest-bench open m.bin`).
   Números e extrapolação para 150 GB em [docs/medicoes/manifesto-v0.md](../docs/medicoes/manifesto-v0.md).
@@ -49,8 +52,11 @@ Só conversa com o resto do sistema pelos contratos de
 
 ## Compilação
 
+Precisa do **libsodium** (ADR-0012): com o toolchain do vcpkg (o `vcpkg.json` o declara) ele vem sozinho;
+sem vcpkg, instale `libsodium-dev` e `pkg-config` (é o que os jobs de sanitizer e de lint fazem).
+
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake   # ou sem a opção, com libsodium-dev
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```

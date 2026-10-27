@@ -187,7 +187,12 @@ int open_file(int argc, char** argv)
     }
     const Memory after_read = process_memory();
 
-    const std::array<sp::Ed25519PublicKey, 1> trusted = {sp::ed25519_public_key(test_seed())};
+    const auto public_key = sp::ed25519_public_key(test_seed());
+    if (!public_key) {
+        std::fprintf(stderr, "libsodium nao iniciou\n");
+        return 1;
+    }
+    const std::array<sp::Ed25519PublicKey, 1> trusted = {*public_key};
     sp::ReadOptions options;
     options.trusted_keys = trusted;
 
