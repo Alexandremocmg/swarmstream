@@ -473,6 +473,108 @@ void test_journal_sync_failure_on_free()
     cleanup(dir);
 }
 
+// F1-32: disco cheio e erro de escrita. O critério: erro tratado, nada indexado com falha. As
+// falhas são injetadas no meio da escrita (metade dos bytes gravada e depois o erro), que é o
+// que um ENOSPC ou EIO de verdade deixa para trás.
+void test_store_write_disk_full()
+{
+    std::cout << "[Test] F1-32: disco cheio no meio da escrita dos dados; nada indexado\n";
+    const fs::path dir = fresh_dir("full_data");
+    {
+        auto o = open_owner(dir, 2);
+        SW_CHECK(put(*o, 1).has_value());
+        CacheOwnerTestHook::fail_next_store_write(*o, CacheErrorCode::DiskFull);
+        auto r = put(*o, 2);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::DiskFull);
+        SW_CHECK(!o->broken() && o->pieces() == 1);
+        auto g = get_checked(*o, 2);
+        SW_CHECK(!g.has_value() && g.error() == CacheErrorCode::PieceNotFound);
+        SW_CHECK(present(*o, 1)); // leitura segue de pé
+        // Liberou espaço: a mesma peça entra, no slot que a falha não gastou (2 slots, 2 peças).
+        SW_CHECK(put(*o, 2).has_value() && o->pieces() == 2 && present(*o, 2));
+        SW_CHECK(o->stop().has_value());
+    }
+    {
+        auto o = open_owner(dir, 2);
+        SW_CHECK(present(*o, 1) && present(*o, 2));
+    }
+    cleanup(dir);
+}
+
+void test_store_write_io_error()
+{
+    std::cout << "[Test] F1-32: erro de escrita dos dados quebra o cache; nada indexado\n";
+    const fs::path dir = fresh_dir("eio_data");
+    {
+        auto o = open_owner(dir, 4);
+        SW_CHECK(put(*o, 1).has_value());
+        CacheOwnerTestHook::fail_next_store_write(*o, CacheErrorCode::IoError);
+        auto r = put(*o, 2);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::IoError);
+        SW_CHECK(o->broken() && o->pieces() == 1);
+        SW_CHECK(o->stop().has_value());
+    }
+    {
+        auto o = open_owner(dir, 4);
+        SW_CHECK(!o->broken() && present(*o, 1) && !present(*o, 2));
+        SW_CHECK(put(*o, 2).has_value() && present(*o, 2));
+    }
+    cleanup(dir);
+}
+
+void test_journal_append_failure()
+{
+    std::cout << "[Test] F1-32: disco cheio ou erro ao gravar o journal; registro rasgado\n";
+    for (const CacheErrorCode code : {CacheErrorCode::DiskFull, CacheErrorCode::IoError}) {
+        const fs::path dir = fresh_dir("append");
+        {
+            auto o = open_owner(dir, 4);
+            SW_CHECK(put(*o, 1).has_value());
+            CacheOwnerTestHook::fail_next_journal_append(*o, code);
+            auto r = put(*o, 2); // dados já gravados e sincronizados, mas sem registro
+            SW_CHECK(!r.has_value() && r.error() == code);
+            SW_CHECK(o->broken() && o->pieces() == 1);
+            auto g = get_checked(*o, 2);
+            SW_CHECK(!g.has_value() && g.error() == CacheErrorCode::IoError);
+            SW_CHECK(o->stop().has_value());
+        }
+        {
+            // A recuperação corta o registro rasgado: 2 não existe, e o journal volta a aceitar.
+            auto o = open_owner(dir, 4);
+            SW_CHECK(!o->broken() && present(*o, 1) && !present(*o, 2));
+            SW_CHECK(put(*o, 3).has_value() && o->pieces() == 2);
+            SW_CHECK(o->stop().has_value());
+        }
+        {
+            auto o = open_owner(dir, 4);
+            SW_CHECK(present(*o, 1) && !present(*o, 2) && present(*o, 3));
+        }
+        cleanup(dir);
+    }
+}
+
+void test_journal_append_failure_on_remove()
+{
+    std::cout << "[Test] F1-32: falha ao gravar o FREE_SLOT; o slot não é liberado\n";
+    const fs::path dir = fresh_dir("append_free");
+    {
+        auto o = open_owner(dir, 2);
+        SW_CHECK(put(*o, 1).has_value() && put(*o, 2).has_value());
+        CacheOwnerTestHook::fail_next_journal_append(*o, CacheErrorCode::DiskFull);
+        auto r = remove(*o, 1);
+        SW_CHECK(!r.has_value() && r.error() == CacheErrorCode::IoError);
+        SW_CHECK(o->broken() && o->pieces() == 2);
+        auto p = put(*o, 3); // sem slot reaproveitado
+        SW_CHECK(!p.has_value());
+        SW_CHECK(o->stop().has_value());
+    }
+    {
+        auto o = open_owner(dir, 2);
+        SW_CHECK(!o->broken() && present(*o, 1) && present(*o, 2)); // FREE nunca chegou inteiro
+    }
+    cleanup(dir);
+}
+
 // Os contadores de sync vistos de dentro do gancho de queda, na thread dona.
 struct SyncProbe
 {
@@ -579,6 +681,10 @@ int main()
     swarmstream::test_damaged_metadata_never_serves_bad_data();
     swarmstream::test_journal_sync_failure_on_commit();
     swarmstream::test_journal_sync_failure_on_free();
+    swarmstream::test_store_write_disk_full();
+    swarmstream::test_store_write_io_error();
+    swarmstream::test_journal_append_failure();
+    swarmstream::test_journal_append_failure_on_remove();
     swarmstream::test_barrier_order_counters();
     swarmstream::test_zero_ceiling_is_refused();
     std::cout << "-> Recovery tests passed.\n";

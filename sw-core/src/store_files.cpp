@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace swarmstream {
@@ -40,10 +41,11 @@ struct StoreFiles::Impl
     std::vector<File> files;
     uint32_t created = 0;
     bool closed = false;
-    bool broken = false;            // um sync falhou: inutilizável até reabrir (ver o header)
-    bool fail_next_sync = false;    // StoreFilesTestHook
-    bool skip_space_check = false;  // StoreFilesTestHook
-    bool native_preallocate = true; // StoreFilesTestHook
+    bool broken = false;           // um sync falhou: inutilizável até reabrir (ver o header)
+    bool fail_next_sync = false;   // StoreFilesTestHook
+    bool skip_space_check = false; // StoreFilesTestHook
+    CacheErrorCode fail_write = CacheErrorCode::Success; // StoreFilesTestHook
+    bool native_preallocate = true;                      // StoreFilesTestHook
     uint32_t directory_syncs = 0;
     uint64_t file_syncs = 0; // syncs de arquivo que deram certo (StoreFilesTestHook)
 
@@ -162,6 +164,14 @@ Result<void, CacheErrorCode> StoreFiles::write(SlotId slot, size_t offset,
     if (auto r = ensure_slot(slot); !r) return r;
     const uint32_t index = slot / impl_->layout.slots_per_file;
     const uint64_t base = uint64_t{slot % impl_->layout.slots_per_file} * impl_->layout.slot_size;
+    if (impl_->fail_write != CacheErrorCode::Success) { // F1-32: escrita parcial e erro
+        const CacheErrorCode injected = std::exchange(impl_->fail_write, CacheErrorCode::Success);
+        if (const auto rc =
+                impl_->files[index].write_at(base + offset, data.data(), data.size() / 2);
+            rc != CacheErrorCode::Success)
+            return fail(rc);
+        return fail(injected);
+    }
     if (const auto rc = impl_->files[index].write_at(base + offset, data.data(), data.size());
         rc != CacheErrorCode::Success) {
         return fail(rc);
@@ -318,6 +328,11 @@ uint64_t StoreFilesTestHook::file_syncs(const StoreFiles& store) noexcept
 void StoreFilesTestHook::skip_space_check(StoreFiles& store) noexcept
 {
     store.impl_->skip_space_check = true;
+}
+
+void StoreFilesTestHook::fail_next_write(StoreFiles& store, CacheErrorCode code) noexcept
+{
+    store.impl_->fail_write = code;
 }
 
 void StoreFilesTestHook::force_posix_fallocate(StoreFiles& store) noexcept

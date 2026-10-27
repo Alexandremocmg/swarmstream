@@ -192,6 +192,8 @@ struct CacheOwner::Impl
     void* crash_context = nullptr;
     std::atomic<bool> fail_next_store_sync{false};
     std::atomic<bool> fail_next_journal_sync{false};
+    std::atomic<CacheErrorCode> fail_next_store_write{CacheErrorCode::Success};    // F1-32
+    std::atomic<CacheErrorCode> fail_next_journal_append{CacheErrorCode::Success}; // F1-32
     std::atomic<bool> skip_stop_checkpoint{false}; // simula queda: o journal fica com os registros
     std::atomic<bool> corrupt_next_read{false};    // F1-13: o próximo Get vê um byte trocado
 
@@ -406,6 +408,10 @@ CacheErrorCode CacheOwner::Impl::checkpoint()
 CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
 {
     if (fail_next_journal_sync.exchange(false)) journal.fail_next_sync();
+    if (fail_next_journal_append.load(std::memory_order_relaxed) != CacheErrorCode::Success) {
+        const auto c = fail_next_journal_append.exchange(CacheErrorCode::Success);
+        if (c != CacheErrorCode::Success) journal.fail_next_append(c);
+    }
     rec.lsn = next_lsn++;
     rec.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
@@ -562,9 +568,16 @@ void CacheOwner::Impl::put(CacheRequest& r)
         mark_broken(); // o estado no disco é desconhecido: só a recuperação decide
         r.complete(code == CacheErrorCode::DiskFull ? code : CacheErrorCode::IoError, 0);
     };
+    if (fail_next_store_write.load(std::memory_order_relaxed) != CacheErrorCode::Success) {
+        const auto c = fail_next_store_write.exchange(CacheErrorCode::Success);
+        if (c != CacheErrorCode::Success) StoreFilesTestHook::fail_next_write(store, c);
+    }
     if (auto w = store.write(*slot, 0, r.input_); !w) {
         (void)slots.release(*slot);
-        if (w.error() == CacheErrorCode::DiskFull) { // reserva do arquivo: nada foi gravado
+        // Disco cheio na reserva do arquivo ou no meio da escrita (F1-32): o slot acabou de sair
+        // do alocador, o journal não o cita e nada foi publicado; os bytes parciais ficam num
+        // slot livre. O cache continua de pé para leituras e para novas escritas.
+        if (w.error() == CacheErrorCode::DiskFull) {
             r.complete(CacheErrorCode::DiskFull, 0);
             return;
         }
@@ -850,6 +863,16 @@ CacheOwnerTestHook::start_with_crash_hook(CacheOwnerConfig config, detail::Crash
 void CacheOwnerTestHook::fail_next_store_sync(CacheOwner& owner) noexcept
 {
     owner.impl_->fail_next_store_sync.store(true);
+}
+
+void CacheOwnerTestHook::fail_next_store_write(CacheOwner& owner, CacheErrorCode code) noexcept
+{
+    owner.impl_->fail_next_store_write.store(code);
+}
+
+void CacheOwnerTestHook::fail_next_journal_append(CacheOwner& owner, CacheErrorCode code) noexcept
+{
+    owner.impl_->fail_next_journal_append.store(code);
 }
 
 void CacheOwnerTestHook::fail_next_journal_sync(CacheOwner& owner) noexcept

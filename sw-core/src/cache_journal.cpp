@@ -10,6 +10,7 @@
 #include <limits>
 #include <system_error>
 #include <unordered_set>
+#include <utility>
 
 namespace swarmstream::detail {
 
@@ -250,6 +251,13 @@ CacheErrorCode Journal::append(const JournalRecord& r, CrashHook hook, void* hoo
 {
     buffer_.clear();
     encode_record(r, buffer_);
+    if (fail_append_ != CacheErrorCode::Success) {
+        const CacheErrorCode injected = std::exchange(fail_append_, CacheErrorCode::Success);
+        if (auto rc = file_.write_at(end_, buffer_.data(), buffer_.size() / 2);
+            rc != CacheErrorCode::Success)
+            return rc;
+        return injected;
+    }
     if (hook) { // teste de queda: metade, o gancho, o resto
         const size_t half = buffer_.size() / 2;
         if (auto rc = file_.write_at(end_, buffer_.data(), half); rc != CacheErrorCode::Success)
