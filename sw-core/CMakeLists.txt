@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Core library (headers and mocks)
 add_library(sw-core STATIC
     src/api_stub.cpp
+    src/cache_inspect.cpp
     src/cache_journal.cpp
     src/cache_owner.cpp
     src/deadline_scheduler.cpp
@@ -118,6 +119,15 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     target_link_libraries(sw-core-scheduler-tests PRIVATE sw-core)
     add_test(NAME sw-core-scheduler COMMAND sw-core-scheduler-tests)
     set_tests_properties(sw-core-scheduler PROPERTIES TIMEOUT 300)
+    # F1-18: inspeção do cache em disco (somente leitura) e a ferramenta sw-cache-inspect.
+    add_executable(sw-core-inspect-tests tests/test_cache_inspect.cpp)
+    target_link_libraries(sw-core-inspect-tests PRIVATE sw-core)
+    target_include_directories(sw-core-inspect-tests PRIVATE src)
+    add_test(NAME sw-core-inspect COMMAND sw-core-inspect-tests)
+    set_tests_properties(sw-core-inspect PROPERTIES TIMEOUT 120)
+    add_executable(sw-cache-inspect tools/sw_cache_inspect.cpp)
+    target_link_libraries(sw-cache-inspect PRIVATE sw-core)
+    target_include_directories(sw-cache-inspect PRIVATE src)
     # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
     # está ligado; sem isso, "nenhuma corrida" não provaria nada).
     if(SANITIZE_THREAD)
