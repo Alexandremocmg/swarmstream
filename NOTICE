@@ -41,10 +41,35 @@ origin (repository and commit) of each one is in .claude/skills/FONTES.md.
 Third-party libraries
 -------------------------------------------------------------------------
 
-No third-party library source code is included in this repository yet.
-Dependencies are fetched by vcpkg at build time. Binary distributions must
-carry the notices of the libraries they link; the expected set is listed in
-docs/adr/0008-licenca-open-source.md.
+No third-party library source code is included in this repository. The
+sw-pack tool (and any binary that links it) contains the static libraries below, compiled from
+the lib/ directory of tarballs that CMake downloads at build time and checks
+by SHA-256 (see sw-pack/CMakeLists.txt). Nothing from programs/ or contrib/
+of either project is built.
+
+  Zstandard 1.5.6 ............................... BSD-3-Clause
+      Copyright (c) Meta Platforms, Inc. and affiliates.
+      https://github.com/facebook/zstd
+      tarball SHA-256 30f35f71c1203369dc979ecde0400ffea93c27391bfd2ac5a9715d2173d92ff7
+      Zstandard is offered under BSD-3-Clause or GPL-2.0 at the user's
+      option; Swarmstream uses it under BSD-3-Clause. Only lib/ is built.
+      Contained in lib/: libdivsufsort-lite, MIT, Copyright (c) 2003-2008
+      Yuta Mori; code Copyright (c) 2016 Tino Reichardt and xxHash,
+      Copyright (c) Yann Collet - Meta Platforms, Inc, both under the same
+      BSD-3-Clause/GPL-2.0 choice.
+  LZ4 1.10.0 (library, lib/) .................... BSD-2-Clause
+      Copyright (c) 2011-2023, Yann Collet; lz4file.c Copyright (c) 2022,
+      Xiaomi Inc.; xxhash.c Copyright (c) 2012-2016, Yann Collet.
+      https://github.com/lz4/lz4
+      tarball SHA-256 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
+      (The LZ4 programs/ directory is GPL-2.0-or-later and is not built.)
+
+The license texts and file notices, copied unchanged from those versions,
+are in third_party/licenses/. Redistribution of a binary that contains these
+libraries must reproduce them: third_party/licenses/ and this NOTICE must go
+inside every package or installer. No packaging or installer mechanism
+exists yet; when one is added it must include them. Details and checks:
+docs/licencas-zstd-lz4.md.
 
   libsodium 1.0.22 .............................. ISC
       Copyright (c) 2013-2026 Frank Denis <j at pureftpd dot org>
