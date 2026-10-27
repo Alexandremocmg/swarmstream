@@ -18,62 +18,36 @@ Conferência: os objetos gerados em `build/_deps/{zstd,lz4}-build` vêm todos de
 
 ## 2. Licença de cada parte compilada
 
-**Zstd (`lib/`).** Cada arquivo diz: *"licensed under both the BSD-style license (LICENSE) and the GPLv2 (COPYING). You may select, at your option, one of the above-listed licenses."* **Escolhemos a BSD** (arquivo `LICENSE` do Zstd, BSD-3-Clause na prática: 3 cláusulas, a 3ª proíbe usar os nomes Facebook/Meta para endossar). Motivo: a GPLv2 obrigaria a distribuir o `sw-core`/jogo sob GPL; a BSD é compatível com Apache-2.0 (e já é a opção prevista no ADR-0008). Copyright: *"Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved."*
+**Zstd (`lib/`).** Cada arquivo diz: *"licensed under both the BSD-style license (LICENSE) and the GPLv2 (COPYING). You may select, at your option, one of the above-listed licenses."* **Escolhemos a BSD** (arquivo `LICENSE` do Zstd, BSD-3-Clause na prática: 3 cláusulas, a 3ª proíbe usar os nomes Facebook/Meta para endossar). A escolha da BSD está prevista no ADR-0008. Copyright: *"Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved."*
 
-Três pontos dentro de `lib/` do Zstd que **não** são Meta:
-- `lib/dictBuilder/divsufsort.c` e `.h`: libdivsufsort-lite, **MIT**, *Copyright (c) 2003-2008 Yuta Mori*. Compilado (faz parte do dictBuilder, que não usamos, mas está na biblioteca). A MIT exige o aviso e o texto da permissão em "todas as cópias ou partes substanciais"; tratamos o binário como cópia e reproduzimos o texto (ver §3). Texto em `third_party/licenses/zstd-1.5.6-divsufsort-LICENSE-MIT.txt`.
-- `lib/common/threading.c` e `.h`: *Copyright (c) 2016 Tino Reichardt*, **mesma dupla BSD/GPLv2 "à sua escolha"** do Zstd; escolhemos a BSD. Com `ZSTD_MULTITHREAD_SUPPORT=OFF` o código de threads fica inativo.
-- `lib/common/xxhash.c`: *Copyright (c) Yann Collet - Meta Platforms, Inc*, mesma dupla BSD/GPLv2.
+Cabeçalhos distintos nos arquivos compilados de `lib/` do Zstd (agrupados por texto, conferido por script sobre `common/`, `compress/`, `decompress/`, `dictBuilder/` e os `.h` públicos):
+- **Meta Platforms** (51 arquivos): dupla BSD/GPLv2 acima. Mais 12 arquivos "FSE/Huff0" (`bitstream.h`, `debug.*`, `entropy_common.c`, `fse.h`, `fse_*.c`, `hist.*`, `huf.h`, `huf_*.c`), que citam o repositório FiniteStateEntropy mas têm a mesma linha *"Copyright (c) Meta Platforms, Inc. and affiliates"* e a mesma dupla.
+- **Tino Reichardt** (`lib/common/threading.c`, `.h`): *Copyright (c) 2016 Tino Reichardt, All rights reserved*, mesma dupla BSD/GPLv2 "à escolha"; usada sob BSD. Com `ZSTD_MULTITHREAD_SUPPORT=OFF` o código de threads fica inativo.
+- **xxHash do Zstd** (`lib/common/xxhash.c`, `.h`): *Copyright (c) Yann Collet - Meta Platforms, Inc*, mesma dupla; usada sob BSD.
+- **libdivsufsort-lite** (`lib/dictBuilder/divsufsort.c`, `.h`): licença **MIT**, *Copyright (c) 2003-2008 Yuta Mori All Rights Reserved*; os cabeçalhos do `.c` e do `.h` têm texto idêntico, exceto o nome do arquivo. É a única parte do Zstd sem a dupla BSD/GPL.
 
-**LZ4 (`lib/`).** `lib/LICENSE` do LZ4: *"all files in the lib directory use a BSD 2-Clause license"*; `programs/` e o resto são GPL-2.0-or-later (**não compilados**). Copyrights nos arquivos compilados: `lz4.c` (C) 2011-2023, `lz4hc.c` e `lz4frame.c` 2011-2020, `xxhash.c` 2012-2016, todos Yann Collet; `lz4file.c` (C) 2022 **Xiaomi Inc.**, também BSD-2-Clause (cabeçalho do arquivo). O `lib/LICENSE` do LZ4 traz o aviso "LZ4 Library, Copyright (c) 2011-2020, Yann Collet".
+**LZ4 (`lib/`).** `lib/LICENSE` do LZ4: *"all files in the lib directory use a BSD 2-Clause license"*; `programs/` e o resto são GPL-2.0-or-later (**não compilados**). Copyrights nos arquivos compilados: `lz4.c` (C) 2011-2023, `lz4hc.c` e `lz4frame.c` 2011-2020, `xxhash.c` 2012-2016, todos Yann Collet; `lz4file.c` (C) 2022 **Xiaomi Inc.**, também BSD-2-Clause (cabeçalho do arquivo). Nos 11 arquivos de `lib/` compilados ou públicos o texto BSD-2-Clause é o mesmo do `lib/LICENSE`; mudam só o título e os anos/titular (lido, não presumido: `xxhash.c` do LZ4 é *Copyright (C) 2012-2016, Yann Collet*, BSD-2-Clause, e não dupla BSD/GPL como o xxHash do Zstd). O `lib/LICENSE` do LZ4 traz o aviso "LZ4 Library, Copyright (c) 2011-2020, Yann Collet".
 
 ## 3. O que as licenças exigem
 
-- **Redistribuir binário (BSD-3 do Zstd, BSD-2 do LZ4, MIT do divsufsort):** reproduzir o aviso de copyright, a lista de condições e o aviso de isenção na documentação ou em outros materiais que acompanhem a distribuição. Vale para o `sw-pack`, para a GDExtension e para qualquer binário que linke o `sw-pack`/codec. Cumprimos entregando os três textos em `third_party/licenses/` e listando-os no `NOTICE`.
+- **Redistribuir binário (BSD-3 do Zstd, BSD-2 do LZ4, MIT do divsufsort):** reproduzir o aviso de copyright, a lista de condições e o aviso de isenção na documentação ou em outros materiais que acompanhem a distribuição. Vale para o `sw-pack`, para a GDExtension e para qualquer binário que linke o `sw-pack`/codec. Cumprimos com os textos de `third_party/licenses/` (§4) e a seção do `NOTICE`.
 - **Redistribuir fonte:** manter o aviso nos arquivos (o FetchContent baixa o fonte original e não o copiamos para o repositório, então nada a fazer agora; se um dia o fonte for vendorizado, manter os cabeçalhos).
 - **Zstd, 3ª cláusula:** não usar os nomes Facebook/Meta nem de contribuintes para promover o produto sem permissão.
 - Sem exigência de abrir o código do Swarmstream (BSD/MIT são permissivas), sem cláusula de patentes na BSD do Zstd (o tarball 1.5.6 não traz arquivo PATENTS; não analisei patentes).
 
-## 4. PROPOSTA — aguarda aprovação do dono (NÃO aplicada ao `NOTICE`)
+## 4. PROPOSTA — aguarda aprovação do dono (aplicada ao `NOTICE` só neste branch, para revisão)
 
-Substituir, no `NOTICE`, a frase *"No third-party library source code is included in this repository yet. Dependencies are fetched by vcpkg at build time."* por este texto e manter o parágrafo da regra:
+A seção "Third-party libraries" do `NOTICE` passa a descrever o que é incorporado e como os textos acompanham os pacotes (diff: `git diff origin/main -- NOTICE`). Os textos ficam em `third_party/licenses/`, todos copiados sem alteração dos arquivos das versões usadas e conferidos com `diff` (saída vazia):
 
-```
--------------------------------------------------------------------------
-Third-party libraries
--------------------------------------------------------------------------
+| Arquivo | Origem |
+| --- | --- |
+| `zstd-1.5.6-LICENSE-BSD.txt` | `LICENSE` do Zstd |
+| `zstd-1.5.6-divsufsort-LICENSE-MIT.txt` | cabeçalho completo de `lib/dictBuilder/divsufsort.c` |
+| `zstd-1.5.6-file-notices.txt` | cabeçalhos de `zstd.h`, `fse.h`, `threading.c`, `xxhash.c`, `divsufsort.h` |
+| `lz4-1.10.0-lib-LICENSE-BSD-2-Clause.txt` | `lib/LICENSE` do LZ4 |
+| `lz4-1.10.0-file-notices.txt` | cabeçalhos de `lz4.c`, `lz4file.c`, `xxhash.c` do LZ4 |
 
-The sw-pack tool and every binary that links it contain the libraries
-below. Their source is NOT in this repository: CMake downloads the exact
-tarballs given here (checked by SHA-256) when building. Full license
-texts are in third_party/licenses/ and must accompany any binary
-distribution.
-
-  Zstandard 1.5.6 ............................... BSD-3-Clause
-      Copyright (c) Meta Platforms, Inc. and affiliates.
-      https://github.com/facebook/zstd
-      tarball SHA-256 30f35f71c1203369dc979ecde0400ffea93c27391bfd2ac5a9715d2173d92ff7
-      Zstandard is offered under BSD-3-Clause or GPL-2.0, at the user's
-      option; Swarmstream uses it under BSD-3-Clause. Only lib/ is built
-      (no programs/, no contrib/).
-      Text: third_party/licenses/zstd-1.5.6-LICENSE-BSD.txt
-      Includes libdivsufsort-lite ........ MIT
-          Copyright (c) 2003-2008 Yuta Mori
-          Text: third_party/licenses/zstd-1.5.6-divsufsort-LICENSE-MIT.txt
-      Includes code Copyright (c) 2016 Tino Reichardt (threading) and
-      xxHash, Copyright (c) Yann Collet, under the same BSD-3-Clause.
-
-  LZ4 1.10.0 (library only, lib/) ............... BSD-2-Clause
-      Copyright (c) 2011-2023, Yann Collet
-      (lz4file.c: Copyright (c) 2022, Xiaomi Inc.)
-      https://github.com/lz4/lz4
-      tarball SHA-256 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
-      The LZ4 programs/ directory is GPL-2.0-or-later and is NOT built or
-      distributed.
-      Text: third_party/licenses/lz4-1.10.0-lib-LICENSE-BSD-2-Clause.txt
-```
-
-Os textos em `third_party/licenses/` são cópias dos arquivos reais (Zstd: `LICENSE`; LZ4: `lib/LICENSE`; divsufsort: cabeçalho do `.c`, que não tem arquivo separado). Esta pasta é nova e **não** altera `LICENSE`, `NOTICE` nem `SECURITY.md`; se o dono preferir outro lugar para os textos, é só mover.
+Ainda **não existe** mecanismo de empacotamento/instalador: quando existir (e para a GDExtension), a pasta `third_party/licenses/` e o `NOTICE` precisam entrar em cada pacote distribuído. O `NOTICE` registra essa obrigação, sem afirmar que já é cumprida.
 
 ## 5. O CI baixa só o que o hash fixa?
 
@@ -85,7 +59,7 @@ Sim para o `sw-pack`: as duas declarações `FetchContent_Declare` usam `URL` + 
 ## 6. Riscos
 
 1. **GPL por engano.** Ligar `ZSTD_BUILD_PROGRAMS`, `ZSTD_BUILD_CONTRIB`, `ZSTD_BUILD_TESTS` ou `LZ4_BUILD_CLI` compilaria código GPL. Estão `OFF` (com `FORCE`) em `sw-pack/CMakeLists.txt`. Ninguém deveria vendorizar `programs/` do LZ4 nem copiar trechos de `contrib/`.
-2. **Escolha da licença do Zstd** precisa ficar registrada (§2): sem o `NOTICE` dizendo "usado sob BSD-3-Clause", um terceiro poderia supor GPL.
+2. **Escolha da licença do Zstd** registrada: BSD-3-Clause, só `lib/` (§2 e `NOTICE`).
 3. **divsufsort (MIT)** e **threading (Tino Reichardt)**: avisos extras fáceis de esquecer; estão na proposta.
 4. **Código de terceiros em testes:** o `test_codec.cpp` usa só `zstd.h` (ligado, não copiado) e um vetor de bytes (`zeros_4096`) gerado pelo projeto (`gen_vectors.py`), sem trecho de terceiros. O Python de vetores usa `zstandard`/`lz4` só localmente, não distribuído.
 5. **Binários já distribuídos:** a regra do `NOTICE` ("o PR que adiciona dependência enviada em binário atualiza este arquivo") vale: este PR só deve entrar na `main` junto com a decisão do dono sobre a §4.
