@@ -31,6 +31,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # O clone do vcpkg do runner pode não ter o commit do builtin-baseline do vcpkg.json (F1-04):
+      # busca só esse commit (raso); se falhar, busca normal.
+      - name: Busca o baseline do vcpkg no clone do runner
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            windows-*) VCPKG_DIR='C:/vcpkg' ;;
+            *)         VCPKG_DIR="$VCPKG_INSTALLATION_ROOT" ;;
+          esac
+          git -C "$VCPKG_DIR" fetch --depth=1 origin 5363acb796e576328288fae60c25304e227e9839             || git -C "$VCPKG_DIR" fetch origin 5363acb796e576328288fae60c25304e227e9839
+
       - name: Configure (vcpkg toolchain)
         shell: bash
         run: |
@@ -99,6 +110,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: Busca o baseline do vcpkg no clone do runner
+        shell: bash
+        run: |
+          git -C "$VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin 5363acb796e576328288fae60c25304e227e9839             || git -C "$VCPKG_INSTALLATION_ROOT" fetch origin 5363acb796e576328288fae60c25304e227e9839
 
       - name: Configure (Release, vcpkg toolchain)
         shell: bash
