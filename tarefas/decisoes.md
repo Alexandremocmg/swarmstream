@@ -49,6 +49,7 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | 2026-10-25 | PRs #6 (F1-13, crítico, revisão independente da Sênior: aprovo) e #7 (F1-29) aceitos e mesclados (`205587e` e `1bf7497`). Observação aberta da revisão: nenhum teste prova a ordem de memória acquire/release do lease (o mutante `relaxed` sobreviveu); não bloqueia, pois o lease não dá acesso a dados hoje. Com o F1-13 na `main`, o F1-14 (remoção CLOCK, que deve pular slots com lease) e o F1-16/F1-31/F1-32 ficam liberados; o F1-28 (agendador, Opus) também |
 | 2026-10-19 | Ao concluir cada tarefa, a sessão envia ao **coordenador** (Planejador (sessão `local_2e2d3843-77d4-4cf1-8782-427f70498d9c`)) o resumo, o PR, os testes executados e as pendências; o quadro é atualizado com base nessa evidência |
 | 2026-10-26 | PR #8 (F1-28, agendador por prazo v1, crítico, `a422efc`) aceito e mesclado. Revisão independente da Sênior no delta `b85a233` e CI 7/7 verde. Ressalva ciente do dono: falta de memória (bad_alloc) termina o processo de propósito. Cartão novo F1-56 (MemoryContentSource e prazo) |
+| 2026-10-27 | PRs #9 (F1-56, `1f51137`), #10 (F1-16, `7c8508c`), #11 (F1-32, crítico, `840b9e5`), #12 (F1-18, `c595cf8`), #13 (F1-14, crítico, `05f8447`) e #14 (F1-31, `c785635`) aceitos e mesclados, todos com CI 7/7 verde; #11 e #13 com revisão independente da Sênior. Pendência de produto: o DiskFull do journal ainda quebra o cache até reabrir (ver cartão F1-32) |
 
 ## Pendências do dono do produto
 | Pendência | Desde |
@@ -61,3 +62,4 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | Dizer se a sessão "Hermez Agent utilização" faz parte do projeto (hoje só Arquiteto, Sênior e Pleno recebem avisos da gestão) | 2026-10-18 |
 | Incluir os cartões F1-37 a F1-47 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |
 | Apagar os branches já incorporados no GitHub, se quiser (ex.: `baseline/limites-aprovados-r1` e `feat/F0-08-vetores-de-teste`; o `test/ci-vermelho` convém manter, é a evidência do CI vermelho). Ninguém apagou sem a sua ordem | 2026-10-18 |
+| Decidir se o DiskFull ao gravar no journal deve continuar quebrando o cache até reabrir (hoje quebra; ver F1-32) | 2026-10-27 |
