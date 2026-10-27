@@ -73,6 +73,8 @@
 
 namespace swarmstream {
 
+class TelemetryLog;
+
 namespace detail {
 enum class CrashPoint : int; // cache_journal.hpp (testes de queda)
 using CrashHook = void (*)(CrashPoint point, void* context);
@@ -228,6 +230,9 @@ struct CacheOwnerConfig
     // 0 < baixa < alta <= 100; senão start() devolve InvalidSize.
     uint32_t evict_high_percent = 0;
     uint32_t evict_low_percent = 0;
+    // Evento `eviction` (F1-30) por lote removido. nullptr = sem telemetria. Tem de viver mais
+    // que a CacheOwner; emitir não aloca nem bloqueia.
+    TelemetryLog* telemetry = nullptr;
 };
 
 // Marcas do docs/04: a remoção começa em 95% do teto e para em 85%.
