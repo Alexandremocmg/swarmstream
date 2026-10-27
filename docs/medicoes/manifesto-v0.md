@@ -29,7 +29,10 @@ $B open m150.bin --runs 9
 > com o libsodium (SHA-512 dele é mais rápido), e o libsodium assina/verifica mensagem contígua, então a abertura
 > ganha uma **cópia temporária do payload** (≈ 61 MiB de pico extra e alguns ms de `memcpy`). Esta máquina não tinha
 > libsodium nem vcpkg (MinGW), então **a remedição ainda não foi feita**; o procedimento abaixo vale como está.
-> O SHA-256 do `manifest_id` segue sendo o `sw-pack/src/sha256.cpp` próprio (372 ms em 150 GB, o maior item).
+> O SHA-256 também passou a ser o do libsodium (`crypto_hash_sha256_*`); os 372 ms em 150 GB do `manifest_id`
+> eram do SHA-256 próprio e também **precisam ser remedidos**.
+> **Remedição dos 150 GB com libsodium: fica para depois do CI verde, numa máquina parada.** O pico de ≈ 61 MiB
+> extra na verificação (cópia do payload) é pendência de otimização.
 
 ## Resultados
 | | mapa ≈ 3 GB | ≈ 150 GB (1,2 M blocos) |

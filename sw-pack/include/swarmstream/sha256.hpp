@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
-// SHA-256 (FIPS 180-4), pequeno e sem dependências. Usado hoje para derivar a tabela gear
-// do chunker (docs/03 §11.1); o `sw-pack` o usará para os hashes de bloco e da Merkle da peça.
+// SHA-256 sobre o libsodium (`crypto_hash_sha256_*`): a criptografia é do libsodium, não nossa
+// (decisão do dono, 2026-10-27). Usado para derivar a tabela gear do chunker (docs/03 §11.1), para
+// o key_id e o manifest_id do manifesto, e pelos hashes de bloco e da Merkle da peça.
+//
+// Se o libsodium não iniciar (`sodium_init() < 0`) não há como calcular hash algum: o programa
+// termina com uma mensagem em vez de devolver um resumo errado.
 #pragma once
 
 #include <array>
@@ -28,12 +32,8 @@ public:
     [[nodiscard]] Sha256Digest finish() noexcept;
 
 private:
-    void compress(const std::uint8_t* block) noexcept;
-
-    std::array<std::uint32_t, 8> state_;
-    std::array<std::uint8_t, 64> buffer_{};
-    std::size_t buffered_ = 0;
-    std::uint64_t total_bytes_ = 0;
+    // Guarda o crypto_hash_sha256_state do libsodium (104 bytes; o .cpp confere o tamanho).
+    alignas(16) unsigned char state_[128];
 };
 
 [[nodiscard]] Sha256Digest sha256(std::span<const std::byte> data) noexcept;

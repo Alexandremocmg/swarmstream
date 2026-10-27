@@ -4,8 +4,8 @@ Ferramenta de empacotamento de conteúdo do Swarmstream — trilha **T1
 (Conteúdo/build)**. Divide o build do jogo em blocos comprimidos, identificados
 por hash, e gera o manifesto assinado que a publisher distribui.
 
-> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), SHA-256, Ed25519
-> (libsodium) e o manifesto v0 assinado (F1-04); o resto abaixo ainda não tem código.
+> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), SHA-256 e Ed25519 (ambos
+> libsodium; o `sw-pack` não tem criptografia escrita à mão) e o manifesto v0 assinado (F1-04); o resto abaixo ainda não tem código.
 
 ## O que já existe
 
@@ -13,7 +13,8 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   `Chunker::make(params)` valida os parâmetros; `cut(janela)` devolve o tamanho do primeiro bloco
   (sem alocação); `split(buffer)` devolve todos. A referência são os vetores de
   [testdata/vectors-v0.json](testdata/README.md), reproduzidos por `tests/test_chunker.cpp`.
-- `include/swarmstream/sha256.hpp`, `src/sha256.cpp`: SHA-256 pequeno, sem dependências.
+- `include/swarmstream/sha256.hpp`, `src/sha256.cpp`: SHA-256 sobre `crypto_hash_sha256_*` do libsodium. Se o
+  `sodium_init()` falhar o programa termina com mensagem (não há como devolver um hash confiável).
 - `include/swarmstream/manifest.hpp`, `src/manifest.cpp`: manifesto v0 de
   [docs/03 §7](../docs/03-formato-de-conteudo.md) ([ADR-0012](../docs/adr/0012-serializacao-do-manifesto.md)).
   `build_manifest(modelo, semente)` codifica o payload FlatBuffers, assina com Ed25519 e **lê de volta**
