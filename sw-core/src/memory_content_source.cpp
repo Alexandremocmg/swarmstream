@@ -7,14 +7,14 @@
 
 namespace swarmstream {
 
-MemoryContentSource::MemoryContentSource(
-    std::string name,
-    std::chrono::milliseconds simulated_latency)
-    : name_(std::move(name)),
-      simulated_latency_(simulated_latency) {
+MemoryContentSource::MemoryContentSource(std::string name,
+                                         std::chrono::milliseconds simulated_latency)
+    : name_(std::move(name)), simulated_latency_(simulated_latency)
+{
 }
 
-MemoryContentSource::~MemoryContentSource() {
+MemoryContentSource::~MemoryContentSource()
+{
     shutting_down_.store(true, std::memory_order_release);
 
     // Cancel all remaining pending requests
@@ -37,9 +37,8 @@ MemoryContentSource::~MemoryContentSource() {
     }
 }
 
-RequestTicket MemoryContentSource::request(
-    const PieceId& piece,
-    SteadyTimePoint deadline) {
+RequestTicket MemoryContentSource::request(const PieceId& piece, SteadyTimePoint deadline)
+{
     RequestId req_id = next_request_id_.fetch_add(1, std::memory_order_relaxed);
     requests_total_.fetch_add(1, std::memory_order_relaxed);
 
@@ -73,13 +72,11 @@ RequestTicket MemoryContentSource::request(
         worker_threads_.emplace_back(&MemoryContentSource::process_request, this, req);
     }
 
-    return RequestTicket{
-        .request_id = req_id,
-        .future = std::move(future)
-    };
+    return RequestTicket{.request_id = req_id, .future = std::move(future)};
 }
 
-void MemoryContentSource::process_request(std::shared_ptr<PendingRequest> req) {
+void MemoryContentSource::process_request(std::shared_ptr<PendingRequest> req)
+{
     auto latency = simulated_latency_.load(std::memory_order_relaxed);
 
     if (latency.count() > 0) {
@@ -88,9 +85,6 @@ void MemoryContentSource::process_request(std::shared_ptr<PendingRequest> req) {
         while (std::chrono::steady_clock::now() < target) {
             if (req->canceled.load(std::memory_order_acquire) ||
                 shutting_down_.load(std::memory_order_acquire)) {
-                break;
-            }
-            if (std::chrono::steady_clock::now() >= req->deadline) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -106,26 +100,15 @@ void MemoryContentSource::process_request(std::shared_ptr<PendingRequest> req) {
     // 1. Check for cancellation
     if (req->canceled.load(std::memory_order_acquire)) {
         requests_canceled_.fetch_add(1, std::memory_order_relaxed);
-        req->promise.set_value(PieceResponse{
-            .piece = req->piece,
-            .data = {},
-            .error = SourceErrorCode::Canceled,
-            .error_message = "Request canceled"
-        });
+        req->promise.set_value(PieceResponse{.piece = req->piece,
+                                             .data = {},
+                                             .error = SourceErrorCode::Canceled,
+                                             .error_message = "Request canceled"});
         return;
     }
 
-    // 2. Check deadline expiration
-    if (std::chrono::steady_clock::now() > req->deadline) {
-        requests_failed_.fetch_add(1, std::memory_order_relaxed);
-        req->promise.set_value(PieceResponse{
-            .piece = req->piece,
-            .data = {},
-            .error = SourceErrorCode::Timeout,
-            .error_message = "Deadline exceeded"
-        });
-        return;
-    }
+    // 2. O prazo é só prioridade (swarmstream.h): um prazo vencido não gera Timeout
+    //    (F1-56). O mock não tem limite de espera; quem lê desiste por conta própria.
 
     // 3. Check injected errors
     {
@@ -133,12 +116,10 @@ void MemoryContentSource::process_request(std::shared_ptr<PendingRequest> req) {
         auto err_it = injected_errors_.find(req->piece);
         if (err_it != injected_errors_.end()) {
             requests_failed_.fetch_add(1, std::memory_order_relaxed);
-            req->promise.set_value(PieceResponse{
-                .piece = req->piece,
-                .data = {},
-                .error = err_it->second,
-                .error_message = "Injected error for testing"
-            });
+            req->promise.set_value(PieceResponse{.piece = req->piece,
+                                                 .data = {},
+                                                 .error = err_it->second,
+                                                 .error_message = "Injected error for testing"});
             return;
         }
 
@@ -149,27 +130,24 @@ void MemoryContentSource::process_request(std::shared_ptr<PendingRequest> req) {
             bytes_received_.fetch_add(bytes, std::memory_order_relaxed);
             requests_completed_.fetch_add(1, std::memory_order_relaxed);
 
-            req->promise.set_value(PieceResponse{
-                .piece = req->piece,
-                .data = it->second,
-                .error = SourceErrorCode::Success,
-                .error_message = ""
-            });
+            req->promise.set_value(PieceResponse{.piece = req->piece,
+                                                 .data = it->second,
+                                                 .error = SourceErrorCode::Success,
+                                                 .error_message = ""});
             return;
         }
     }
 
     // Piece not found
     requests_failed_.fetch_add(1, std::memory_order_relaxed);
-    req->promise.set_value(PieceResponse{
-        .piece = req->piece,
-        .data = {},
-        .error = SourceErrorCode::NotFound,
-        .error_message = "Piece not found in memory source"
-    });
+    req->promise.set_value(PieceResponse{.piece = req->piece,
+                                         .data = {},
+                                         .error = SourceErrorCode::NotFound,
+                                         .error_message = "Piece not found in memory source"});
 }
 
-bool MemoryContentSource::cancel(RequestId request_id) {
+bool MemoryContentSource::cancel(RequestId request_id)
+{
     std::shared_ptr<PendingRequest> req;
     {
         std::lock_guard<std::mutex> lock(requests_mutex_);
@@ -184,16 +162,16 @@ bool MemoryContentSource::cancel(RequestId request_id) {
     }
 
     bool expected = false;
-    if (req->canceled.compare_exchange_strong(
-            expected, true,
-            std::memory_order_acq_rel, std::memory_order_acquire)) {
+    if (req->canceled.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                              std::memory_order_acquire)) {
         return true;
     }
 
     return false;
 }
 
-SourceStats MemoryContentSource::stats() const {
+SourceStats MemoryContentSource::stats() const
+{
     SourceStats s{};
     s.requests_total = requests_total_.load(std::memory_order_relaxed);
     s.requests_completed = requests_completed_.load(std::memory_order_relaxed);
@@ -203,35 +181,42 @@ SourceStats MemoryContentSource::stats() const {
     return s;
 }
 
-void MemoryContentSource::set_piece(const PieceId& piece, std::vector<uint8_t> data) {
+void MemoryContentSource::set_piece(const PieceId& piece, std::vector<uint8_t> data)
+{
     std::lock_guard<std::mutex> lock(pieces_mutex_);
     pieces_[piece] = std::move(data);
 }
 
-void MemoryContentSource::remove_piece(const PieceId& piece) {
+void MemoryContentSource::remove_piece(const PieceId& piece)
+{
     std::lock_guard<std::mutex> lock(pieces_mutex_);
     pieces_.erase(piece);
 }
 
-bool MemoryContentSource::has_piece(const PieceId& piece) const {
+bool MemoryContentSource::has_piece(const PieceId& piece) const
+{
     std::lock_guard<std::mutex> lock(pieces_mutex_);
     return pieces_.find(piece) != pieces_.end();
 }
 
-void MemoryContentSource::set_simulated_latency(std::chrono::milliseconds latency) noexcept {
+void MemoryContentSource::set_simulated_latency(std::chrono::milliseconds latency) noexcept
+{
     simulated_latency_.store(latency, std::memory_order_release);
 }
 
-std::chrono::milliseconds MemoryContentSource::simulated_latency() const noexcept {
+std::chrono::milliseconds MemoryContentSource::simulated_latency() const noexcept
+{
     return simulated_latency_.load(std::memory_order_acquire);
 }
 
-void MemoryContentSource::set_injected_error(const PieceId& piece, SourceErrorCode error) {
+void MemoryContentSource::set_injected_error(const PieceId& piece, SourceErrorCode error)
+{
     std::lock_guard<std::mutex> lock(pieces_mutex_);
     injected_errors_[piece] = error;
 }
 
-void MemoryContentSource::clear_injected_errors() {
+void MemoryContentSource::clear_injected_errors()
+{
     std::lock_guard<std::mutex> lock(pieces_mutex_);
     injected_errors_.clear();
 }

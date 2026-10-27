@@ -85,20 +85,36 @@ void test_content_source_cancellation()
 
 void test_content_source_deadline_timeout()
 {
-    std::cout << "[Test] ContentSource: Deadline timeout\n";
-    MemoryContentSource source("test_source", std::chrono::milliseconds(100));
+    std::cout << "[Test] ContentSource: Expired deadline is priority, not a limit (F1-56)\n";
+    const std::vector<uint8_t> data = {1, 2, 3};
+    const auto past = std::chrono::steady_clock::now() - std::chrono::milliseconds(10);
 
+    // Sem e com latência simulada, um prazo já vencido ainda recebe os dados.
+    for (const auto latency : {std::chrono::milliseconds(0), std::chrono::milliseconds(50)}) {
+        MemoryContentSource source("test_source", latency);
+        PieceHash h{};
+        PieceId id(3, h);
+        source.set_piece(id, data);
+
+        auto start = std::chrono::steady_clock::now();
+        auto ticket = source.request(id, past);
+        PieceResponse resp = ticket.future.get();
+        SW_CHECK(resp.ok());
+        SW_CHECK(resp.error == SourceErrorCode::Success);
+        SW_CHECK(resp.data == data);
+        // A latência simulada continua valendo (o prazo não a encurta).
+        SW_CHECK(std::chrono::steady_clock::now() - start >= latency);
+
+        SourceStats stats = source.stats();
+        SW_CHECK(stats.requests_completed == 1);
+        SW_CHECK(stats.requests_failed == 0);
+    }
+
+    // Prazo vencido não mascara NotFound.
+    MemoryContentSource source("test_source");
     PieceHash h{};
-    PieceId id(3, h);
-    source.set_piece(id, {1, 2, 3});
-
-    // Deadline is in the past
-    auto deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(10);
-    auto ticket = source.request(id, deadline);
-
-    PieceResponse resp = ticket.future.get();
-    SW_CHECK(!resp.ok());
-    SW_CHECK(resp.error == SourceErrorCode::Timeout);
+    auto ticket = source.request(PieceId(77, h), past);
+    SW_CHECK(ticket.future.get().error == SourceErrorCode::NotFound);
 }
 
 void test_content_source_injected_error()
