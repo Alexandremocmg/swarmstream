@@ -111,9 +111,8 @@ struct GateCore::Impl
         auto promise = std::make_shared<std::promise<bool>>();
         std::shared_future<bool> fut = promise->get_future().share();
         in_flight.emplace(piece, fut);
-        // Prazo folgado: o portão mede a materialização, não o agendador (F1-28).
-        auto ticket =
-            source->request(piece, std::chrono::steady_clock::now() + std::chrono::seconds(30));
+        // Demanda imediata: prazo = agora. O prazo é só prioridade (F1-56).
+        auto ticket = source->request(piece, std::chrono::steady_clock::now());
         auto future =
             std::make_shared<std::future<swarmstream::PieceResponse>>(std::move(ticket.future));
         threads.emplace_back([this, piece, promise, future]() {
