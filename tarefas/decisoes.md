@@ -60,3 +60,4 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | Dizer se a sessão "Hermez Agent utilização" faz parte do projeto (hoje só Arquiteto, Sênior e Pleno recebem avisos da gestão) | 2026-10-18 |
 | Incluir os cartões F1-37 a F1-47 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |
 | Apagar os branches já incorporados no GitHub, se quiser (ex.: `baseline/limites-aprovados-r1` e `feat/F0-08-vetores-de-teste`; o `test/ci-vermelho` convém manter, é a evidência do CI vermelho). Ninguém apagou sem a sua ordem | 2026-10-18 |
+| Aceitar o PR #8 (F1-28, agendador por prazo, crítico), depois da revisão do delta `b85a233` e do CI verde | 2026-10-26 |
