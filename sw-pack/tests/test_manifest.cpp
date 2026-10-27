@@ -11,6 +11,8 @@
 #include "check.hpp"
 #include "json_min.hpp"
 #include "manifest_fixture.hpp"
+#include "swarmstream/chunker.hpp"
+#include "swarmstream/crypto.hpp"
 #include "swarmstream/ed25519.hpp"
 #include "swarmstream/manifest.hpp"
 #include "swarmstream/sha256.hpp"
@@ -777,6 +779,57 @@ void test_resigned_envelopes_and_reader_order()
     }
 }
 
+// Se o libsodium não iniciar (`sodium_init() < 0`), cada entrada pública devolve erro ou
+// "inválido": nada autentica, nada assina e nada vira "aceito". O gancho de teste simula a falha.
+void test_libsodium_init_failure_is_an_error()
+{
+    using E = sp::ManifestError;
+    const sp::Ed25519Seed seed = test_seed();
+    const sp::ManifestModel model = st::make_synthetic_model(20, 3, 9);
+    const sp::Ed25519PublicKey key = public_key_of(seed);
+    const Bytes message = bytes_from_hex("00112233445566778899aabbccddeeff");
+    const sp::Ed25519Signature signature = sign_of(seed, {message});
+    const Bytes good = sp::encode_manifest(model, seed);
+    SW_CHECK(!good.empty() && open_code(good, {key}) == E::Ok);
+    SW_CHECK(sp::crypto_ready() && !sp::crypto_version().empty());
+
+    sp::testing::force_crypto_failure(true);
+    SW_CHECK(!sp::crypto_ready());
+    // Geração de chave e assinatura: sem resultado.
+    SW_CHECK(!sp::ed25519_public_key(seed).has_value());
+    SW_CHECK(!sp::ed25519_sign(seed, {message}).has_value());
+    // Verificação: uma assinatura VÁLIDA é recusada.
+    SW_CHECK(!sp::ed25519_verify(key, signature, {message}));
+    // Leitor e construtor do manifesto.
+    {
+        sp::ManifestView view;
+        sp::ReadOptions options;
+        const std::vector<sp::Ed25519PublicKey> keys = {key};
+        options.trusted_keys = keys;
+        const sp::ManifestStatus status = sp::ManifestView::open(good, options, view);
+        SW_CHECK(status.code == E::SignatureInvalid);
+        SW_CHECK(std::strstr(status.detail, "libsodium") != nullptr);
+        // Um arquivo com o cabeçalho errado continua recebendo o erro de cabeçalho, sem libsodium.
+        Bytes bad_magic = good;
+        bad_magic[0] ^= std::byte{1};
+        SW_CHECK(sp::ManifestView::open(bad_magic, options, view).code == E::Invalid);
+    }
+    SW_CHECK(sp::encode_manifest(model, seed).empty());
+    {
+        const sp::BuildResult built = sp::build_manifest(model, seed);
+        SW_CHECK(!built.status.ok() && built.bytes.empty());
+    }
+    // O chunker usa SHA-256 na tabela gear: sem libsodium não se cria.
+    SW_CHECK(!sp::Chunker::make().has_value());
+    sp::testing::force_crypto_failure(false);
+
+    // Voltou ao normal.
+    SW_CHECK(sp::crypto_ready());
+    SW_CHECK(sp::ed25519_verify(key, signature, {message}));
+    SW_CHECK(open_code(good, {key}) == E::Ok);
+    SW_CHECK(sp::Chunker::make().has_value());
+}
+
 // Payload malformado com assinatura VÁLIDA (um build com defeito, ou quem tem a chave): o
 // leitor devolve erro, nunca lê fora do buffer (o CI roda isto sob ASan/UBSan).
 void test_signed_garbage_payloads()
@@ -861,6 +914,8 @@ int main(int argc, char** argv)
     lap("validacoes do 03 secao 8 ok");
     test_resigned_envelopes_and_reader_order();
     lap("envelopes re-assinados e ordem do leitor ok");
+    test_libsodium_init_failure_is_an_error();
+    lap("falha do sodium_init vira erro ok");
     test_signed_garbage_payloads();
     std::puts("TODOS OS TESTES DO MANIFESTO PASSARAM");
     return 0;

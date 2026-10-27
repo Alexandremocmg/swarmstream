@@ -35,6 +35,7 @@ endif()
 add_library(sw-pack STATIC
     src/chunker.cpp
     src/sha256.cpp
+    src/crypto.cpp
     src/ed25519.cpp
     src/manifest.cpp
 )

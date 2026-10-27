@@ -3,6 +3,8 @@
 
 #include "swarmstream/manifest.hpp"
 
+#include "swarmstream/crypto.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -839,6 +841,11 @@ ManifestStatus ManifestReader::open(std::span<const std::byte> bytes, const Read
         return fail(ManifestError::Invalid, "payload_len nao bate com o tamanho do arquivo");
     }
 
+    // O key_id e a assinatura precisam do libsodium: sem ele, nada é autenticado.
+    if (!crypto_ready()) {
+        return fail(ManifestError::SignatureInvalid, "libsodium nao iniciou");
+    }
+
     // Passo 2: a chave pelo key_id.
     KeyId wanted{};
     std::memcpy(wanted.data(), p + 24, wanted.size());
@@ -1389,6 +1396,10 @@ std::vector<std::byte> encode_manifest(const ManifestModel& model, const Ed25519
 BuildResult build_manifest(const ManifestModel& model, const Ed25519Seed& signing_seed)
 {
     BuildResult result;
+    if (!crypto_ready()) {
+        result.status = fail(ManifestError::SignatureInvalid, "libsodium nao iniciou");
+        return result;
+    }
     std::vector<std::byte> bytes = encode_manifest(model, signing_seed);
     if (bytes.empty()) {
         result.status = fail(ManifestError::Invalid,

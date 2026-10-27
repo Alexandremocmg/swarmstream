@@ -3,6 +3,8 @@
 
 #include "swarmstream/ed25519.hpp"
 
+#include "swarmstream/crypto.hpp"
+
 #include <algorithm>
 #include <sodium.h>
 #include <vector>
@@ -14,13 +16,6 @@ namespace {
 static_assert(crypto_sign_SEEDBYTES == 32);
 static_assert(crypto_sign_PUBLICKEYBYTES == 32);
 static_assert(crypto_sign_BYTES == 64);
-
-// sodium_init() é seguro de chamar várias vezes e de várias threads; devolve -1 se falhar.
-bool sodium_ready() noexcept
-{
-    static const bool ready = sodium_init() >= 0;
-    return ready;
-}
 
 // A mensagem contígua que o libsodium exige. Com uma só parte não copia.
 struct Message
@@ -54,7 +49,7 @@ struct Message
 
 std::optional<Ed25519PublicKey> ed25519_public_key(const Ed25519Seed& seed) noexcept
 {
-    if (!sodium_ready()) {
+    if (!crypto_ready()) {
         return std::nullopt;
     }
     Ed25519PublicKey public_key{};
@@ -69,7 +64,7 @@ std::optional<Ed25519PublicKey> ed25519_public_key(const Ed25519Seed& seed) noex
 
 std::optional<Ed25519Signature> ed25519_sign(const Ed25519Seed& seed, MessageParts message) noexcept
 {
-    if (!sodium_ready()) {
+    if (!crypto_ready()) {
         return std::nullopt;
     }
     try {
@@ -96,7 +91,7 @@ std::optional<Ed25519Signature> ed25519_sign(const Ed25519Seed& seed, MessagePar
 bool ed25519_verify(const Ed25519PublicKey& public_key, const Ed25519Signature& signature,
                     MessageParts message) noexcept
 {
-    if (!sodium_ready()) {
+    if (!crypto_ready()) {
         return false;
     }
     try {

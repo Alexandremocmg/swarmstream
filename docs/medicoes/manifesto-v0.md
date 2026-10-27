@@ -23,6 +23,7 @@ $B generate --blocks 1200000 --out m150.bin   # "150 GB" (164,8 GiB crus)
 $B open m150.bin --runs 9
 ```
 
+> **Procedimento da remedição (escrito, não executado): [procedimento-remedicao-manifesto-v0.md](procedimento-remedicao-manifesto-v0.md).**
 > **Atenção (2026-10-27): números de tempo desatualizados.** As medições abaixo foram feitas quando o Ed25519 e o
 > SHA-512 eram implementações próprias do `sw-pack`. Por decisão do dono o Ed25519 agora é do **libsodium**
 > (ADR-0012). O tamanho do arquivo não muda; a linha da assinatura (245 ms em 150 GB) **tem de ser medida de novo**

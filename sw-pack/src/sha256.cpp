@@ -3,6 +3,8 @@
 
 #include "swarmstream/sha256.hpp"
 
+#include "swarmstream/crypto.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <sodium.h>
@@ -20,12 +22,13 @@ crypto_hash_sha256_state* state_of(unsigned char* storage) noexcept
     return reinterpret_cast<crypto_hash_sha256_state*>(storage);
 }
 
-// sodium_init() é seguro de chamar várias vezes e de várias threads; devolve -1 se falhar.
+// Último recurso: sem libsodium não há como devolver um hash confiável. As entradas públicas
+// (Chunker::make, ManifestView::open, build_manifest, Ed25519) conferem `crypto_ready()` antes e
+// devolvem erro, então este aborto só é alcançável por uso direto de `Sha256` sem essa conferência.
 void require_sodium() noexcept
 {
-    static const bool ready = sodium_init() >= 0;
-    if (!ready) {
-        std::fputs("sw-pack: sodium_init() falhou; sem SHA-256 confiavel, abortando\n", stderr);
+    if (!crypto_ready()) {
+        std::fputs("sw-pack: libsodium nao iniciou; sem SHA-256 confiavel, abortando\n", stderr);
         std::abort();
     }
 }

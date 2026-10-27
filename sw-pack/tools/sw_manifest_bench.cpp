@@ -16,6 +16,7 @@
 // ADR-0012 prevê (mapeamento + madvise) é do sw-core e não está medida aqui.
 
 #include "manifest_fixture.hpp"
+#include "swarmstream/crypto.hpp"
 #include "swarmstream/manifest.hpp"
 #include "swarmstream/sha256.hpp"
 
@@ -172,6 +173,8 @@ int open_file(int argc, char** argv)
         }
     }
 
+    std::printf("libsodium %.*s\n", static_cast<int>(sp::crypto_version().size()),
+                sp::crypto_version().data());
     const Memory baseline = process_memory();
     std::ifstream file(argv[2], std::ios::binary | std::ios::ate);
     if (!file) {
@@ -245,8 +248,9 @@ int open_file(int argc, char** argv)
     std::printf("residente do manifesto (aberto - base): %.1f MiB\n",
                 after_open.current_mib - baseline.current_mib);
     std::printf("abertura completa (mediana de %d): %.1f ms\n", runs, median(t_open) * 1000.0);
-    std::printf("  so a assinatura Ed25519 (SHA-512 sobre tudo): %.1f ms\n",
-                median(t_sig) * 1000.0);
+    std::printf(
+        "  so a assinatura Ed25519 do libsodium (inclui a copia contigua da mensagem): %.1f ms\n",
+        median(t_sig) * 1000.0);
     std::printf("  so o SHA-256 do manifest_id: %.1f ms\n", median(t_hash) * 1000.0);
     std::printf("  resto (verificador + validacoes do 03 secao 8): %.1f ms\n",
                 (median(t_open) - median(t_sig) - median(t_hash)) * 1000.0);

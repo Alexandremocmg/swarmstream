@@ -14,7 +14,8 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   (sem alocação); `split(buffer)` devolve todos. A referência são os vetores de
   [testdata/vectors-v0.json](testdata/README.md), reproduzidos por `tests/test_chunker.cpp`.
 - `include/swarmstream/sha256.hpp`, `src/sha256.cpp`: SHA-256 sobre `crypto_hash_sha256_*` do libsodium. Se o
-  `sodium_init()` falhar o programa termina com mensagem (não há como devolver um hash confiável).
+  libsodium não iniciar o programa termina com mensagem (último recurso: as entradas públicas conferem
+  `crypto_ready()` antes e devolvem erro).
 - `include/swarmstream/manifest.hpp`, `src/manifest.cpp`: manifesto v0 de
   [docs/03 §7](../docs/03-formato-de-conteudo.md) ([ADR-0012](../docs/adr/0012-serializacao-do-manifesto.md)).
   `build_manifest(modelo, semente)` codifica o payload FlatBuffers, assina com Ed25519 e **lê de volta**
@@ -22,9 +23,12 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   (cabeçalho → chave → **assinatura** → sondagem do `min_reader` → verificador e validações do §8),
   sem cópia das tabelas colunares. O FlatBuffers é escrito e verificado à mão (esquema fixo e pequeno),
   então não há dependência nova; o layout é o do FlatBuffers e foi lido com o runtime oficial (ver abaixo).
+- `include/swarmstream/crypto.hpp`, `src/crypto.cpp`: o **único** ponto que chama `sodium_init()`
+  (`crypto_ready()`). Toda entrada pública com criptografia o confere e devolve erro se falhar; há um gancho
+  só para testes (`testing::force_crypto_failure`) que simula a falha.
 - `include/swarmstream/ed25519.hpp`, `src/ed25519.cpp`: interface fina (3 funções) sobre o **libsodium**
   (`crypto_sign_seed_keypair`, `crypto_sign_detached`, `crypto_sign_verify_detached`, a verificação estrita).
-  `sodium_init()` é conferido: falha vira "assinatura inválida" ou `nullopt`, nunca aviso. O libsodium assina
+  Se o libsodium não iniciar: falha vira "assinatura inválida" ou `nullopt`, nunca aviso. O libsodium assina
   mensagem contígua, então com várias partes a interface monta uma cópia temporária da mensagem (o payload).
   A chave de teste (semente `00..1f`) fica só em `testdata/` e nos testes; nenhum build de release pode
   confiá-la (ADR-0012, item 4).
