@@ -7,6 +7,7 @@
 #include "cache_owner_testing.hpp"
 #include "store_files_testing.hpp"
 #include "swarmstream/slot_allocator.hpp"
+#include "swarmstream/telemetry.hpp"
 #include "swarmstream/xxh3.hpp"
 
 #include <algorithm>
@@ -498,16 +499,21 @@ CacheErrorCode CacheOwner::Impl::evict_to(uint32_t target)
             mark_broken();
             return CacheErrorCode::IoError;
         }
+        uint64_t batch_bytes = 0;
         for (const Victim& v : victims) {
             const auto it = index.find(v.piece);
             if (it == index.end() || it->second.slot != v.slot || !slots.release(v.slot)) {
                 mark_broken(); // índice e alocador discordam: não deveria ocorrer
                 return CacheErrorCode::IoError;
             }
+            batch_bytes += it->second.size;
             evicted_bytes.fetch_add(it->second.size, std::memory_order_relaxed);
             index.erase(it);
         }
         evicted_pieces.fetch_add(victims.size(), std::memory_order_relaxed);
+        if (config.telemetry != nullptr) {
+            config.telemetry->emit_eviction(victims.size(), batch_bytes);
+        }
         pieces.fetch_sub(static_cast<uint32_t>(victims.size()), std::memory_order_relaxed);
     }
     return CacheErrorCode::Success;
