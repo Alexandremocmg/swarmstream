@@ -20,6 +20,7 @@ add_library(sw-core STATIC
     src/http_range_source.cpp
     src/slot_allocator.cpp
     src/store_files.cpp
+    src/telemetry.cpp
     src/tcp_socket.cpp
     src/xxh3.cpp
 )
@@ -123,6 +124,15 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
     add_test(NAME sw-core-eviction COMMAND sw-core-eviction-tests)
     set_tests_properties(sw-core-eviction PROPERTIES TIMEOUT 300)
+    # F1-30: eventos de telemetria em arquivo (anel pré-alocado, thread gravadora; o job TSan roda).
+    add_executable(sw-core-telemetry-tests tests/test_telemetry.cpp)
+    target_link_libraries(sw-core-telemetry-tests PRIVATE sw-core)
+    target_include_directories(sw-core-telemetry-tests PRIVATE src)
+    if(SANITIZE_THREAD)
+        target_compile_definitions(sw-core-telemetry-tests PRIVATE SW_EXPECT_TSAN)
+    endif()
+    add_test(NAME sw-core-telemetry COMMAND sw-core-telemetry-tests)
+    set_tests_properties(sw-core-telemetry PROPERTIES TIMEOUT 120)
     # F1-28: agendador por prazo v1 (fonte falsa controlada pelo teste; estresse com 16 threads
     # pedindo e cancelando; o job TSan roda este teste).
     add_executable(sw-core-scheduler-tests tests/test_deadline_scheduler.cpp)
