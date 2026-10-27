@@ -408,9 +408,10 @@ CacheErrorCode CacheOwner::Impl::checkpoint()
 CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
 {
     if (fail_next_journal_sync.exchange(false)) journal.fail_next_sync();
-    if (const auto c = fail_next_journal_append.exchange(CacheErrorCode::Success);
-        c != CacheErrorCode::Success)
-        journal.fail_next_append(c);
+    if (fail_next_journal_append.load(std::memory_order_relaxed) != CacheErrorCode::Success) {
+        const auto c = fail_next_journal_append.exchange(CacheErrorCode::Success);
+        if (c != CacheErrorCode::Success) journal.fail_next_append(c);
+    }
     rec.lsn = next_lsn++;
     rec.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
@@ -567,9 +568,10 @@ void CacheOwner::Impl::put(CacheRequest& r)
         mark_broken(); // o estado no disco é desconhecido: só a recuperação decide
         r.complete(code == CacheErrorCode::DiskFull ? code : CacheErrorCode::IoError, 0);
     };
-    if (const auto c = fail_next_store_write.exchange(CacheErrorCode::Success);
-        c != CacheErrorCode::Success)
-        StoreFilesTestHook::fail_next_write(store, c);
+    if (fail_next_store_write.load(std::memory_order_relaxed) != CacheErrorCode::Success) {
+        const auto c = fail_next_store_write.exchange(CacheErrorCode::Success);
+        if (c != CacheErrorCode::Success) StoreFilesTestHook::fail_next_write(store, c);
+    }
     if (auto w = store.write(*slot, 0, r.input_); !w) {
         (void)slots.release(*slot);
         // Disco cheio na reserva do arquivo ou no meio da escrita (F1-32): o slot acabou de sair
