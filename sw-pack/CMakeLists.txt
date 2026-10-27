@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Zstd e LZ4 (F1-03), versões fixas e com hash, compiladas estáticas junto do projeto: o mesmo
+# Zstd e LZ4 (F1-03; licenças e NOTICE: docs/licencas-zstd-lz4.md), versões fixas e com hash, compiladas estáticas junto do projeto: o mesmo
 # caminho no Linux, no Windows e nos jobs de sanitizer (que não usam o vcpkg).
 include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
@@ -20,6 +20,7 @@ set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE) # sem decodificadores dos formatos antigos (v0.1-0.7)
 set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(LZ4_BUILD_LEGACY_LZ4C OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
