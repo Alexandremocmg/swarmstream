@@ -31,6 +31,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # O port do libsodium do vcpkg compila com autotools no Linux e exige estes pacotes do sistema.
+      - name: Instala as ferramentas autotools do port do libsodium (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool
+
       # O clone do vcpkg do runner pode não ter o commit do builtin-baseline do vcpkg.json (F1-04):
       # busca só esse commit (raso); se falhar, busca normal.
       - name: Busca o baseline do vcpkg no clone do runner
@@ -110,6 +115,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      # O port do libsodium do vcpkg compila com autotools no Linux e exige estes pacotes do sistema.
+      - name: Instala as ferramentas autotools do port do libsodium (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake libtool
 
       - name: Busca o baseline do vcpkg no clone do runner
         shell: bash
