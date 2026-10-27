@@ -1,10 +1,14 @@
-Colin Percival: SHA-256/SHA-512 de referencia (BSD-2-Clause) e PBKDF2-SHA256 do scrypt.
-Texto copiado VERBATIM dos cabecalhos de arquivos do libsodium 1.0.22 (tag 1.0.22-RELEASE,
-https://github.com/jedisct1/libsodium), lidos pela API do GitHub (sem baixar tarball).
-Gerado por entry(): os blocos abaixo sao o comentario inicial de cada arquivo listado.
+Colin Percival: SHA-256/SHA-512 de referencia e PBKDF2-SHA256 (BSD-2-Clause).
+
+Cada bloco abaixo e o comentario inicial, copiado SEM alteracao, dos arquivos listados logo
+acima dele (caminho e SHA-1 do blob git no tag 1.0.22-RELEASE de
+https://github.com/jedisct1/libsodium, lido por `gh api`, sem tarball). Arquivos com blocos
+diferentes ficam em grupos diferentes. Regenerar: `scan_libsodium_licenses.py TAG CACHE
+--write DIR`; conferir: `--verify DIR` (cada bloco tem de estar literalmente em cada blob).
 Varredura completa: docs/medicoes/varredura-licencas-libsodium-1.0.22.md
 
-Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+==============================================================================
+Arquivos (caminho  blob SHA-1):
   src/libsodium/crypto_hash/sha256/cp/hash_sha256_cp.c  394c3914107c1217bd2a6ff6d8ac72c71f85cef4
   src/libsodium/crypto_hash/sha512/cp/hash_sha512_cp.c  a36841b983a3ccce7ae0387c0caf287f2175fcb1
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/pbkdf2-sha256.h  962b43311ddeaffc2438cadec83b97e32ac0cccb
@@ -35,7 +39,9 @@ Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
  * SUCH DAMAGE.
  *
  */
-Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+
+==============================================================================
+Arquivos (caminho  blob SHA-1):
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/pbkdf2-sha256.c  bcf7da553a1d86c953e01da2b593d90c7dba1f97
 
 /*-

@@ -41,11 +41,18 @@ origin (repository and commit) of each one is in .claude/skills/FONTES.md.
 Third-party libraries
 -------------------------------------------------------------------------
 
-No third-party library source code is included in this repository. The
-sw-pack tool (and any binary that links it) contains the static libraries below, compiled from
-the lib/ directory of tarballs that CMake downloads at build time and checks
-by SHA-256 (see sw-pack/CMakeLists.txt). Nothing from programs/ or contrib/
-of either project is built.
+No third-party library source code is included in this repository. Binaries
+built from it link third-party libraries obtained in two different ways:
+
+  1. Zstandard and LZ4: static libraries compiled by CMake (FetchContent in
+     sw-pack/CMakeLists.txt) from the lib/ directory of source tarballs that
+     CMake downloads at build time and checks with URL_HASH (SHA-256). Nothing
+     from programs/ or contrib/ of either project is built.
+  2. libsodium: built by vcpkg (vcpkg.json, dependency "libsodium", pinned by
+     builtin-baseline). The vcpkg port fetches the GitHub archive of git tag
+     1.0.22-RELEASE (vcpkg_from_github, checked by SHA-512 in the port; that is
+     the repository tag, not the distribution tarball) and applies its own
+     patches. Some CI jobs use the operating-system package instead.
 
   Zstandard 1.5.6 ............................... BSD-3-Clause
       Copyright (c) Meta Platforms, Inc. and affiliates.
@@ -79,9 +86,10 @@ docs/licencas-zstd-lz4.md.
       docs/adr/0012-serializacao-do-manifesto.md).
       How it is obtained: NOT vendored. vcpkg builds it at build time from the
       manifest (vcpkg.json: dependency "libsodium", builtin-baseline
-      e456309491fd875487bf02b8a0dca76c1b1b00cc, port libsodium 1.0.22#1). CI jobs
-      that do not use vcpkg use the operating-system package (libsodium-dev), so
-      the version there is the distribution's.
+      e456309491fd875487bf02b8a0dca76c1b1b00cc, port libsodium 1.0.22#1, which
+      uses vcpkg_from_github on tag 1.0.22-RELEASE and one patch, for MinGW
+      i386). CI jobs that do not use vcpkg use the operating-system package
+      (libsodium-dev), so the version there is the distribution's.
       Full license text (the LICENSE file of tag 1.0.22-RELEASE, git blob
       95c22fbadfa457cd7898ebe96aaa05147589b655):
         third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt

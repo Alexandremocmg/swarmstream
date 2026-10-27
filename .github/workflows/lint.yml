@@ -39,6 +39,11 @@ jobs:
           python -m mypy --config-file sw-netlab/pyproject.toml --strict --follow-imports=silent sw-godot/tools/download_assets.py
           python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-godot/tools/baseline.py sw-godot/tools/test_baseline.py
           python -m mypy --config-file sw-netlab/pyproject.toml --strict sw-pack/testdata/gen_vectors.py sw-pack/testdata/verify_vectors.py sw-pack/testdata/verify_chunker_r1.py sw-pack/testdata/test_properties.py
+      - name: Licence scan script lint (F1-04)
+        run: |
+          python -m black --config sw-netlab/pyproject.toml --check third_party/licenses/scan_libsodium_licenses.py
+          python -m ruff check --config sw-netlab/pyproject.toml third_party/licenses/scan_libsodium_licenses.py
+          python -m mypy --config-file sw-netlab/pyproject.toml --strict third_party/licenses/scan_libsodium_licenses.py
       - name: Baseline check tests (F1-36)
         run: python -m unittest discover -s sw-godot/tools -p test_baseline.py -v
       - name: Round report lint and tests (F1-33)

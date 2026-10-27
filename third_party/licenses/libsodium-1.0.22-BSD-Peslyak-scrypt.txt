@@ -1,10 +1,14 @@
-Alexander Peslyak (Solar Designer): scrypt (aviso proprio e arquivos com Percival + Peslyak).
-Texto copiado VERBATIM dos cabecalhos de arquivos do libsodium 1.0.22 (tag 1.0.22-RELEASE,
-https://github.com/jedisct1/libsodium), lidos pela API do GitHub (sem baixar tarball).
-Gerado por entry(): os blocos abaixo sao o comentario inicial de cada arquivo listado.
+scrypt: avisos de Alexander Peslyak (BSD-style) e arquivos com Percival + Peslyak.
+
+Cada bloco abaixo e o comentario inicial, copiado SEM alteracao, dos arquivos listados logo
+acima dele (caminho e SHA-1 do blob git no tag 1.0.22-RELEASE de
+https://github.com/jedisct1/libsodium, lido por `gh api`, sem tarball). Arquivos com blocos
+diferentes ficam em grupos diferentes. Regenerar: `scan_libsodium_licenses.py TAG CACHE
+--write DIR`; conferir: `--verify DIR` (cada bloco tem de estar literalmente em cada blob).
 Varredura completa: docs/medicoes/varredura-licencas-libsodium-1.0.22.md
 
-Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+==============================================================================
+Arquivos (caminho  blob SHA-1):
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/crypto_scrypt-common.c  2abb5897e0660e814ff9423fd4fea8b820bbe7cd
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/scrypt_platform.c  890517f797b0dfb5e980a9f8b0b6544a40d4a2f0
 
@@ -27,7 +31,9 @@ Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+
+==============================================================================
+Arquivos (caminho  blob SHA-1):
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/crypto_scrypt.h  1224c0f132def9450f04545f54d405d7d88e4da3
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/nosse/pwhash_scryptsalsa208sha256_nosse.c  9ecaf52f581b5de9cef9a5ed5a03aee13e9d6953
 
@@ -60,7 +66,9 @@ Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
  * This file was originally written by Colin Percival as part of the Tarsnap
  * online backup system.
  */
-Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+
+==============================================================================
+Arquivos (caminho  blob SHA-1):
   src/libsodium/crypto_pwhash/scryptsalsa208sha256/sse/pwhash_scryptsalsa208sha256_sse.c  89fe8aec876431c1bd96516f871bf3020bd37a68
 
 /*-
