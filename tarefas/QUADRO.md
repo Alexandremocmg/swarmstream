@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 2 | 23 | 28 |
+| 3 | 0 | 1 | 3 | 22 | 29 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -17,12 +17,12 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 ## BLOQUEADA
 - [F1-58](cartoes/F1-58.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Remedir o manifesto v0 com libsodium real e atender (ou renegociar) tempo, tamanho e memória
 - [F1-59](cartoes/F1-59.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Integrar a telemetria às leituras reais (`sw_read`) e o `telemetry_path` ao `sw_init`
+- [F1-60](cartoes/F1-60.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real (`sw_init`, `sw_open`, `sw_read`, `sw_shutdown`) sobre cache, agendador, fonte e VFS
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
 | --- | --- | --- | --- | --- | --- |
 | [F1-02](cartoes/F1-02.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Testes do chunker (arquivos vazios, pequenos, enormes, aleatórios) |
-| [F1-03](cartoes/F1-03.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo |
 | [F1-04](cartoes/F1-04.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Geração do manifesto v0, assinado com a chave de teste (ADR-0012) |
 | [F1-05](cartoes/F1-05.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-04 | Classificação core/grupo/opcional por regras de pasta |
 | [F1-07](cartoes/F1-07.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-05 | Mips/LODs baixos sempre no core |
@@ -46,11 +46,12 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-25](cartoes/F1-25.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Gravação de traces de leitura (posição, tempo, peça) |
 | [F1-26](cartoes/F1-26.md) | R1 | Opus 5.5, esforço alto | não | espera F1-25 | Índice espacial dos traces e `sw_hint_position` |
 | [F1-35](cartoes/F1-35.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-33 | Experimento: blocos de 64, 128 e 256 KB |
-| [F1-38](cartoes/F1-38.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-03 | Segunda implementação independente de Zstd nos vetores |
+| [F1-38](cartoes/F1-38.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Segunda implementação independente de Zstd nos vetores |
 | [F1-40](cartoes/F1-40.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Carga fria de verdade, depois de reiniciar o Windows |
 
 ## Feitas
 - [F1-01](cartoes/F1-01.md): Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: 03 §11.1, vetores)
+- [F1-03](cartoes/F1-03.md): Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo
 - [F1-10](cartoes/F1-10.md): Arquivos de store pré-alocados e slots
 - [F1-11](cartoes/F1-11.md): Índice + journal com ordem dados → flush → journal → flush
 - [F1-12](cartoes/F1-12.md): Thread dona do cache e fila MPSC de pedidos
