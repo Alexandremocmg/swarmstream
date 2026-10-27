@@ -54,9 +54,9 @@ struct CacheInspection
     uint64_t journal_checkpoint_lsn = 0;
     uint64_t journal_last_lsn = 0;
     uint64_t journal_records = 0;
-    uint64_t journal_applied = 0;         // registros com LSN > índice, aplicados sobre ele
-    uint64_t journal_truncated_bytes = 0; // cauda que a próxima abertura descartaria
-    std::vector<InspectedPiece> pieces;   // estado resultante, ordenado por (arquivo, slot)
+    uint64_t journal_applied = 0;                // registros com LSN > índice, aplicados sobre ele
+    uint64_t journal_truncated_bytes = 0;        // cauda que a próxima abertura descartaria
+    std::vector<InspectedPiece> pieces;          // estado resultante, ordenado por (arquivo, slot)
     std::vector<InspectedStoreFile> store_files; // presentes na pasta ou citados por peças
     uint64_t total_piece_bytes = 0;
     uint32_t pieces_in_missing_files = 0;

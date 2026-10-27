@@ -85,7 +85,8 @@ void test_after_clean_stop()
     std::cout << "[Test] inspeção: cache parado normalmente, peça removida, pasta intocada\n";
     const fs::path dir = fresh_dir("clean");
     {
-        auto o = CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 8, .layout = kLayout});
+        auto o =
+            CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 8, .layout = kLayout});
         SW_CHECK(o.has_value());
         for (uint32_t i = 0; i < 6; ++i)
             SW_CHECK(put(**o, i).has_value()); // slots 0–5: store-000 e store-001
@@ -122,7 +123,8 @@ void test_journal_tail_garbage_and_missing_file()
     std::cout << "[Test] inspeção: cauda rasgada e store ausente são relatados, sem consertar\n";
     const fs::path dir = fresh_dir("damaged");
     {
-        auto o = CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 8, .layout = kLayout});
+        auto o =
+            CacheOwner::start(CacheOwnerConfig{.dir = dir, .total_slots = 8, .layout = kLayout});
         SW_CHECK(o.has_value());
         for (uint32_t i = 0; i < 6; ++i)
             SW_CHECK(put(**o, i).has_value());
@@ -168,7 +170,8 @@ void test_journal_only_and_invalid_index()
              CacheErrorCode::Success);
     {
         detail::JournalReplay info;
-        auto j = detail::Journal::open(dir / "journal.bin", 0, [](const detail::JournalRecord&) {}, info);
+        auto j = detail::Journal::open(
+            dir / "journal.bin", 0, [](const detail::JournalRecord&) {}, info);
         SW_CHECK(j.has_value());
         commit(*j, 2, 10, 0);
         commit(*j, 3, 11, 1);

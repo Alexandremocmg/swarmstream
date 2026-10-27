@@ -102,12 +102,8 @@ Result<CacheInspection, CacheErrorCode> inspect_cache(const fs::path& dir,
     // index.bin
     LoadedIndex loaded;
     switch (read_index_file(dir / "index.bin", layout, loaded)) {
-    case IndexLoad::Missing:
-        out.index = InspectFileState::Missing;
-        break;
-    case IndexLoad::Invalid:
-        out.index = InspectFileState::Invalid;
-        break;
+    case IndexLoad::Missing: out.index = InspectFileState::Missing; break;
+    case IndexLoad::Invalid: out.index = InspectFileState::Invalid; break;
     case IndexLoad::Ok:
         out.index = InspectFileState::Ok;
         out.index_lsn = loaded.checkpoint_lsn;
