@@ -123,6 +123,9 @@ public:
     // Testes (CacheOwnerTestHook): o próximo sync() falha como um EIO, sem sincronizar; e
     // quantos sync() chegaram de fato ao disco com sucesso.
     void fail_next_sync() noexcept { fail_next_sync_ = true; }
+    // F1-32: o próximo append() grava só metade do registro e falha com `code` (disco cheio ou EIO
+    // no meio da escrita): fica um registro rasgado no fim, como depois de uma queda.
+    void fail_next_append(CacheErrorCode code) noexcept { fail_append_ = code; }
     [[nodiscard]] uint64_t syncs() const noexcept { return syncs_; }
 
 private:
@@ -130,6 +133,7 @@ private:
     uint64_t end_ = 0;
     uint64_t syncs_ = 0;
     bool fail_next_sync_ = false;
+    CacheErrorCode fail_append_ = CacheErrorCode::Success;
     std::vector<std::byte> buffer_; // reaproveitado entre appends (registros de até ~8 MiB)
 };
 

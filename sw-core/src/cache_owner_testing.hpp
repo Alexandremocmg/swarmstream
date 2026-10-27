@@ -38,6 +38,10 @@ struct CacheOwnerTestHook
     static void fail_next_store_sync(CacheOwner& owner) noexcept;
     // O próximo sync do journal (Barreira 2, no COMMIT_PIECE ou no FREE_SLOT) falha como um EIO.
     static void fail_next_journal_sync(CacheOwner& owner) noexcept;
+    // F1-32: o próximo Put grava só metade dos dados no store (ou metade do registro no journal)
+    // e falha com `code` (DiskFull / IoError), como um ENOSPC ou EIO no meio da escrita.
+    static void fail_next_store_write(CacheOwner& owner, CacheErrorCode code) noexcept;
+    static void fail_next_journal_append(CacheOwner& owner, CacheErrorCode code) noexcept;
     // Syncs que chegaram ao disco: do store (Barreira 1) e do journal desde a última abertura
     // dele (Barreira 2; o checkpoint troca o journal e zera). SÓ na thread dona: de dentro do
     // gancho de queda (start_with_crash_hook).
