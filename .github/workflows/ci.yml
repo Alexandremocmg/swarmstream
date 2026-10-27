@@ -59,6 +59,21 @@ jobs:
             -DBUILD_TESTING=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_FILE"
 
+      # Licença do libsodium (F1-04, NOTICE): só informa. Compara o texto que o vcpkg instala com o
+      # LICENSE do tag 1.0.22-RELEASE guardado em third_party/licenses (não falha o job).
+      - name: Licença do libsodium instalada pelo vcpkg (Linux, informativo)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          f="$(ls build/vcpkg_installed/*/share/libsodium/copyright | head -n 1)"
+          echo "arquivo: $f"
+          cat "$f"
+          if diff -u third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt "$f"; then
+            echo "LICENCA IGUAL ao texto guardado no repositorio"
+          else
+            echo "LICENCA DIFERENTE do texto guardado (veja o diff acima)"
+          fi
+
       - name: Build
         run: cmake --build build --config Debug --parallel
 

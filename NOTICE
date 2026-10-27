@@ -46,5 +46,38 @@ Dependencies are fetched by vcpkg at build time. Binary distributions must
 carry the notices of the libraries they link; the expected set is listed in
 docs/adr/0008-licenca-open-source.md.
 
+  libsodium 1.0.22 .............................. ISC
+      Copyright (c) 2013-2026 Frank Denis <j at pureftpd dot org>
+      https://libsodium.org  (source: https://github.com/jedisct1/libsodium,
+      tag 1.0.22-RELEASE)
+      Used by: sw-pack (Ed25519 signature and SHA-256 of the content manifest,
+      docs/adr/0012-serializacao-do-manifesto.md).
+      How it is obtained: NOT vendored. vcpkg builds it at build time from the
+      manifest (vcpkg.json: dependency "libsodium", builtin-baseline
+      e456309491fd875487bf02b8a0dca76c1b1b00cc, port libsodium 1.0.22#1). CI jobs
+      that do not use vcpkg use the operating-system package (libsodium-dev), so
+      the version there is the distribution's.
+      Full license text (the LICENSE file of tag 1.0.22-RELEASE, git blob
+      95c22fbadfa457cd7898ebe96aaa05147589b655):
+        third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt
+      Any binary distribution that links libsodium (tools, launcher, game
+      integration) must carry this notice and that license text.
+      The library embeds code under other terms, with their own notices in the
+      libsodium source files (found by reading representative files of tag
+      1.0.22-RELEASE; not an exhaustive audit of every file):
+        - SHA-256 and SHA-512 reference implementations
+          (src/libsodium/crypto_hash/sha256/cp, sha512/cp): BSD-2-Clause,
+          Copyright 2005,2007,2009 Colin Percival. These are the SHA-256 used
+          through crypto_hash_sha256_*.
+        - scrypt (src/libsodium/crypto_pwhash/scryptsalsa208sha256): BSD-style,
+          Copyright 2013 Alexander Peslyak (and files by Colin Percival).
+        - Argon2 reference code (crypto_pwhash/argon2): CC0 1.0, Daniel Dinu and
+          Dmitry Khovratovich, 2015.
+        - BLAKE2b reference code (crypto_generichash/blake2b/ref): CC0 / public
+          domain dedication.
+      Of these, only SHA-256 (and SHA-512, used inside Ed25519) is called by
+      this project. The BSD notices must be reproduced in binary distributions
+      that carry the statically linked library.
+
 Rule: the pull request that vendors third-party code, or that adds a
 dependency shipped inside a binary distribution, updates this file.
