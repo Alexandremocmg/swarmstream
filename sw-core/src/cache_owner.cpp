@@ -23,8 +23,9 @@ namespace swarmstream {
 // ---------------------------------------------------------------- CacheRequest
 
 CacheRequest::CacheRequest(CacheOp op, const PieceId& piece, std::span<const std::byte> input,
-                           std::span<std::byte> output, std::span<const uint32_t> blocks) noexcept
-    : op_(op), piece_(piece), input_(input), output_(output), blocks_(blocks)
+                           std::span<std::byte> output, std::span<const uint32_t> blocks,
+                           bool pinned) noexcept
+    : op_(op), piece_(piece), input_(input), output_(output), blocks_(blocks), pinned_(pinned)
 {
 }
 
@@ -182,6 +183,30 @@ struct CacheOwner::Impl
     // PieceLease subtraem de qualquer thread. Criada antes de a thread existir.
     std::shared_ptr<detail::LeaseTable> leases;
     std::unordered_map<PieceHash, Entry> index; // chave: a raiz Merkle (ADR-0007)
+
+    // F1-14: o relógio. Um item por slot, reservado em start(); só a dona toca.
+    struct ClockSlot
+    {
+        PieceHash piece{};
+        bool used = false;
+        bool ref = false; // lida ou gravada como quente desde a última passada do ponteiro
+        bool pinned = false;
+    };
+    struct Victim
+    {
+        PieceHash piece;
+        SlotId slot;
+    };
+    static constexpr size_t kEvictBatch = 64; // FREE_SLOT por sync
+    std::vector<ClockSlot> clock;
+    std::vector<Victim> victims; // reservado: remover não aloca
+    uint32_t hand = 0;
+    uint32_t high_slots = 0; // 0 = remoção desligada
+    uint32_t low_slots = 0;
+    std::atomic<bool> evict_throw_next{false}; // CacheOwnerTestHook (F1-14)
+    std::atomic<bool> evict_fail_sync_next{false};
+    std::atomic<uint64_t> evicted_pieces{0};
+    std::atomic<uint64_t> evicted_bytes{0};
     detail::Journal journal;
     uint64_t next_lsn = 1;
     bool broken = false; // um sync falhou: tudo dá IoError até fechar e reabrir
@@ -251,7 +276,13 @@ struct CacheOwner::Impl
 
     [[nodiscard]] CacheErrorCode recover();
     [[nodiscard]] CacheErrorCode checkpoint();
+    [[nodiscard]] CacheErrorCode append_record(detail::JournalRecord& rec);
     [[nodiscard]] CacheErrorCode append_and_sync(detail::JournalRecord& rec);
+    // Remove peças pelo relógio até sobrarem no máximo `target`. Success também quando não há
+    // mais o que remover (tudo fixado ou preso): quem precisa do slot confere depois.
+    [[nodiscard]] CacheErrorCode evict_to(uint32_t target);
+    void maybe_evict() noexcept;
+    void touch(SlotId slot) noexcept { clock[slot].ref = true; }
     [[nodiscard]] CacheErrorCode invalidate(PieceHash piece);
     [[nodiscard]] CacheErrorCode drop_corrupt(PieceHash piece);
     // Leitura com acquire: o uso da peça por quem soltou o lease (release) acontece antes de o
@@ -268,6 +299,7 @@ struct CacheOwner::Impl
     void get(CacheRequest& r);
     void remove(CacheRequest& r);
     void acquire(CacheRequest& r) noexcept;
+    void set_pinned(CacheRequest& r) noexcept;
 };
 
 // 04 §5. Índice do último checkpoint + registros do journal com LSN maior; depois descarta o
@@ -358,6 +390,7 @@ CacheErrorCode CacheOwner::Impl::recover()
     if (auto s = store.shrink_to_ceiling(); !s) return s.error();
     for (const auto& [piece, e] : index) {
         if (!slots.mark_used(e.slot)) return CacheErrorCode::IoError; // não deveria ocorrer
+        clock[e.slot] = ClockSlot{piece, true, false, false}; // sem marca: ninguém leu ainda
     }
     pieces.store(static_cast<uint32_t>(index.size()), std::memory_order_relaxed);
     recovery.pieces = static_cast<uint32_t>(index.size());
@@ -405,7 +438,7 @@ CacheErrorCode CacheOwner::Impl::checkpoint()
     return CacheErrorCode::Success;
 }
 
-CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
+CacheErrorCode CacheOwner::Impl::append_record(detail::JournalRecord& rec)
 {
     if (fail_next_journal_sync.exchange(false)) journal.fail_next_sync();
     if (fail_next_journal_append.load(std::memory_order_relaxed) != CacheErrorCode::Success) {
@@ -416,9 +449,89 @@ CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
     rec.timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();
-    if (auto rc = journal.append(rec, crash_hook, crash_context); rc != CacheErrorCode::Success)
-        return rc;
+    return journal.append(rec, crash_hook, crash_context);
+}
+
+CacheErrorCode CacheOwner::Impl::append_and_sync(detail::JournalRecord& rec)
+{
+    if (auto rc = append_record(rec); rc != CacheErrorCode::Success) return rc;
     return journal.sync(); // Barreira 2: ponto de commit
+}
+
+// F1-14. Ponteiro do relógio sobre os slots: pula livre, fixado e preso por lease; peça com a
+// marca "lida" perde a marca e ganha outra volta; a primeira sem marca é a vítima. Duas voltas
+// bastam para achar tudo o que é removível (a primeira limpa as marcas). Cada lote grava um
+// FREE_SLOT por vítima e faz UM sync (Barreira 2); os slots só são liberados depois dele.
+CacheErrorCode CacheOwner::Impl::evict_to(uint32_t target)
+{
+    const uint32_t total = config.total_slots;
+    while (index.size() > target) {
+        victims.clear();
+        const size_t want = std::min<size_t>(index.size() - target, kEvictBatch);
+        for (uint64_t budget = uint64_t{2} * total + 2; victims.size() < want && budget > 0;
+             --budget) {
+            const SlotId s = hand;
+            hand = hand + 1 == total ? 0 : hand + 1;
+            ClockSlot& c = clock[s];
+            if (!c.used || c.pinned || leased(s)) continue;
+            if (c.ref) {
+                c.ref = false;
+                continue;
+            }
+            victims.push_back({c.piece, s});
+            c.used = false; // não é escolhida duas vezes no lote
+        }
+        if (victims.empty()) return CacheErrorCode::Success; // nada removível
+        for (const Victim& v : victims) {
+            detail::JournalRecord rec;
+            rec.type = detail::JournalType::FreeSlot;
+            rec.piece = v.piece;
+            rec.store_file_id = v.slot / config.layout.slots_per_file;
+            rec.slot_in_file = v.slot % config.layout.slots_per_file;
+            if (append_record(rec) != CacheErrorCode::Success) {
+                mark_broken();
+                return CacheErrorCode::IoError;
+            }
+        }
+        if (evict_fail_sync_next.exchange(false)) journal.fail_next_sync();
+        if (journal.sync() != CacheErrorCode::Success) { // Barreira 2, antes de liberar os slots
+            mark_broken();
+            return CacheErrorCode::IoError;
+        }
+        for (const Victim& v : victims) {
+            const auto it = index.find(v.piece);
+            if (it == index.end() || it->second.slot != v.slot || !slots.release(v.slot)) {
+                mark_broken(); // índice e alocador discordam: não deveria ocorrer
+                return CacheErrorCode::IoError;
+            }
+            evicted_bytes.fetch_add(it->second.size, std::memory_order_relaxed);
+            index.erase(it);
+        }
+        evicted_pieces.fetch_add(victims.size(), std::memory_order_relaxed);
+        pieces.fetch_sub(static_cast<uint32_t>(victims.size()), std::memory_order_relaxed);
+    }
+    return CacheErrorCode::Success;
+}
+
+// Marca alta atingida: desce até a marca baixa (docs/04: começa em 95%, para em 85%).
+void CacheOwner::Impl::maybe_evict() noexcept
+{
+    // Roda DEPOIS de o Put responder: quem pediu pode já ter destruído o pedido. Nada escapa
+    // daqui, porque o catch de process() completaria esse pedido de novo (uso depois da
+    // liberação). Falha de alocação (índice, buffer do journal, checkpoint) quebra o cache.
+    try {
+        if (high_slots == 0 || index.size() < high_slots) return;
+        if (evict_throw_next.exchange(false)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            throw std::bad_alloc();
+        }
+        if (evict_to(low_slots) == CacheErrorCode::Success && !broken &&
+            journal.size_bytes() > config.checkpoint_journal_bytes) {
+            if (checkpoint() != CacheErrorCode::Success) mark_broken();
+        }
+    } catch (...) {
+        mark_broken();
+    }
 }
 
 // Tira a peça do cache: FREE_SLOT no journal (sincronizado) ANTES de o slot poder ser
@@ -443,6 +556,7 @@ CacheErrorCode CacheOwner::Impl::invalidate(PieceHash piece)
         mark_broken(); // índice e alocador discordam: não deveria ocorrer
         return CacheErrorCode::IoError;
     }
+    clock[it->second.slot].used = false;
     index.erase(it);
     pieces.fetch_sub(1, std::memory_order_relaxed);
     return CacheErrorCode::Success;
@@ -506,6 +620,7 @@ void CacheOwner::Impl::process(CacheRequest& r) noexcept
         case CacheOp::Get: get(r); return;
         case CacheOp::Remove: remove(r); return;
         case CacheOp::Acquire: acquire(r); return;
+        case CacheOp::SetPinned: set_pinned(r); return;
         }
     } catch (...) { // sem memória para o índice ou o buffer do journal
         mark_broken();
@@ -537,6 +652,9 @@ void CacheOwner::Impl::put(CacheRequest& r)
     }
     if (const auto it = index.find(r.piece_.hash); it != index.end()) {
         if (!it->second.corrupt) {
+            ClockSlot& c = clock[it->second.slot];
+            if (r.pinned_) c.pinned = true;
+            if (!r.cold_) c.ref = true;
             r.complete(CacheErrorCode::Success, it->second.size); // já está: não regrava
             return;
         }
@@ -546,7 +664,16 @@ void CacheOwner::Impl::put(CacheRequest& r)
             return;
         }
     }
-    const auto slot = slots.allocate();
+    auto slot = slots.allocate();
+    if (!slot && slot.error() == CacheErrorCode::OutOfSlots && high_slots != 0) {
+        // Cheio mesmo com a remoção ligada (a anterior achou tudo fixado ou preso): tenta de
+        // novo, porque leases podem ter sido soltos desde então.
+        if (const CacheErrorCode rc = evict_to(low_slots); rc != CacheErrorCode::Success) {
+            r.complete(rc, 0);
+            return;
+        }
+        slot = slots.allocate();
+    }
     if (!slot) {
         r.complete(slot.error(), 0);
         return;
@@ -604,11 +731,13 @@ void CacheOwner::Impl::put(CacheRequest& r)
     }
     crash(detail::CrashPoint::AfterJournalSync);
     index.emplace(r.piece_.hash, std::move(entry));
+    clock[*slot] = ClockSlot{r.piece_.hash, true, !r.cold_, r.pinned_};
     pieces.fetch_add(1, std::memory_order_relaxed);
     if (journal.size_bytes() > config.checkpoint_journal_bytes) {
         if (checkpoint() != CacheErrorCode::Success) mark_broken(); // a peça já é durável
     }
     r.complete(CacheErrorCode::Success, size);
+    maybe_evict(); // depois da resposta: quem pediu não espera pela remoção
 }
 
 void CacheOwner::Impl::get(CacheRequest& r)
@@ -660,6 +789,7 @@ void CacheOwner::Impl::get(CacheRequest& r)
         r.complete(drop_corrupt(r.piece_.hash), 0); // com lease, fica marcada e presa
         return;
     }
+    touch(e.slot);
     r.complete(CacheErrorCode::Success, e.size);
 }
 
@@ -679,7 +809,19 @@ void CacheOwner::Impl::acquire(CacheRequest& r) noexcept
         return;
     }
     detail::LeaseAccess::grant(*r.lease_, leases, r.piece_.hash, it->second.slot, it->second.size);
+    touch(it->second.slot);
     r.complete(CacheErrorCode::Success, it->second.size);
+}
+
+void CacheOwner::Impl::set_pinned(CacheRequest& r) noexcept
+{
+    const auto it = index.find(r.piece_.hash);
+    if (it == index.end()) {
+        r.complete(CacheErrorCode::PieceNotFound, 0);
+        return;
+    }
+    clock[it->second.slot].pinned = r.pinned_;
+    r.complete(CacheErrorCode::Success, 0);
 }
 
 void CacheOwner::Impl::remove(CacheRequest& r)
@@ -704,12 +846,28 @@ CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* co
     if (config.layout.slots_per_file == 0 || config.total_slots == 0) {
         return Unexpected(CacheErrorCode::InvalidSize);
     }
+    const bool evict_on = config.evict_high_percent != 0 || config.evict_low_percent != 0;
+    if (evict_on &&
+        !(config.evict_low_percent > 0 && config.evict_low_percent < config.evict_high_percent &&
+          config.evict_high_percent <= 100)) {
+        return Unexpected(CacheErrorCode::InvalidSize);
+    }
     auto store = StoreFiles::open(config.dir, config.total_slots, config.layout);
     if (!store) return Unexpected(store.error());
     std::unique_ptr<Impl> impl;
     try {
         impl = std::make_unique<Impl>(std::move(*store), std::move(config));
         impl->index.reserve(impl->config.total_slots); // o índice não reorganiza no meio do jogo
+        impl->clock.resize(impl->config.total_slots);
+        impl->victims.reserve(Impl::kEvictBatch);
+        if (evict_on) {
+            const uint64_t total = impl->config.total_slots;
+            // Pelo menos 1 slot na marca alta e a baixa estritamente abaixo dela.
+            impl->high_slots = static_cast<uint32_t>(
+                std::max<uint64_t>(1, total * impl->config.evict_high_percent / 100));
+            impl->low_slots = static_cast<uint32_t>(std::min<uint64_t>(
+                total * impl->config.evict_low_percent / 100, impl->high_slots - 1));
+        }
         impl->crash_hook = hook;
         impl->crash_context = context;
         if (auto rc = impl->recover(); rc != CacheErrorCode::Success) return Unexpected(rc);
@@ -809,6 +967,16 @@ uint64_t CacheOwner::leases() const noexcept
     return impl_->leases->total.load(std::memory_order_relaxed);
 }
 
+uint64_t CacheOwner::evicted_pieces() const noexcept
+{
+    return impl_->evicted_pieces.load(std::memory_order_relaxed);
+}
+
+uint64_t CacheOwner::evicted_bytes() const noexcept
+{
+    return impl_->evicted_bytes.load(std::memory_order_relaxed);
+}
+
 bool CacheOwner::broken() const noexcept
 {
     return impl_->broken_flag.load(std::memory_order_relaxed);
@@ -898,6 +1066,16 @@ void CacheOwnerTestHook::skip_checkpoint_on_stop(CacheOwner& owner) noexcept
 void CacheOwnerTestHook::corrupt_next_read(CacheOwner& owner) noexcept
 {
     owner.impl_->corrupt_next_read.store(true);
+}
+
+void CacheOwnerTestHook::throw_in_next_eviction(CacheOwner& owner) noexcept
+{
+    owner.impl_->evict_throw_next.store(true);
+}
+
+void CacheOwnerTestHook::fail_next_eviction_sync(CacheOwner& owner) noexcept
+{
+    owner.impl_->evict_fail_sync_next.store(true);
 }
 
 bool CacheOwnerTestHook::wait_owner_left_loop(CacheOwner& owner,
