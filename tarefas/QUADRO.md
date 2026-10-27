@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 24 | 27 |
+| 3 | 0 | 1 | 2 | 23 | 28 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -13,6 +13,10 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-20](cartoes/F1-20.md) (R1, sessão: Arquiteto): GDExtension com `ResourceFormatLoader` na frente sobre o `sw-core` (com mock), conforme o ADR-0016
 - [F1-33](cartoes/F1-33.md) (R3, sessão: Pleno): Script de relatório da rodada (métricas por perfil)
 - [F1-47](cartoes/F1-47.md) (R3, sessão: Pleno): Validar a bancada com uma mudança conhecida (rede mais lenta tem de piorar a espera)
+
+## BLOQUEADA
+- [F1-58](cartoes/F1-58.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Remedir o manifesto v0 com libsodium real e atender (ou renegociar) tempo, tamanho e memória
+- [F1-59](cartoes/F1-59.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Integrar a telemetria às leituras reais (`sw_read`) e o `telemetry_path` ao `sw_init`
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -26,7 +30,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-17](cartoes/F1-17.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | VFS: caminho + offset + tamanho → blocos |
 | [F1-21](cartoes/F1-21.md) | R1 | Opus 5.5, esforço alto | não | espera F1-20 | Política de falta para textura (mip menor + troca ao chegar) |
 | [F1-24](cartoes/F1-24.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Overlay de debug (acertos, faltas, fila, bytes por fonte) |
-| [F1-30](cartoes/F1-30.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo |
 | [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33 | Rodadas semanais nos 3 perfis + comparação com o baseline |
 | [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
@@ -59,6 +62,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-27](cartoes/F1-27.md): Fonte HTTP Range implementando `IContentSource`, com conexões persistentes
 - [F1-28](cartoes/F1-28.md): Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento)
 - [F1-29](cartoes/F1-29.md): Estimador de banda e RTT da fonte
+- [F1-30](cartoes/F1-30.md): Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo
 - [F1-31](cartoes/F1-31.md): Teste de queda: matar o processo em pontos aleatórios da escrita
 - [F1-32](cartoes/F1-32.md): Teste de disco cheio e de erro de escrita
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
