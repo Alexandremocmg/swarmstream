@@ -1,0 +1,170 @@
+Avisos de dominio publico / CC0 embutidos no libsodium: D. J. Bernstein (hsalsa20, salsa20, chacha20 ref),
+BLAKE2 (Samuel Neves), Argon2 (Dinu e Khovratovich), Thomas Pornin.
+Texto copiado VERBATIM dos cabecalhos de arquivos do libsodium 1.0.22 (tag 1.0.22-RELEASE,
+https://github.com/jedisct1/libsodium), lidos pela API do GitHub (sem baixar tarball).
+Gerado por entry(): os blocos abaixo sao o comentario inicial de cada arquivo listado.
+Varredura completa: docs/medicoes/varredura-licencas-libsodium-1.0.22.md
+
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_core/hsalsa20/ref2/core_hsalsa20_ref2.c  1d1220fee237f94a0a4f49b93af1ddf3ef7a625d
+
+/*
+version 20080912
+D. J. Bernstein
+Public domain.
+*/
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_generichash/blake2b/ref/blake2.h  edfc99a245c9b3c1d4c19c352c1c5211e087d712
+
+/*
+   BLAKE2 reference source code package - reference C implementations
+
+   Written in 2012 by Samuel Neves <sneves@dei.uc.pt>
+
+   To the extent possible under law, the author(s) have dedicated all copyright
+   and related and neighboring rights to this software to the public domain
+   worldwide. This software is distributed without any warranty.
+
+   All code is triple-licensed under the
+   [CC0](http://creativecommons.org/publicdomain/zero/1.0), the
+   [OpenSSL Licence](https://www.openssl.org/source/license.html), or
+   the [Apache Public License 2.0](http://www.apache.org/licenses/LICENSE-2.0),
+   at your choosing.
+ */
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_generichash/blake2b/ref/blake2b-load-sse2.h  8e67421acafc507decfc28ba519c4a56bc4c6590
+  src/libsodium/crypto_generichash/blake2b/ref/blake2b-load-sse41.h  31745fc139d21010a214729b1b7f904df4a5e469
+
+/*
+   BLAKE2 reference source code package - optimized C implementations
+
+   Written in 2012 by Samuel Neves <sneves@dei.uc.pt>
+
+   To the extent possible under law, the author(s) have dedicated all copyright
+   and related and neighboring rights to this software to the public domain
+   worldwide. This software is distributed without any warranty.
+
+   You should have received a copy of the CC0 Public Domain Dedication along
+   with
+   this software. If not, see
+   <http://creativecommons.org/publicdomain/zero/1.0/>.
+*/
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_generichash/blake2b/ref/blake2b-ref.c  19008f54ac55eb00e87bf7afa06ce2cec7a534a4
+
+/*
+   BLAKE2 reference source code package - C implementations
+
+   Written in 2012 by Samuel Neves <sneves@dei.uc.pt>
+
+   To the extent possible under law, the author(s) have dedicated all copyright
+   and related and neighboring rights to this software to the public domain
+   worldwide. This software is distributed without any warranty.
+
+   You should have received a copy of the CC0 Public Domain Dedication along
+   with
+   this software. If not, see
+   <http://creativecommons.org/publicdomain/zero/1.0/>.
+*/
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_pwhash/argon2/argon2.h  a1014a470a596bc9936b2beba857226e248cd374
+
+/*
+ * Argon2 source code package
+ *
+ * Written by Daniel Dinu and Dmitry Khovratovich, 2015
+ *
+ * This work is licensed under a Creative Commons CC0 1.0 License/Waiver.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication along
+ * with this software. If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_pwhash/argon2/argon2-core.c  d1274ba38277f3f999d457264e2e64f9fb491003
+  src/libsodium/crypto_pwhash/argon2/argon2-core.h  d544f3ebe6d36594bc2a2d5eac65cb8a6d1e924d
+  src/libsodium/crypto_pwhash/argon2/argon2-fill-block-avx2.c  5c7956632b20250a7a3e344e5fed45184d6c8ba8
+  src/libsodium/crypto_pwhash/argon2/argon2-fill-block-avx512f.c  8629fdf51b2a11f6f25aa5f77508e9ddd9712e8a
+  src/libsodium/crypto_pwhash/argon2/argon2-fill-block-ref.c  d93daee19a94f9893bb17343e7dc04c6bb1f8610
+  src/libsodium/crypto_pwhash/argon2/argon2-fill-block-ssse3.c  1930bc35f30b1aa35773a6ed1dc5a55e48e4d2c8
+  src/libsodium/crypto_pwhash/argon2/argon2.c  ddc55c2c587060979d48edce4b1fbb2ef56a657e
+
+/*
+ * Argon2 source code package
+ *
+ * Written by Daniel Dinu and Dmitry Khovratovich, 2015
+ *
+ * This work is licensed under a Creative Commons CC0 1.0 License/Waiver.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication along
+ * with
+ * this software. If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_pwhash/argon2/argon2-fill-block-neon.c  3e3fec7aacd063dd4c13101f78cfb07fae69d637
+
+/*
+ * Argon2 source code package
+ *
+ * Written by Daniel Dinu and Dmitry Khovratovich, 2015
+ *
+ * This work is licensed under a Creative Commons CC0 1.0 License/Waiver.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication along
+ * with
+ * this software. If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ *
+ * AARCH64 NEON implementation ported from SSSE3 version.
+ */
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_pwhash/argon2/argon2-fill-block-wasm32.c  d8d65d8b43f819feba2c2b8f80ab6fb1aaef80bf
+
+/*
+ * Argon2 source code package
+ *
+ * Written by Daniel Dinu and Dmitry Khovratovich, 2015
+ *
+ * This work is licensed under a Creative Commons CC0 1.0 License/Waiver.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication along
+ * with
+ * this software. If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ *
+ * WebAssembly SIMD port of the SSSE3 implementation.
+ */
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_pwhash/argon2/argon2-encoding.c  3c9b4927a1872ec4e72fb819a66d5e9e028028c7
+
+/*
+ * Example code for a decoder and encoder of "hash strings", with Argon2
+ * parameters.
+ *
+ * The code was originally written by Thomas Pornin <pornin@bolet.org>,
+ * to whom comments and remarks may be sent. It is released under what
+ * should amount to Public Domain or its closest equivalent; the
+ * following mantra is supposed to incarnate that fact with all the
+ * proper legal rituals:
+ *
+ * ---------------------------------------------------------------------
+ * This file is provided under the terms of Creative Commons CC0 1.0
+ * Public Domain Dedication. To the extent possible under law, the
+ * author (Thomas Pornin) has waived all copyright and related or
+ * neighboring rights to this file. This work is published from: Canada.
+ * ---------------------------------------------------------------------
+ *
+ * Copyright (c) 2015 Thomas Pornin
+ */
+Arquivos do tag 1.0.22-RELEASE (caminho, blob SHA-1 do git):
+  src/libsodium/crypto_stream/chacha20/ref/chacha20_ref.c  40cccbf8f8f90eb54dd73a493206c202f42aef39
+  src/libsodium/crypto_stream/salsa20/ref/salsa20_ref.c  f0854ebf7e171cf733c1f72054cb05ed032a85ce
+  src/libsodium/crypto_stream/salsa2012/ref/stream_salsa2012_ref.c  bfdfeedba37435d8e3b1d3a6b88d37d58ba8933b
+  src/libsodium/crypto_stream/salsa208/ref/stream_salsa208_ref.c  38b3ed5bfd6d4977e146d6adccb93a9626ac817f
+
+/*
+ chacha-merged.c version 20080118
+ D. J. Bernstein
+ Public domain.
+ */

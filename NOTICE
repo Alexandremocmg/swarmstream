@@ -62,22 +62,29 @@ docs/adr/0008-licenca-open-source.md.
         third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt
       Any binary distribution that links libsodium (tools, launcher, game
       integration) must carry this notice and that license text.
-      The library embeds code under other terms, with their own notices in the
-      libsodium source files (found by reading representative files of tag
-      1.0.22-RELEASE; not an exhaustive audit of every file):
-        - SHA-256 and SHA-512 reference implementations
-          (src/libsodium/crypto_hash/sha256/cp, sha512/cp): BSD-2-Clause,
-          Copyright 2005,2007,2009 Colin Percival. These are the SHA-256 used
-          through crypto_hash_sha256_*.
-        - scrypt (src/libsodium/crypto_pwhash/scryptsalsa208sha256): BSD-style,
-          Copyright 2013 Alexander Peslyak (and files by Colin Percival).
-        - Argon2 reference code (crypto_pwhash/argon2): CC0 1.0, Daniel Dinu and
-          Dmitry Khovratovich, 2015.
-        - BLAKE2b reference code (crypto_generichash/blake2b/ref): CC0 / public
-          domain dedication.
-      Of these, only SHA-256 (and SHA-512, used inside Ed25519) is called by
-      this project. The BSD notices must be reproduced in binary distributions
-      that carry the statically linked library.
+      The library embeds code under other terms, each with its own notice in the
+      libsodium source files. Found by an automated scan of ALL 714 files of tag
+      1.0.22-RELEASE (713 text files, keyword criterion; method, reach and
+      limits in docs/medicoes/varredura-licencas-libsodium-1.0.22.md). The
+      notices are preserved verbatim, with path and git blob SHA, in
+      third_party/licenses/:
+        - SHA-256 / SHA-512 reference implementations (crypto_hash/sha256/cp,
+          sha512/cp) and PBKDF2-SHA256: BSD-2-Clause, Copyright 2005,2007,2009
+          Colin Percival -> libsodium-1.0.22-BSD-Percival.txt. The SHA-256 used
+          through crypto_hash_sha256_* (and SHA-512 inside Ed25519) is this code.
+        - scrypt (crypto_pwhash/scryptsalsa208sha256): BSD-2-Clause, Copyright
+          2009 Colin Percival, and a BSD-style notice, Copyright 2012,2013
+          Alexander Peslyak -> libsodium-1.0.22-BSD-Peslyak-scrypt.txt.
+        - Argon2 (Daniel Dinu, Dmitry Khovratovich; encoding by Thomas Pornin),
+          BLAKE2b (Samuel Neves) : CC0 1.0 (BLAKE2 also OpenSSL / Apache-2.0 at
+          the user's choice); Salsa20, ChaCha20, HSalsa20 reference code
+          (D. J. Bernstein): public domain
+          -> libsodium-1.0.22-dominio-publico-CC0.txt.
+      The whole library is built by the vcpkg port; which objects reach a given
+      executable depends on static or dynamic linking and was not checked by
+      symbol table, so all of the above are treated as applicable. This project
+      calls only SHA-256 and Ed25519 (and sodium_init). Binary distributions that
+      carry libsodium must reproduce the ISC and BSD notices.
 
 Rule: the pull request that vendors third-party code, or that adds a
 dependency shipped inside a binary distribution, updates this file.

@@ -59,19 +59,36 @@ jobs:
             -DBUILD_TESTING=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_FILE"
 
-      # Licença do libsodium (F1-04, NOTICE): só informa. Compara o texto que o vcpkg instala com o
-      # LICENSE do tag 1.0.22-RELEASE guardado em third_party/licenses (não falha o job).
+      # Licença do libsodium (F1-04, NOTICE): só informa (não falha o job), mas SEMPRE diz o que houve:
+      # arquivo ausente (comparação NÃO realizada), erro do diff, divergência (com o diff) ou igualdade.
+      # "igual" só é dito quando o diff rodou e devolveu 0.
       - name: Licença do libsodium instalada pelo vcpkg (Linux, informativo)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          f="$(ls build/vcpkg_installed/*/share/libsodium/copyright | head -n 1)"
-          echo "arquivo: $f"
-          cat "$f"
-          if diff -u third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt "$f"; then
-            echo "LICENCA IGUAL ao texto guardado no repositorio"
+          ref=third_party/licenses/libsodium-1.0.22-LICENSE-ISC.txt
+          found=""
+          for f in build/vcpkg_installed/*/share/libsodium/copyright; do
+            if [ -f "$f" ]; then found="$f"; break; fi
+          done
+          if [ -z "$found" ]; then
+            echo "::warning::copyright do vcpkg não encontrado em build/vcpkg_installed/*/share/libsodium/copyright; comparação NÃO realizada"
+            exit 0
+          fi
+          if [ ! -f "$ref" ]; then
+            echo "::warning::texto guardado $ref não encontrado; comparação NÃO realizada"
+            exit 0
+          fi
+          echo "arquivo do vcpkg: $found"
+          cat "$found"
+          rc=0
+          diff -u "$ref" "$found" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "Licença do vcpkg IGUAL ao texto guardado ($ref)"
+          elif [ "$rc" -eq 1 ]; then
+            echo "::warning::copyright do vcpkg DIFERE do texto guardado em $ref (diff acima); conferir se o texto do NOTICE continua valendo"
           else
-            echo "LICENCA DIFERENTE do texto guardado (veja o diff acima)"
+            echo "::warning::diff falhou (código $rc); comparação NÃO realizada"
           fi
 
       - name: Build
