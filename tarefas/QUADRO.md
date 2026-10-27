@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 31 | 19 |
+| 3 | 0 | 1 | 0 | 30 | 20 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -29,7 +29,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-18](cartoes/F1-18.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Ferramenta `sw-cache-inspect` (listar peças, uso, estado) |
 | [F1-21](cartoes/F1-21.md) | R1 | Opus 5.5, esforço alto | não | espera F1-20 | Política de falta para textura (mip menor + troca ao chegar) |
 | [F1-24](cartoes/F1-24.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Overlay de debug (acertos, faltas, fila, bytes por fonte) |
-| [F1-28](cartoes/F1-28.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento) |
 | [F1-30](cartoes/F1-30.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Eventos de telemetria `read_miss`, `eviction`, `frame_stutter` gravados em arquivo |
 | [F1-31](cartoes/F1-31.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Teste de queda: matar o processo em pontos aleatórios da escrita |
 | [F1-32](cartoes/F1-32.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Teste de disco cheio e de erro de escrita |
@@ -38,7 +37,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
 | [F1-50](cartoes/F1-50.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-20 | Trocar uma thread por peça e por ensure por um pool de threads (loader e mock) |
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
-| [F1-56](cartoes/F1-56.md) | R2 ou R3 | Sonnet 5.5, esforço médio | não | espera F1-28 | MemoryContentSource trata o prazo como prioridade, não como limite |
+| [F1-56](cartoes/F1-56.md) | R2 ou R3 | Sonnet 5.5, esforço médio | não | sim | MemoryContentSource trata o prazo como prioridade, não como limite |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -60,6 +59,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-12](cartoes/F1-12.md): Thread dona do cache e fila MPSC de pedidos
 - [F1-13](cartoes/F1-13.md): Leases com contagem de referência
 - [F1-27](cartoes/F1-27.md): Fonte HTTP Range implementando `IContentSource`, com conexões persistentes
+- [F1-28](cartoes/F1-28.md): Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento)
 - [F1-29](cartoes/F1-29.md): Estimador de banda e RTT da fonte
 - [F1-36](cartoes/F1-36.md): Corrigir a checagem vazia do `baseline.py --check`: relatório sem as métricas esperadas (ou com chaves erradas) hoje imprime "within limits" e sai com código 0. Deve falhar quando faltar `frames_over_33ms_steady`, `frames_over_100ms`, `p99_frame_ms` ou `load_ms`, e ter teste para isso
 - [F1-39](cartoes/F1-39.md): Ampliar o lint do CI para as ferramentas do baseline e os vetores
