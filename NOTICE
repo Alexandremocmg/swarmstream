@@ -42,8 +42,7 @@ Third-party libraries
 -------------------------------------------------------------------------
 
 No third-party library source code is included in this repository. The
-sw-pack tool (and any binary that links it, such as tools and the Godot
-extension that reuse it) contains the static libraries below, compiled from
+sw-pack tool (and any binary that links it) contains the static libraries below, compiled from
 the lib/ directory of tarballs that CMake downloads at build time and checks
 by SHA-256 (see sw-pack/CMakeLists.txt). Nothing from programs/ or contrib/
 of either project is built.
