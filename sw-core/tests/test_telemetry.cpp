@@ -13,14 +13,17 @@
 #include "check.hpp"
 #include "swarmstream/cache_owner.hpp"
 #include "swarmstream/telemetry.hpp"
+#include "telemetry_testing.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <new>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -39,6 +42,28 @@
 #error "SANITIZE_THREAD ligado, mas este executável não foi compilado com -fsanitize=thread"
 #endif
 #endif
+
+// Contador de alocações da thread que chama (F1-30: "emit_* não aloca"). Substitui o operator new
+// do executável. Limitação: só conta operator new/new[] sem alinhamento especial; new alinhado
+// (std::align_val_t), malloc direto e alocações de outras threads não entram.
+namespace {
+thread_local bool g_count_allocs = false;
+thread_local uint64_t g_allocs = 0;
+
+void* counted_alloc(std::size_t n)
+{
+    if (g_count_allocs) ++g_allocs;
+    if (void* p = std::malloc(n != 0 ? n : 1)) return p;
+    throw std::bad_alloc();
+}
+} // namespace
+
+void* operator new(std::size_t n) { return counted_alloc(n); }
+void* operator new[](std::size_t n) { return counted_alloc(n); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 namespace swarmstream {
 
@@ -242,6 +267,65 @@ void test_multi_producer_stress()
     cleanup(dir);
 }
 
+// Disco cheio: o erro aparece no fflush, não no fwrite. Os eventos do buffer têm de virar
+// write_errors (e não written), e o resumo do arquivo tem de dizer isso.
+void test_flush_failure_is_counted()
+{
+    const fs::path dir = fresh_dir("flushfail");
+    const fs::path file = dir / "t.jsonl";
+    uint64_t errors = 0, written = 0;
+    {
+        auto log = TelemetryLog::open(file);
+        SW_CHECK(log != nullptr);
+        TelemetryLogTestHook::fail_next_flush(*log);
+        for (uint64_t i = 0; i < 5; ++i)
+            SW_CHECK(log->emit_eviction(i, i));
+        log->flush();
+        errors = log->write_errors();
+        written = log->written();
+        SW_CHECK(errors >= 1);                // a falha foi vista, não engolida
+        SW_CHECK(errors + written == 5);      // cada evento conta em uma coluna só
+        SW_CHECK(log->emit_eviction(99, 99)); // depois da falha, volta a gravar
+        log->flush();
+        SW_CHECK(log->write_errors() == errors && log->written() == written + 1);
+        written = log->written();
+    }
+    const auto lines = read_lines(file);
+    SW_CHECK(num(lines.back(), "write_errors") == errors);
+    SW_CHECK(num(lines.back(), "written") == written);
+    cleanup(dir);
+}
+
+// "Não aloca": 80 mil emits dos 4 tipos, com e sem anel cheio, sem nenhuma alocação na thread
+// que emite. O controle positivo prova que o contador funciona.
+void test_emit_does_not_allocate()
+{
+    const fs::path dir = fresh_dir("alloc");
+    auto log = TelemetryLog::open(dir / "t.jsonl", 64); // anel pequeno: também enche
+    SW_CHECK(log != nullptr);
+
+    g_allocs = 0;
+    g_count_allocs = true;
+    auto* control = new int(1); // controle positivo
+    g_count_allocs = false;
+    delete control;
+    SW_CHECK(g_allocs == 1);
+
+    g_allocs = 0;
+    g_count_allocs = true;
+    for (uint64_t i = 0; i < 20000; ++i) {
+        (void)log->emit_read_miss_start({.request_id = i, .path = "core/mapa.bin", .size = 4096});
+        (void)log->emit_read_miss({.request_id = i, .call_result = "SW_OK"});
+        (void)log->emit_eviction(i, i);
+        (void)log->emit_frame_stutter(i, "io_wait");
+    }
+    g_count_allocs = false;
+    SW_CHECK(g_allocs == 0);
+    SW_CHECK(log->dropped() > 0); // o caminho de anel cheio também foi exercitado
+    log.reset();
+    cleanup(dir);
+}
+
 // A dona do cache emite `eviction` por lote; a soma bate com os contadores.
 void test_cache_owner_eviction_events()
 {
@@ -270,7 +354,7 @@ void test_cache_owner_eviction_events()
             auto req = CacheRequest::put(PieceId(i, h), data);
             SW_CHECK(owner.call(req).has_value());
         }
-        owner.stop();
+        (void)owner.stop();
         pieces = owner.evicted_pieces();
         bytes = owner.evicted_bytes();
         SW_CHECK(pieces > 0);
@@ -300,6 +384,8 @@ int main()
     test_path_truncated_and_control_bytes();
     test_drop_is_counted();
     test_multi_producer_stress();
+    test_flush_failure_is_counted();
+    test_emit_does_not_allocate();
     test_cache_owner_eviction_events();
     std::cout << "telemetry: ok\n";
     return 0;

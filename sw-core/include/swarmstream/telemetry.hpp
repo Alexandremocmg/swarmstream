@@ -11,6 +11,12 @@
 // - Uma thread gravadora própria esvazia o anel e escreve no arquivo.
 // - Nenhuma falha passa em silêncio: descarte e erro de escrita são contados (dropped(),
 //   write_errors()) e, ao fechar, o arquivo termina com uma linha "telemetry_summary".
+// - Um evento só conta em written() depois do fflush: se o fflush falha (disco cheio), os
+//   eventos do buffer vão para write_errors(). Falha no fechamento: write_errors() + stderr.
+// - TEMPO DE VIDA: o log tem de viver mais que toda emissora (CacheOwner via
+//   CacheOwnerConfig::telemetry, leitura, jogo) e só ser destruído depois que elas pararam.
+//   Destruí-lo antes é uso depois da liberação; não há proteção.
+// - open() trunca o arquivo ("wb").
 // - Eventos deste módulo: read_miss_start, read_miss, eviction, frame_stutter.
 
 #pragma once
@@ -79,10 +85,12 @@ public:
     [[nodiscard]] uint64_t written() const noexcept;      // eventos já gravados
     [[nodiscard]] uint64_t write_errors() const noexcept; // eventos que o arquivo recusou
 
-    // Espera o anel esvaziar e descarrega o arquivo (para os testes e antes de ler o arquivo).
+    // Espera a gravadora gravar, dar fflush e contar tudo o que já foi aceito; o resultado
+    // aparece em written() e write_errors() (para os testes e antes de ler o arquivo).
     void flush() noexcept;
 
 private:
+    friend class TelemetryLogTestHook;
     struct Impl;
     explicit TelemetryLog(std::unique_ptr<Impl> impl) noexcept;
     std::unique_ptr<Impl> impl_;

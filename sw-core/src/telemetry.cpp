@@ -3,6 +3,8 @@
 
 #include "swarmstream/telemetry.hpp"
 
+#include "telemetry_testing.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cinttypes>
@@ -178,7 +180,18 @@ struct TelemetryLog::Impl
     std::atomic<uint64_t> written{0};
     std::atomic<uint64_t> write_errors{0};
     std::atomic<bool> stop{false};
+    std::atomic<bool> fail_next_flush{false}; // TelemetryLogTestHook (F1-30)
+    uint64_t unflushed = 0;                   // só a gravadora: gravados no buffer, sem fflush
     std::thread writer;
+
+    Impl() = default;
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    ~Impl()
+    {
+        if (file != nullptr) (void)std::fclose(file);
+        delete[] cells;
+    }
 
     // Fila limitada de Vyukov: muitas produtoras, uma consumidora. Sem alocação, sem trava.
     bool push(const Event& e) noexcept
@@ -218,12 +231,24 @@ struct TelemetryLog::Impl
     {
         char buf[1536]; // pior caso: path 160 x 6 bytes + campos
         const size_t n = format_line(e, buf, sizeof buf);
+        // fwrite num FILE* com buffer quase sempre "dá certo": o erro de verdade (disco cheio)
+        // aparece no fflush. Por isso o evento só conta como gravado depois do fflush (commit).
         if (std::fwrite(buf, 1, n, file) == n) {
-            written.fetch_add(1, std::memory_order_relaxed);
+            ++unflushed;
         } else {
             write_errors.fetch_add(1, std::memory_order_relaxed);
         }
         processed.fetch_add(1, std::memory_order_release);
+    }
+
+    // fflush e contabilidade: os eventos do buffer viram `written` se o fflush deu certo, ou
+    // `write_errors` se falhou (eles não chegaram ao arquivo). Só a gravadora chama.
+    void commit() noexcept
+    {
+        if (unflushed == 0) return;
+        const bool ok = !fail_next_flush.exchange(false) && std::fflush(file) == 0;
+        (ok ? written : write_errors).fetch_add(unflushed, std::memory_order_release);
+        unflushed = 0;
     }
 
     void drain() noexcept
@@ -238,8 +263,8 @@ struct TelemetryLog::Impl
         for (;;) {
             const bool stopping = stop.load(std::memory_order_acquire);
             drain();
+            commit();
             if (stopping) return; // o drain depois de ver `stop` pega tudo o que já entrou
-            std::fflush(file);
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     }
@@ -266,11 +291,12 @@ std::unique_ptr<TelemetryLog> TelemetryLog::open(const std::filesystem::path& fi
         for (uint64_t i = 0; i < cap; ++i)
             impl->cells[i].seq.store(i, std::memory_order_relaxed);
         impl->mask = cap - 1;
-        impl->file = std::fopen(file.string().c_str(), "wb");
-        if (impl->file == nullptr) {
-            delete[] impl->cells;
-            return nullptr;
-        }
+#if defined(_WIN32)
+        impl->file = _wfopen(file.c_str(), L"wb"); // caminho fora da página ANSI
+#else
+        impl->file = std::fopen(file.c_str(), "wb");
+#endif
+        if (impl->file == nullptr) return nullptr; // ~Impl solta as células
         Impl* raw = impl.get();
         raw->writer = std::thread([raw] { raw->run(); });
         return std::unique_ptr<TelemetryLog>(new TelemetryLog(std::move(impl)));
@@ -290,9 +316,15 @@ TelemetryLog::~TelemetryLog()
                                 "{\"event\":\"telemetry_summary\",\"written\":%" PRIu64
                                 ",\"dropped\":%" PRIu64 ",\"write_errors\":%" PRIu64 "}\n",
                                 m.written.load(), m.dropped.load(), m.write_errors.load());
-    if (n > 0) (void)std::fwrite(buf, 1, static_cast<size_t>(n), m.file);
-    (void)std::fclose(m.file);
-    delete[] m.cells;
+    bool ok =
+        n > 0 && std::fwrite(buf, 1, static_cast<size_t>(n), m.file) == static_cast<size_t>(n);
+    ok = std::fflush(m.file) == 0 && ok;
+    ok = std::fclose(m.file) == 0 && ok;
+    m.file = nullptr;
+    if (!ok) { // o resumo não chegou ao arquivo: não há mais onde registrar além do stderr
+        m.write_errors.fetch_add(1, std::memory_order_relaxed);
+        std::fprintf(stderr, "swarmstream: telemetria: falha ao fechar o arquivo de eventos\n");
+    }
 }
 
 bool TelemetryLog::emit_read_miss_start(const ReadMissStart& s) noexcept
@@ -358,10 +390,18 @@ uint64_t TelemetryLog::write_errors() const noexcept
 
 void TelemetryLog::flush() noexcept
 {
+    // Só a gravadora mexe no FILE*: espera ela gravar, dar fflush e contar (written ou
+    // write_errors) tudo o que já foi aceito.
     Impl& m = *impl_;
-    while (m.processed.load(std::memory_order_acquire) < m.accepted.load(std::memory_order_acquire))
+    while (m.written.load(std::memory_order_acquire) +
+               m.write_errors.load(std::memory_order_acquire) <
+           m.accepted.load(std::memory_order_acquire))
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    std::fflush(m.file); // o stdio trava o FILE* por dentro: seguro com a thread gravadora
+}
+
+void TelemetryLogTestHook::fail_next_flush(TelemetryLog& log) noexcept
+{
+    log.impl_->fail_next_flush.store(true);
 }
 
 } // namespace swarmstream
