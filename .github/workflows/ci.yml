@@ -40,7 +40,7 @@ jobs:
             windows-*) VCPKG_DIR='C:/vcpkg' ;;
             *)         VCPKG_DIR="$VCPKG_INSTALLATION_ROOT" ;;
           esac
-          git -C "$VCPKG_DIR" fetch --depth=1 origin 5363acb796e576328288fae60c25304e227e9839             || git -C "$VCPKG_DIR" fetch origin 5363acb796e576328288fae60c25304e227e9839
+          git -C "$VCPKG_DIR" fetch --depth=1 origin e456309491fd875487bf02b8a0dca76c1b1b00cc             || git -C "$VCPKG_DIR" fetch origin e456309491fd875487bf02b8a0dca76c1b1b00cc
 
       - name: Configure (vcpkg toolchain)
         shell: bash
@@ -114,7 +114,7 @@ jobs:
       - name: Busca o baseline do vcpkg no clone do runner
         shell: bash
         run: |
-          git -C "$VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin 5363acb796e576328288fae60c25304e227e9839             || git -C "$VCPKG_INSTALLATION_ROOT" fetch origin 5363acb796e576328288fae60c25304e227e9839
+          git -C "$VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin e456309491fd875487bf02b8a0dca76c1b1b00cc             || git -C "$VCPKG_INSTALLATION_ROOT" fetch origin e456309491fd875487bf02b8a0dca76c1b1b00cc
 
       - name: Configure (Release, vcpkg toolchain)
         shell: bash

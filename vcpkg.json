@@ -5,5 +5,5 @@
     "dependencies": [
         "libsodium"
     ],
-    "builtin-baseline": "5363acb796e576328288fae60c25304e227e9839"
+    "builtin-baseline": "e456309491fd875487bf02b8a0dca76c1b1b00cc"
 }
