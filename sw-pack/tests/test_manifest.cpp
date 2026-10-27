@@ -648,6 +648,135 @@ void test_semantic_rejections()
     }
 }
 
+// Envelopes fabricados e ASSINADOS DE VERDADE (revisão independente, R2): a assinatura válida não
+// pode salvar um envelope fora das regras do §7.1, e a ordem do leitor (assinatura antes de ler o
+// payload) tem de aparecer no erro devolvido. Só usa a API pública, então roda igual com o
+// libsodium real.
+constexpr std::string_view kSignaturePrefix{"SWARMSTREAM-MANIFEST-V0\0", 24};
+
+std::span<const std::byte> bytes_span(const void* data, std::size_t size)
+{
+    return {static_cast<const std::byte*>(data), size};
+}
+
+// Refaz a assinatura de `bytes` (cabeçalho possivelmente alterado) com `seed`.
+void resign(Bytes& bytes, const sp::Ed25519Seed& seed, bool with_domain_prefix = true)
+{
+    const std::span<const std::byte> head(bytes.data(), 40);
+    const std::span<const std::byte> payload(bytes.data() + sp::kEnvelopeSize,
+                                             bytes.size() - sp::kEnvelopeSize);
+    const auto signature =
+        with_domain_prefix
+            ? sp::ed25519_sign(seed, {bytes_span(kSignaturePrefix.data(), kSignaturePrefix.size()),
+                                      head, payload})
+            : sp::ed25519_sign(seed, {head, payload});
+    SW_CHECK(signature.has_value());
+    std::memcpy(bytes.data() + 40, signature->data(), signature->size());
+}
+
+sp::ManifestError open_code(const Bytes& bytes, const std::vector<sp::Ed25519PublicKey>& keys)
+{
+    sp::ReadOptions options;
+    options.trusted_keys = keys;
+    return open_bytes(bytes, options).code;
+}
+
+void test_resigned_envelopes_and_reader_order()
+{
+    using E = sp::ManifestError;
+    const sp::ManifestModel model = st::make_synthetic_model(300, 4, 7);
+    const sp::Ed25519Seed seed_a = test_seed();
+    const sp::Ed25519Seed seed_b = other_seed();
+    const sp::Ed25519PublicKey key_a = public_key_of(seed_a);
+    const sp::Ed25519PublicKey key_b = public_key_of(seed_b);
+    const std::vector<sp::Ed25519PublicKey> trust_a = {key_a};
+    const Bytes good = sp::encode_manifest(model, seed_a);
+    SW_CHECK(good.size() > sp::kEnvelopeSize);
+    SW_CHECK(open_code(good, trust_a) == E::Ok);
+
+    // (1a) format_version futura: Unsupported, com ou sem assinatura refeita.
+    {
+        Bytes b = good;
+        b[8] = std::byte{1};
+        SW_CHECK(open_code(b, trust_a) == E::Unsupported);
+        resign(b, seed_a);
+        SW_CHECK(open_code(b, trust_a) == E::Unsupported);
+    }
+    // (1b) hash_alg, sig_alg e os reservados alterados, com assinatura VÁLIDA: Invalid.
+    for (const std::size_t offset : {10U, 11U, 12U, 13U, 14U, 15U, 32U, 39U}) {
+        Bytes b = good;
+        b[offset] = std::byte{2};
+        resign(b, seed_a);
+        SW_CHECK(open_code(b, trust_a) == E::Invalid);
+    }
+    // (1c) payload_len que não bate com o arquivo (antes de qualquer assinatura): Invalid.
+    {
+        Bytes longer = good;
+        longer.push_back(std::byte{0});
+        SW_CHECK(open_code(longer, trust_a) == E::Invalid);
+        const Bytes shorter(good.begin(), good.end() - 1);
+        SW_CHECK(open_code(shorter, trust_a) == E::Invalid);
+        Bytes huge = good;
+        huge[16 + 5] = std::byte{1}; // payload_len de 2^40 bytes: recusado sem alocar nada
+        SW_CHECK(open_code(huge, trust_a) == E::Invalid);
+        const Bytes cut(good.begin(), good.begin() + 103);
+        SW_CHECK(open_code(cut, trust_a) == E::Invalid);
+    }
+    // Separação de domínio: assinatura sem o prefixo não vale.
+    {
+        Bytes b = good;
+        resign(b, seed_a, /*with_domain_prefix=*/false);
+        SW_CHECK(open_code(b, trust_a) == E::SignatureInvalid);
+    }
+    // (2) key_id fora da lista de confiança, mesmo com a assinatura boa de uma chave da lista.
+    {
+        Bytes b = good;    // key_id de A no cabeçalho
+        resign(b, seed_b); // assinatura feita por B
+        SW_CHECK(open_code(b, {key_a}) == E::SignatureInvalid);
+        SW_CHECK(open_code(b, {key_b}) == E::SignatureInvalid); // o key_id de A não está na lista
+        SW_CHECK(open_code(good, {}) == E::SignatureInvalid);
+        SW_CHECK(open_code(good, {key_b, key_a}) == E::Ok);
+    }
+    // (3) A assinatura vem ANTES de ler o payload: lixo + assinatura ruim é erro de assinatura;
+    // lixo + assinatura válida é payload inválido.
+    {
+        Bytes b = good;
+        std::fill(b.begin() + sp::kEnvelopeSize, b.end(), std::byte{0xA5});
+        SW_CHECK(open_code(b, trust_a) == E::SignatureInvalid);
+        resign(b, seed_a);
+        SW_CHECK(open_code(b, trust_a) == E::Invalid);
+    }
+    // min_reader futuro é autenticado: adulterado dá erro de assinatura, nunca Unsupported.
+    {
+        sp::ManifestModel future = model;
+        future.min_reader = 1;
+        const Bytes f = sp::encode_manifest(future, seed_a);
+        SW_CHECK(open_code(f, trust_a) == E::Unsupported);
+        Bytes tampered = f;
+        tampered[200] ^= std::byte{1};
+        SW_CHECK(open_code(tampered, trust_a) == E::SignatureInvalid);
+    }
+    // (4) String sem o NUL final, com assinatura válida: o verificador oficial do FlatBuffers a
+    // recusa, e o leitor também.
+    {
+        Bytes b = good;
+        const std::string& id = model.game_id;
+        std::size_t at = 0;
+        bool found = false;
+        for (std::size_t i = sp::kEnvelopeSize; i + id.size() < b.size(); ++i) {
+            if (std::memcmp(b.data() + i, id.data(), id.size()) == 0) {
+                at = i + id.size();
+                found = true;
+                break;
+            }
+        }
+        SW_CHECK(found && b[at] == std::byte{0});
+        b[at] = std::byte{'x'};
+        resign(b, seed_a);
+        SW_CHECK(open_code(b, trust_a) == E::Invalid);
+    }
+}
+
 // Payload malformado com assinatura VÁLIDA (um build com defeito, ou quem tem a chave): o
 // leitor devolve erro, nunca lê fora do buffer (o CI roda isto sob ASan/UBSan).
 void test_signed_garbage_payloads()
@@ -730,6 +859,8 @@ int main(int argc, char** argv)
     lap("adulteracao ok");
     test_semantic_rejections();
     lap("validacoes do 03 secao 8 ok");
+    test_resigned_envelopes_and_reader_order();
+    lap("envelopes re-assinados e ordem do leitor ok");
     test_signed_garbage_payloads();
     std::puts("TODOS OS TESTES DO MANIFESTO PASSARAM");
     return 0;
