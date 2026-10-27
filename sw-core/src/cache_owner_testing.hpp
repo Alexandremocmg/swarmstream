@@ -48,6 +48,11 @@ struct CacheOwnerTestHook
     // F1-13: o próximo Get troca um byte da cópia lida do store antes de conferir o XXH3, como
     // um defeito de disco (o arquivo não muda).
     static void corrupt_next_read(CacheOwner& owner) noexcept;
+    // F1-14: a próxima remoção CLOCK (disparada por um Put) lança bad_alloc depois de 50 ms, já
+    // com o Put respondido (o pedido pode estar destruído). Prova que nada escapa da remoção.
+    static void throw_in_next_eviction(CacheOwner& owner) noexcept;
+    // F1-14: o sync do próximo lote da remoção falha como um EIO (Barreira 2 do lote).
+    static void fail_next_eviction_sync(CacheOwner& owner) noexcept;
 };
 
 } // namespace swarmstream

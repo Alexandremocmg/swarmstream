@@ -203,6 +203,8 @@ struct CacheOwner::Impl
     uint32_t hand = 0;
     uint32_t high_slots = 0; // 0 = remoção desligada
     uint32_t low_slots = 0;
+    std::atomic<bool> evict_throw_next{false}; // CacheOwnerTestHook (F1-14)
+    std::atomic<bool> evict_fail_sync_next{false};
     std::atomic<uint64_t> evicted_pieces{0};
     std::atomic<uint64_t> evicted_bytes{0};
     detail::Journal journal;
@@ -277,7 +279,7 @@ struct CacheOwner::Impl
     // Remove peças pelo relógio até sobrarem no máximo `target`. Success também quando não há
     // mais o que remover (tudo fixado ou preso): quem precisa do slot confere depois.
     [[nodiscard]] CacheErrorCode evict_to(uint32_t target);
-    void maybe_evict();
+    void maybe_evict() noexcept;
     void touch(SlotId slot) noexcept { clock[slot].ref = true; }
     [[nodiscard]] CacheErrorCode invalidate(PieceHash piece);
     [[nodiscard]] CacheErrorCode drop_corrupt(PieceHash piece);
@@ -485,6 +487,7 @@ CacheErrorCode CacheOwner::Impl::evict_to(uint32_t target)
                 return CacheErrorCode::IoError;
             }
         }
+        if (evict_fail_sync_next.exchange(false)) journal.fail_next_sync();
         if (journal.sync() != CacheErrorCode::Success) { // Barreira 2, antes de liberar os slots
             mark_broken();
             return CacheErrorCode::IoError;
@@ -505,12 +508,23 @@ CacheErrorCode CacheOwner::Impl::evict_to(uint32_t target)
 }
 
 // Marca alta atingida: desce até a marca baixa (docs/04: começa em 95%, para em 85%).
-void CacheOwner::Impl::maybe_evict()
+void CacheOwner::Impl::maybe_evict() noexcept
 {
-    if (high_slots == 0 || index.size() < high_slots) return;
-    if (evict_to(low_slots) == CacheErrorCode::Success && !broken &&
-        journal.size_bytes() > config.checkpoint_journal_bytes) {
-        if (checkpoint() != CacheErrorCode::Success) mark_broken();
+    // Roda DEPOIS de o Put responder: quem pediu pode já ter destruído o pedido. Nada escapa
+    // daqui, porque o catch de process() completaria esse pedido de novo (uso depois da
+    // liberação). Falha de alocação (índice, buffer do journal, checkpoint) quebra o cache.
+    try {
+        if (high_slots == 0 || index.size() < high_slots) return;
+        if (evict_throw_next.exchange(false)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            throw std::bad_alloc();
+        }
+        if (evict_to(low_slots) == CacheErrorCode::Success && !broken &&
+            journal.size_bytes() > config.checkpoint_journal_bytes) {
+            if (checkpoint() != CacheErrorCode::Success) mark_broken();
+        }
+    } catch (...) {
+        mark_broken();
     }
 }
 
@@ -1029,6 +1043,16 @@ void CacheOwnerTestHook::skip_checkpoint_on_stop(CacheOwner& owner) noexcept
 void CacheOwnerTestHook::corrupt_next_read(CacheOwner& owner) noexcept
 {
     owner.impl_->corrupt_next_read.store(true);
+}
+
+void CacheOwnerTestHook::throw_in_next_eviction(CacheOwner& owner) noexcept
+{
+    owner.impl_->evict_throw_next.store(true);
+}
+
+void CacheOwnerTestHook::fail_next_eviction_sync(CacheOwner& owner) noexcept
+{
+    owner.impl_->evict_fail_sync_next.store(true);
 }
 
 bool CacheOwnerTestHook::wait_owner_left_loop(CacheOwner& owner,

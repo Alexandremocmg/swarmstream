@@ -74,7 +74,10 @@ PieceId piece(uint32_t i)
 {
     PieceHash h{};
     for (size_t b = 0; b < h.bytes.size(); ++b) {
-        h.bytes[b] = static_cast<uint8_t>(i * 7 + b + (i >> 8));
+        h.bytes[b] = static_cast<uint8_t>(i * 7 + b);
+    }
+    for (size_t b = 0; b < sizeof i; ++b) { // o índice inteiro: sem hash repetido além de 255
+        h.bytes[28 + b] = static_cast<uint8_t>(i >> (8 * b));
     }
     return PieceId(i, h);
 }
@@ -384,6 +387,201 @@ void test_eviction_stress()
     cleanup(dir);
 }
 
+// Revisão do F1-14: a remoção roda DEPOIS de o Put responder; se lançar (alocação), nada pode
+// tocar no pedido, que quem pediu já pode ter destruído (process() completaria o mesmo pedido
+// de novo). O pedido está no heap, é destruído assim que a resposta chega, e a memória dele é
+// reaproveitada antes de a remoção lançar.
+void test_eviction_throw_does_not_touch_request()
+{
+    std::cout << "[Test] remoção: exceção na remoção não toca no pedido já respondido\n";
+    const fs::path dir = fresh_dir("throw");
+    {
+        auto owner = open_owner(dir, 20);
+        for (uint32_t i = 0; i < 18; ++i)
+            SW_CHECK(put(*owner, i).has_value());
+        const auto data = data_of(18);
+        CacheOwnerTestHook::throw_in_next_eviction(*owner);
+        auto* req = new CacheRequest(CacheOp::Put, piece(18), data, std::span<std::byte>{});
+        SW_CHECK(owner->submit(*req));
+        SW_CHECK(req->wait().has_value());
+        delete req;
+        std::vector<std::vector<unsigned char>> scrambled; // pega a memória liberada
+        for (int i = 0; i < 64; ++i)
+            scrambled.emplace_back(sizeof(CacheRequest), 0xFC);
+        for (int n = 0; n < 100 && !owner->broken(); ++n)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        SW_CHECK(owner->broken()); // a falha foi registrada, sem tocar no pedido
+        std::vector<std::byte> out(kLayout.slot_size);
+        auto g = CacheRequest::get(piece(0), out);
+        SW_CHECK(has_error(owner->call(g), CacheErrorCode::IoError));
+        for (const auto& v : scrambled)
+            SW_CHECK(v.front() == 0xFC && v.back() == 0xFC); // ninguém escreveu
+    }
+    cleanup(dir);
+}
+
+// Mutante "peça recuperada fora do relógio": depois de reabrir, nada sairia e o cache chegaria
+// a OutOfSlots para sempre.
+void test_recovered_pieces_are_evictable()
+{
+    std::cout << "[Test] remoção: peças recuperadas depois de reabrir também saem\n";
+    const fs::path dir = fresh_dir("reopen");
+    {
+        auto owner = open_owner(dir, 20);
+        for (uint32_t i = 0; i < 10; ++i)
+            SW_CHECK(put(*owner, i).has_value());
+    }
+    {
+        auto owner = open_owner(dir, 20);
+        SW_CHECK(owner->pieces() == 10);
+        for (uint32_t i = 100; i < 300; ++i)
+            SW_CHECK(put(*owner, i).has_value());
+        settle(*owner);
+        SW_CHECK(!owner->broken() && owner->pieces() <= 19);
+        for (uint32_t i = 0; i < 10; ++i)
+            SW_CHECK(!present(*owner, i));
+    }
+    cleanup(dir);
+}
+
+// Mutante "invalidate não limpa o relógio": o relógio escolheria um slot já livre e o release
+// falharia. Cenário: 20 peças fixadas, solta e remove as dos slots 10 e 19; o próximo Put pega
+// o slot 10, chega à marca alta, e o slot 19 (livre) seria a outra candidata do relógio.
+void test_explicit_remove_then_eviction()
+{
+    std::cout << "[Test] remoção: Remove explícito e depois remoção (slot livre fora do relógio)\n";
+    const fs::path dir = fresh_dir("removeevict");
+    {
+        auto owner = open_owner(dir, 20);
+        for (uint32_t i = 0; i < 20; ++i)
+            SW_CHECK(put(*owner, i, true).has_value());
+        for (uint32_t i : {10u, 19u}) {
+            auto unpin = CacheRequest::pin(piece(i), false);
+            SW_CHECK(owner->call(unpin).has_value());
+            auto rm = CacheRequest::remove(piece(i));
+            SW_CHECK(owner->call(rm).has_value());
+        }
+        SW_CHECK(owner->pieces() == 18);
+        SW_CHECK(put(*owner, 500).has_value()); // 19 peças: dispara a remoção
+        settle(*owner);
+        SW_CHECK(!owner->broken());
+        SW_CHECK(owner->evicted_pieces() == 1 && !present(*owner, 500)); // só a nova saiu
+        for (uint32_t i = 0; i < 20; ++i)
+            SW_CHECK(present(*owner, i) == (i != 10 && i != 19));
+    }
+    cleanup(dir);
+}
+
+// Sonda na dona: guarda os syncs do journal que já chegaram ao disco no começo de cada Put.
+struct SyncLog
+{
+    CacheOwner* owner = nullptr;
+    std::vector<uint64_t> at_put_start;
+};
+
+void sync_log_hook(detail::CrashPoint point, void* context)
+{
+    auto* log = static_cast<SyncLog*>(context);
+    if (point == detail::CrashPoint::AfterDataWrite && log->owner != nullptr) {
+        log->at_put_start.push_back(CacheOwnerTestHook::journal_syncs(*log->owner));
+    }
+}
+
+// Barreira 2 do lote: UM sync por lote (um Put comum faz 1 sync, o que dispara a remoção faz 2),
+// e, se o sync do lote falhar, o cache quebra sem liberar nada e a recuperação fecha consistente.
+void test_eviction_batch_sync()
+{
+    std::cout << "[Test] remoção: um sync por lote; sync que falha quebra o cache\n";
+    const fs::path dir = fresh_dir("batchsync");
+    {
+        SyncLog log;
+        log.at_put_start.reserve(64);
+        CacheOwnerConfig cfg{.dir = dir, .total_slots = 20, .layout = kLayout};
+        cfg.evict_high_percent = kDefaultEvictHighPercent;
+        cfg.evict_low_percent = kDefaultEvictLowPercent;
+        auto started = CacheOwnerTestHook::start_with_crash_hook(cfg, sync_log_hook, &log);
+        SW_CHECK(started.has_value());
+        CacheOwner& o = **started;
+        log.owner = &o;
+        for (uint32_t i = 0; i < 20; ++i)
+            SW_CHECK(put(o, i).has_value());
+        settle(o);
+        log.owner = nullptr;
+        // Puts 1..18 (sem remoção): 1 sync cada. Put 19 (chega a 19 peças, lote de 2): 2 syncs.
+        SW_CHECK(log.at_put_start.size() == 20 && o.evicted_pieces() == 2);
+        for (size_t k = 0; k + 1 < 19; ++k)
+            SW_CHECK(log.at_put_start[k + 1] - log.at_put_start[k] == 1);
+        SW_CHECK(log.at_put_start[19] - log.at_put_start[18] == 2);
+        SW_CHECK(o.stop().has_value());
+    }
+    cleanup(dir);
+
+    const fs::path dir2 = fresh_dir("batchsyncfail");
+    {
+        auto owner = open_owner(dir2, 20);
+        for (uint32_t i = 0; i < 18; ++i)
+            SW_CHECK(put(*owner, i).has_value());
+        settle(*owner);
+        CacheOwnerTestHook::fail_next_eviction_sync(*owner);
+        SW_CHECK(put(*owner, 18).has_value()); // a peça já era durável quando respondeu
+        for (int n = 0; n < 200 && !owner->broken(); ++n)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        SW_CHECK(owner->broken());
+        SW_CHECK(owner->evicted_pieces() == 0); // nada foi liberado sem a Barreira 2
+        std::vector<std::byte> out(kLayout.slot_size);
+        auto g = CacheRequest::get(piece(0), out);
+        SW_CHECK(has_error(owner->call(g), CacheErrorCode::IoError));
+        (void)owner->stop();
+    }
+    {
+        auto owner = open_owner(dir2, 20);
+        SW_CHECK(!owner->broken() && owner->pieces() <= 19);
+        uint32_t found = 0;
+        for (uint32_t i = 0; i <= 18; ++i)
+            found += present(*owner, i) ? 1 : 0; // o que ficou tem o conteúdo certo (present)
+        SW_CHECK(found == owner->pieces());
+        SW_CHECK(present(*owner, 18)); // o commit foi sincronizado antes da remoção
+        for (uint32_t i = 100; i < 160; ++i)
+            SW_CHECK(put(*owner, i).has_value());
+        SW_CHECK(!owner->broken());
+    }
+    cleanup(dir2);
+}
+
+// Nova tentativa do OutOfSlots (cache cheio de leases que foram soltos) e Put de peça presente
+// com set_pinned.
+void test_out_of_slots_retry_and_repin()
+{
+    std::cout << "[Test] remoção: OutOfSlots tenta de novo depois do lease solto; Put refixa\n";
+    const fs::path dir = fresh_dir("retry");
+    {
+        auto owner = open_owner(dir, 8); // alta 7, baixa 5
+        std::vector<PieceLease> leases(6);
+        for (uint32_t i = 0; i < 6; ++i) {
+            SW_CHECK(put(*owner, i).has_value());
+            auto acq = CacheRequest::acquire(piece(i), leases[i]);
+            SW_CHECK(owner->call(acq).has_value());
+        }
+        SW_CHECK(put(*owner, 6, true).has_value());
+        SW_CHECK(put(*owner, 7, true).has_value()); // 8 peças: 6 presas e 2 fixadas
+        SW_CHECK(has_error(put(*owner, 50), CacheErrorCode::OutOfSlots));
+        SW_CHECK(owner->pieces() == 8);
+        for (auto& l : leases)
+            l.reset();
+        SW_CHECK(put(*owner, 51).has_value()); // agora há o que remover
+        SW_CHECK(owner->pieces() <= 8 && !owner->broken());
+        SW_CHECK(present(*owner, 6) && present(*owner, 7));
+
+        // Put de peça já presente fixa: a 60 entra solta e é fixada por um segundo Put.
+        SW_CHECK(put(*owner, 60).has_value());
+        SW_CHECK(put(*owner, 60, true).has_value());
+        for (uint32_t i = 100; i < 300; ++i)
+            SW_CHECK(put(*owner, i).has_value());
+        SW_CHECK(present(*owner, 60));
+    }
+    cleanup(dir);
+}
+
 } // namespace
 
 void run_cache_eviction_tests()
@@ -395,6 +593,11 @@ void run_cache_eviction_tests()
     test_all_pinned_is_out_of_slots();
     test_second_chance_and_cold();
     test_eviction_survives_crash();
+    test_eviction_throw_does_not_touch_request();
+    test_recovered_pieces_are_evictable();
+    test_explicit_remove_then_eviction();
+    test_eviction_batch_sync();
+    test_out_of_slots_retry_and_repin();
     test_eviction_stress();
 }
 
