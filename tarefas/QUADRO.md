@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 0 | 25 | 26 |
+| 3 | 0 | 1 | 0 | 24 | 27 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -38,7 +38,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
 | --- | --- | --- | --- | --- | --- |
 | [F1-06](cartoes/F1-06.md) | R1 | Opus 5.5, esforço alto | não | espera F1-04 | Ordenação de blocos em peças por localidade (por pasta/região) |
-| [F1-15](cartoes/F1-15.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Cache de blocos descomprimidos em RAM + pool de buffers |
 | [F1-22](cartoes/F1-22.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-20 | Política de falta para malha (LOD menor / esconder) |
 | [F1-23](cartoes/F1-23.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-20 | Nó `SwarmHintArea3D` chamando `sw_hint_group` |
 | [F1-25](cartoes/F1-25.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Gravação de traces de leitura (posição, tempo, peça) |
@@ -54,6 +53,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-12](cartoes/F1-12.md): Thread dona do cache e fila MPSC de pedidos
 - [F1-13](cartoes/F1-13.md): Leases com contagem de referência
 - [F1-14](cartoes/F1-14.md): Remoção CLOCK com marcas 95%/85% e conjunto fixo
+- [F1-15](cartoes/F1-15.md): Cache de blocos descomprimidos em RAM + pool de buffers
 - [F1-16](cartoes/F1-16.md): Checksum XXH3 por bloco na leitura
 - [F1-18](cartoes/F1-18.md): Ferramenta `sw-cache-inspect` (listar peças, uso, estado)
 - [F1-27](cartoes/F1-27.md): Fonte HTTP Range implementando `IContentSource`, com conexões persistentes

@@ -177,6 +177,7 @@ Ao inicializar o subsistema de cache:
 
 - Cache de blocos **descomprimidos** em RAM, pequeno (ex.: 256–1024 MB), também com leases.
 - Buffers reaproveitados em pool. Nada de alocação por leitura no caminho quente.
+- **Como a F1-15 faz:** `BlockRamCache` (`block_ram_cache.hpp`). Tudo é reservado no construtor: um buffer de 256 KiB por bloco, entradas, tabela hash e lista de livres; acerto, preenchimento, remoção e soltar o lease não alocam (medido no teste, com contador de `operator new`). Chave = peça + índice do bloco. Falta: `reserve()` devolve o buffer do pool para a descompressão escrever direto nele, e `commit()` publica o bloco e devolve o lease. Remoção CLOCK entre os blocos sem lease; bloco com lease nunca sai (se tudo está preso, `reserve` dá `OutOfBuffers`). Uma `std::mutex` curta protege a tabela (nunca a cópia nem a descompressão); trocar por trava mais fina só se a medição pedir. O cache **não confere hash**: quem preenche já verificou o SHA-256 (docs/03 §4). Ainda não está ligado à `CacheOwner` nem à descompressão (não há decodificador no repositório); a integração fica para quem ligar a leitura de bloco.
 
 ## Métricas que o cache publica
 Taxa de acerto (RAM e disco), faltas por minuto, tempo de espera p50/p95/p99 por falta, bytes removidos, peças inválidas, uso do teto. Ver [08-metricas-e-testes.md](08-metricas-e-testes.md).

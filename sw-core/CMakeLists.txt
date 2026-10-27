@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Core library (headers and mocks)
 add_library(sw-core STATIC
     src/api_stub.cpp
+    src/block_ram_cache.cpp
     src/cache_inspect.cpp
     src/cache_journal.cpp
     src/cache_owner.cpp
@@ -123,6 +124,15 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
     add_test(NAME sw-core-eviction COMMAND sw-core-eviction-tests)
     set_tests_properties(sw-core-eviction PROPERTIES TIMEOUT 300)
+    # F1-15: cache de blocos descomprimidos em RAM + pool de buffers (zero alocações no caminho
+    # quente, medido; estresse com 8 threads; o job TSan roda este teste).
+    add_executable(sw-core-blockcache-tests tests/test_block_ram_cache.cpp)
+    target_link_libraries(sw-core-blockcache-tests PRIVATE sw-core)
+    if(SANITIZE_THREAD)
+        target_compile_definitions(sw-core-blockcache-tests PRIVATE SW_EXPECT_TSAN)
+    endif()
+    add_test(NAME sw-core-blockcache COMMAND sw-core-blockcache-tests)
+    set_tests_properties(sw-core-blockcache PROPERTIES TIMEOUT 300)
     # F1-28: agendador por prazo v1 (fonte falsa controlada pelo teste; estresse com 16 threads
     # pedindo e cancelando; o job TSan roda este teste).
     add_executable(sw-core-scheduler-tests tests/test_deadline_scheduler.cpp)
