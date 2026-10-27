@@ -129,7 +129,7 @@ void test_gate_core()
     swgate::GateCore& core = swgate::GateCore::instance();
     check(core.init((dir / "nao_existe").string(), 0) == SW_E_NOT_FOUND,
           "init recusa pasta sem os arquivos");
-    check(core.init(dir.string(), 300) == SW_OK, "init com latência de 300 ms");
+    check(core.init(dir.string(), 2000) == SW_OK, "init com latência de 2000 ms");
     check(core.is_local("rock_4k.low.swtex") && !core.is_local("rock_4k.swtex"),
           "só o grupo core começa no cache");
 
@@ -141,7 +141,13 @@ void test_gate_core()
 
     // Aquecimento: a 1ª leitura fora do cache do processo cria a primeira thread de pedido e
     // pode levar >100 ms numa máquina carregada (medido pela revisão do PR #26). Ela não entra
-    // na medição: mede-se a 2ª, de outro arquivo, com folga grande (150 ms contra 300 ms).
+    // na medição: mede-se a 2ª, de outro arquivo.
+    // Folga (F1-28): o read não espera a fonte, mas cria 6 threads (uma por peça no mock e outra
+    // aqui) dentro do trecho medido. Parado leva 0-1 ms; com a CPU sobrecarregada (16 processos
+    // em 8 núcleos) levou 66-226 ms, e o limite antigo (150 ms contra 300 ms de latência) falhava
+    // 10 de 24 vezes. Com 2000 ms de latência e limite de 1000 ms, esperar a fonte continua
+    // impossível de passar, e o pior caso medido fica com mais de 4x de folga. A F1-50 (pool de
+    // threads) tira a criação de threads deste caminho.
     std::vector<uint8_t> warm(5000);
     check(core.read("tone.ogg", 0, warm.data(), warm.size(), &got) == SW_E_NOT_LOCAL,
           "aquecimento: tone.ogg fora do cache");
@@ -150,8 +156,11 @@ void test_gate_core()
     const sw_result r = core.read("rock_4k.swtex", 0, full.data(), full.size(), &got);
     const auto dt = std::chrono::steady_clock::now() - t0;
     check(r == SW_E_NOT_LOCAL && got == 0, "read fora do cache devolve SW_E_NOT_LOCAL sem copiar");
-    check(dt < std::chrono::milliseconds(150),
-          "read fora do cache volta sem esperar a latência (< 150 ms com 300 ms)");
+    std::printf(
+        "     read fora do cache levou %lld ms\n",
+        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(dt).count()));
+    check(dt < std::chrono::milliseconds(1000),
+          "read fora do cache volta sem esperar a latência (< 1000 ms com 2000 ms)");
 
     std::atomic<int> calls{0};
     std::atomic<sw_result> result{SW_E_INTERNAL};
@@ -160,7 +169,7 @@ void test_gate_core()
     const uint64_t id =
         core.ensure_async("rock_4k.swtex", [&](sw_result res, uint64_t n, uint64_t eid) {
             check(!inside.load(),
-                  "callback não roda na pilha de ensure_async (com 300 ms de latência)");
+                  "callback não roda na pilha de ensure_async (com 2000 ms de latência)");
             result = res;
             bytes = n;
             id_seen = eid;
@@ -168,7 +177,7 @@ void test_gate_core()
         });
     inside = false;
     check(id != 0, "ensure_async aceita o pedido");
-    for (int i = 0; i < 300 && calls.load() == 0; ++i)
+    for (int i = 0; i < 1500 && calls.load() == 0; ++i) // até 15 s (latência de 2 s)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     check(calls.load() == 1, "callback chamado exatamente uma vez");

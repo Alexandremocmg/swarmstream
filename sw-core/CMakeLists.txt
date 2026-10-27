@@ -13,6 +13,7 @@ add_library(sw-core STATIC
     src/api_stub.cpp
     src/cache_journal.cpp
     src/cache_owner.cpp
+    src/deadline_scheduler.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
     src/http_range_source.cpp
@@ -111,6 +112,12 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
     add_test(NAME sw-core-lease COMMAND sw-core-lease-tests)
     set_tests_properties(sw-core-lease PROPERTIES TIMEOUT 300)
+    # F1-28: agendador por prazo v1 (fonte falsa controlada pelo teste; estresse com 16 threads
+    # pedindo e cancelando; o job TSan roda este teste).
+    add_executable(sw-core-scheduler-tests tests/test_deadline_scheduler.cpp)
+    target_link_libraries(sw-core-scheduler-tests PRIVATE sw-core)
+    add_test(NAME sw-core-scheduler COMMAND sw-core-scheduler-tests)
+    set_tests_properties(sw-core-scheduler PROPERTIES TIMEOUT 300)
     # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
     # está ligado; sem isso, "nenhuma corrida" não provaria nada).
     if(SANITIZE_THREAD)
