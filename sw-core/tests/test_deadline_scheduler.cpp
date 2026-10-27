@@ -228,6 +228,16 @@ public:
         throw_next_ = true;
     }
 
+    // Responde o pedido com uma exceção que não deriva de std::exception (um int).
+    void fail_with_int(RequestId id)
+    {
+        std::lock_guard lock(mutex_);
+        const auto it = promises_.find(id);
+        SW_CHECK(it != promises_.end());
+        it->second.set_exception(std::make_exception_ptr(42));
+        promises_.erase(it);
+    }
+
     void invalid_future_next()
     {
         std::lock_guard lock(mutex_);
@@ -462,6 +472,31 @@ void test_reserved_slot()
 }
 
 // Controle do anterior: sem reserva, prefetch usa as duas vagas.
+// Lacuna A15 da revisão: prefetch preso na fila pelo limite de prefetch vira demanda quando o
+// jogo pede a mesma peça. A thread da vaga reservada está dormindo (não havia demanda); a
+// promoção tem de acordá-la, sem esperar outro evento (o prefetch na fonte não termina).
+void test_promotion_wakes_reserved_slot()
+{
+    FakeSource src;
+    Recorder rec;
+    auto s = make(src, 2, 1);
+    (void)s->submit(piece(1), in(10000ms), RequestKind::Prefetch, rec.callback());
+    SW_CHECK(src.wait_calls(1));
+    (void)s->submit(piece(2), in(10000ms), RequestKind::Prefetch, rec.callback());
+    std::this_thread::sleep_for(kQuiet);
+    SW_CHECK(src.call_count() == 1); // a peça 2 está presa pelo limite de prefetch
+    const RequestId d = s->submit(piece(2), in(20000ms), RequestKind::Demand, rec.callback());
+    SW_CHECK(src.wait_calls(2)); // saiu pela vaga reservada, com a peça 1 ainda na fonte
+    SW_CHECK(src.call(1).piece == piece(2));
+    SW_CHECK(s->stats().sent_demand == 1);
+    src.complete_nth(1);
+    SW_CHECK(rec.wait_count(2));
+    SW_CHECK(rec.get(d).data == bytes_of(piece(2)));
+    src.complete_nth(0);
+    SW_CHECK(rec.wait_count(3));
+    std::puts("promocao a demanda acorda a vaga reservada: ok");
+}
+
 void test_no_reservation_uses_all_slots()
 {
     FakeSource src;
@@ -825,13 +860,19 @@ void test_source_misbehaves()
     SW_CHECK(rec.wait_count(2));
     SW_CHECK(rec.get(b).error == SourceErrorCode::NetworkError);
     SW_CHECK(rec.get(b).message.find("sem future") != std::string::npos);
+    // Exceção que não deriva de std::exception, vinda do future da fonte.
+    const RequestId e = s->submit(piece(4), in(0ms), RequestKind::Demand, rec.callback());
+    SW_CHECK(src.wait_calls(2));
+    src.fail_with_int(src.call(1).id);
+    SW_CHECK(rec.wait_count(3));
+    SW_CHECK(rec.get(e).error == SourceErrorCode::NetworkError);
     // O agendador continua funcionando.
     const RequestId c = s->submit(piece(3), in(0ms), RequestKind::Demand, rec.callback());
-    SW_CHECK(src.wait_calls(2));
-    src.complete(src.call(1).id);
-    SW_CHECK(rec.wait_count(3));
+    SW_CHECK(src.wait_calls(3));
+    src.complete(src.call(2).id);
+    SW_CHECK(rec.wait_count(4));
     SW_CHECK(rec.get(c).error == SourceErrorCode::Success);
-    SW_CHECK(s->stats().failed == 2);
+    SW_CHECK(s->stats().failed == 3);
     std::puts("excecao e ticket invalido da fonte viram erro: ok");
 }
 
@@ -1033,6 +1074,7 @@ int main()
     test_config_validation();
     test_demand_passes_prefetch();
     test_reserved_slot();
+    test_promotion_wakes_reserved_slot();
     test_no_reservation_uses_all_slots();
     test_deadline_order_within_kind();
     test_coalescing();

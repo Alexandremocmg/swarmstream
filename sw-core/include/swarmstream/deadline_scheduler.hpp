@@ -4,7 +4,9 @@
 // Agendador por prazo v1 (F1-28, ADR-0003, docs/05): uma fonte, fila por prazo, cancelamento.
 //
 // - Dois tipos de pedido. DEMANDA vem de leitura e de sw_ensure_async: o jogo precisa da peça.
-//   PREFETCH vem das dicas (sw_hint_*): é palpite, nunca garante nada.
+//   PREFETCH vem das dicas (sw_hint_*): é palpite, nunca garante nada. Quem chama classifica:
+//   instalação, patch e modo completo em background são PREFETCH, mesmo vindo de
+//   sw_ensure_async. Como demanda, passariam na frente de todo prefetch, até do urgente.
 // - Ordem de saída para a fonte: toda demanda antes de todo prefetch; dentro de cada tipo, o
 //   prazo mais cedo primeiro (empate: quem chegou antes). É o critério de aceite: "pedido urgente
 //   passa na frente de prefetch". Prefetch é palpite e não disputa vaga com o jogo, nem quando o
@@ -21,6 +23,9 @@
 //   limite (o limite de espera é o timeout de quem lê). O prazo é repassado à fonte, que o usa
 //   como prioridade; a fonte não pode tratá-lo como limite (a HttpRangeSource não trata; a
 //   MemoryContentSource devolve Timeout depois do prazo, então use prazos folgados com ela).
+// - O prefetch vencido só vira Timeout quando chega a vez dele, isto é, quando há vaga de
+//   prefetch e ele está na frente da fila. Até lá, pending() da peça continua true e o callback
+//   atrasa (nunca se perde). Não há varredura por relógio.
 // - cancel() tira só aquele pedido. Se era o último da peça: ainda na fila, a peça sai da fila e
 //   a fonte nem fica sabendo; já na fonte, chama IContentSource::cancel e a peça é esquecida (um
 //   pedido novo da mesma peça vai à fonte de novo, sem herdar o cancelamento).
@@ -28,13 +33,19 @@
 //   erro da fonte, Canceled ou Timeout (prefetch vencido). Sempre na thread de entrega do
 //   agendador, uma por vez, nunca dentro de submit()/cancel(). Não pode bloquear; pode chamar
 //   submit(), cancel() e pending(). Exceção que sair do callback é contada em
-//   callback_exceptions, não derruba o agendador.
+//   callback_exceptions, não derruba o agendador. NÃO destrua o agendador dentro de um callback:
+//   o destrutor espera a thread de entrega, que não pode esperar por si mesma
+//   (std::thread::join dá resource_deadlock_would_occur e o processo termina).
 // - Threads: `max_in_flight` threads que pedem à fonte e esperam a resposta, mais uma de entrega.
 //   Nenhuma é criada por pedido.
 // - Destrutor: pedidos na fila recebem Canceled; os que estão na fonte recebem cancel() e o
 //   callback vem com o que a fonte responder. Espera todas as threads (a fonte tem de responder
 //   ao cancelamento) e entrega todos os callbacks antes de voltar. A fonte tem de viver mais que o
 //   agendador.
+// - Exceções da fonte: qualquer exceção de request() ou do future, de qualquer tipo, vira
+//   NetworkError no callback. Falta de memória dentro do agendador (bad_alloc em submit, cancel
+//   ou nas threads internas) termina o processo (std::terminate). Seguir em frente deixaria
+//   filas e mapas desencontrados.
 // - submit() aloca (o pedido e o callback). Não é o caminho quente de leitura (acerto de cache),
 //   que não passa por aqui.
 // - v1 não usa o SourceEstimator (F1-29): com uma fonte só não há fonte a escolher nem pedido

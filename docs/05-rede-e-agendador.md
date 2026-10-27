@@ -22,8 +22,10 @@ O primeiro agendador (`DeadlineScheduler`, regras em `sw-core/include/swarmstrea
 - **Demanda** (leitura, `sw_ensure_async`) sai **sempre antes** de **prefetch** (dicas); dentro de cada tipo, o prazo mais cedo primeiro. Prefetch é palpite e não disputa vaga com o jogo, nem quando o prazo dele é mais cedo.
 - Limite de pedidos na fonte ao mesmo tempo, com **vagas reservadas para demanda**: uma falta nunca espera um prefetch já em andamento terminar.
 - Pedidos da mesma peça viram um só; o prazo é o menor entre eles e a peça vira demanda se algum pedido for demanda.
-- Prefetch cujo prazo passa antes de sair para a fonte é descartado (nunca vira urgente). Demanda atrasada continua: o prazo é prioridade, não limite.
+- Prefetch cujo prazo passa antes de sair para a fonte é descartado (nunca vira urgente). O descarte só acontece quando chega a vez dele na fila; até lá a peça segue "pendente". Demanda atrasada continua: o prazo é prioridade, não limite.
+- Quem chama classifica o pedido. Instalação, patch e modo completo em background entram como **prefetch**, mesmo vindo de `sw_ensure_async`. Como demanda, passariam na frente de prefetch urgente.
 - Cancelamento por pedido; se era o último da peça, cancela na fonte.
+- Não destrua o agendador dentro de um callback (o processo termina). Exceção da fonte vira erro de rede no callback; falta de memória dentro do agendador termina o processo.
 
 O estimador de banda e RTT (F1-29) entra quando houver mais de uma fonte (peers e CDN), para decidir o hedging.
 

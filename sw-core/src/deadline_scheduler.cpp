@@ -14,6 +14,9 @@
 // - Cancelamento na fonte: quem cancela lê o id da fonte sob a trava. Se a thread de trabalho
 //   ainda está dentro de request() (id inválido), marca cancel_source, e a thread cancela assim
 //   que guarda o id (na mesma seção crítica em que lê a marca). Exatamente um dos dois cancela.
+// - Falta de memória: as funções *_locked que mexem em mais de uma estrutura são noexcept. Um
+//   bad_alloc no meio delas termina o processo (std::terminate) em vez de deixar filas e mapas
+//   desencontrados. As threads internas também terminam o processo se algo escapar delas.
 
 #include "swarmstream/deadline_scheduler.hpp"
 
@@ -73,36 +76,7 @@ public:
             std::lock_guard lock(mutex_);
             if (stopping_) return kInvalidRequestId;
             id = next_request_id_++;
-            ++stats_.submitted;
-            const auto found = by_piece_.find(piece);
-            if (found != by_piece_.end()) {
-                const EntryPtr entry = found->second;
-                ++stats_.coalesced;
-                entry->subscribers.push_back(Subscriber{id, kind, deadline, std::move(callback)});
-                if (entry->state == State::Queued) {
-                    const bool upgrade =
-                        kind == RequestKind::Demand && entry->kind == RequestKind::Prefetch;
-                    if (upgrade || deadline < entry->deadline) {
-                        dequeue_locked(*entry);
-                        if (upgrade) entry->kind = RequestKind::Demand;
-                        entry->deadline = std::min(entry->deadline, deadline);
-                        enqueue_locked(entry);
-                        wake = upgrade; // demanda pode usar a vaga reservada
-                    }
-                }
-                by_request_.emplace(id, entry);
-            } else {
-                auto entry = std::make_shared<Entry>();
-                entry->piece = piece;
-                entry->deadline = deadline;
-                entry->kind = kind;
-                entry->seq = next_seq_++;
-                entry->subscribers.push_back(Subscriber{id, kind, deadline, std::move(callback)});
-                enqueue_locked(entry);
-                by_piece_.emplace(piece, entry);
-                by_request_.emplace(id, std::move(entry));
-                wake = true;
-            }
+            wake = add_locked(id, piece, deadline, kind, std::move(callback));
         }
         if (wake) work_cv_.notify_one();
         return id;
@@ -113,36 +87,7 @@ public:
         RequestId source_id = kInvalidRequestId;
         {
             std::lock_guard lock(mutex_);
-            const auto found = by_request_.find(id);
-            if (found == by_request_.end()) return false;
-            const EntryPtr entry = found->second;
-            by_request_.erase(found);
-            auto& subs = entry->subscribers;
-            const auto sub = std::find_if(subs.begin(), subs.end(),
-                                          [id](const Subscriber& s) { return s.id == id; });
-            // by_request_ e subscribers andam juntos: um pedido em um está no outro.
-            if (sub == subs.end()) std::terminate();
-            SchedulerCallback callback = std::move(sub->callback);
-            subs.erase(sub);
-            ++stats_.canceled;
-            if (callback) {
-                deliveries_.push_back(
-                    Delivery{id, std::move(callback),
-                             make_error(entry->piece, SourceErrorCode::Canceled, "cancelado")});
-            }
-            if (entry->state == State::Queued) {
-                dequeue_locked(*entry);
-                if (subs.empty()) {
-                    forget_locked(*entry);
-                } else {
-                    recompute(*entry);
-                    enqueue_locked(entry);
-                }
-            } else if (subs.empty()) {
-                forget_locked(*entry);
-                entry->cancel_source = true;
-                source_id = entry->source_id; // inválido: a thread de trabalho cancela
-            }
+            if (!cancel_locked(id, source_id)) return false;
         }
         delivery_cv_.notify_one();
         if (source_id != kInvalidRequestId) (void)source_.cancel(source_id);
@@ -203,12 +148,12 @@ private:
 
     Queue& queue_for(RequestKind kind) { return kind == RequestKind::Demand ? demand_ : prefetch_; }
 
-    void enqueue_locked(const EntryPtr& entry)
+    void enqueue_locked(const EntryPtr& entry) noexcept
     {
         queue_for(entry->kind).emplace(QueueKey{entry->deadline, entry->seq}, entry);
     }
 
-    void dequeue_locked(const Entry& entry)
+    void dequeue_locked(const Entry& entry) noexcept
     {
         const std::size_t erased = queue_for(entry.kind).erase(QueueKey{entry.deadline, entry.seq});
         if (erased != 1) std::terminate(); // entrada na fila tem de estar na fila do seu tipo
@@ -225,8 +170,78 @@ private:
         }
     }
 
+    // Acrescenta o pedido `id`. Devolve true se uma thread de trabalho deve acordar.
+    bool add_locked(RequestId id, const PieceId& piece, SteadyTimePoint deadline, RequestKind kind,
+                    SchedulerCallback&& callback) noexcept
+    {
+        ++stats_.submitted;
+        const auto found = by_piece_.find(piece);
+        if (found != by_piece_.end()) {
+            const EntryPtr entry = found->second;
+            ++stats_.coalesced;
+            entry->subscribers.push_back(Subscriber{id, kind, deadline, std::move(callback)});
+            by_request_.emplace(id, entry);
+            if (entry->state != State::Queued) return false; // já na fonte: só espera a resposta
+            const bool upgrade =
+                kind == RequestKind::Demand && entry->kind == RequestKind::Prefetch;
+            if (!upgrade && deadline >= entry->deadline) return false;
+            dequeue_locked(*entry);
+            if (upgrade) entry->kind = RequestKind::Demand;
+            entry->deadline = std::min(entry->deadline, deadline);
+            enqueue_locked(entry);
+            return upgrade; // a demanda pode usar a vaga reservada (teste da lacuna A15)
+        }
+        auto entry = std::make_shared<Entry>();
+        entry->piece = piece;
+        entry->deadline = deadline;
+        entry->kind = kind;
+        entry->seq = next_seq_++;
+        entry->subscribers.push_back(Subscriber{id, kind, deadline, std::move(callback)});
+        enqueue_locked(entry);
+        by_piece_.emplace(piece, entry);
+        by_request_.emplace(id, std::move(entry));
+        return true;
+    }
+
+    // Tira o pedido `id` (se pendente) e agenda o callback Canceled. `source_id` recebe o id na
+    // fonte a cancelar, se for o caso.
+    bool cancel_locked(RequestId id, RequestId& source_id) noexcept
+    {
+        const auto found = by_request_.find(id);
+        if (found == by_request_.end()) return false;
+        const EntryPtr entry = found->second;
+        by_request_.erase(found);
+        auto& subs = entry->subscribers;
+        const auto sub = std::find_if(subs.begin(), subs.end(),
+                                      [id](const Subscriber& s) { return s.id == id; });
+        // by_request_ e subscribers andam juntos: um pedido em um está no outro.
+        if (sub == subs.end()) std::terminate();
+        SchedulerCallback callback = std::move(sub->callback);
+        subs.erase(sub);
+        ++stats_.canceled;
+        if (callback) {
+            deliveries_.push_back(
+                Delivery{id, std::move(callback),
+                         make_error(entry->piece, SourceErrorCode::Canceled, "cancelado")});
+        }
+        if (entry->state == State::Queued) {
+            dequeue_locked(*entry);
+            if (subs.empty()) {
+                forget_locked(*entry);
+            } else {
+                recompute(*entry);
+                enqueue_locked(entry);
+            }
+        } else if (subs.empty()) {
+            forget_locked(*entry);
+            entry->cancel_source = true;
+            source_id = entry->source_id; // inválido: a thread de trabalho cancela
+        }
+        return true;
+    }
+
     // Tira a entrada de by_piece_: um pedido novo da peça cria outra entrada.
-    void forget_locked(Entry& entry)
+    void forget_locked(Entry& entry) noexcept
     {
         if (entry.forgotten) return;
         const auto found = by_piece_.find(entry.piece);
@@ -237,7 +252,7 @@ private:
 
     // Entrega `response` a todos os pedidos da entrada e a esquece.
     void finish_locked(Entry& entry, const std::shared_ptr<const PieceResponse>& response,
-                       bool expired)
+                       bool expired) noexcept
     {
         for (auto& sub : entry.subscribers) {
             by_request_.erase(sub.id);
@@ -264,7 +279,7 @@ private:
     }
 
     // A próxima entrada a sair, ou nada (só havia prefetch vencido, que é descartado aqui).
-    EntryPtr pop_locked()
+    EntryPtr pop_locked() noexcept
     {
         if (!demand_.empty()) {
             const auto first = demand_.begin();
@@ -346,6 +361,9 @@ private:
                     response =
                         make_error(piece, SourceErrorCode::NetworkError,
                                    std::string("a fonte nao respondeu o pedido: ") + e.what());
+                } catch (...) {
+                    response = make_error(piece, SourceErrorCode::NetworkError,
+                                          "a fonte respondeu com excecao desconhecida");
                 }
             }
         }
