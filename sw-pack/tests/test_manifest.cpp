@@ -779,6 +779,31 @@ void test_resigned_envelopes_and_reader_order()
     }
 }
 
+// Determinismo: o mesmo modelo e a mesma chave dão SEMPRE os mesmos bytes (nada de data, contador,
+// ordem de iteração nem aleatoriedade no arquivo). O Ed25519 é determinístico (RFC 8032).
+void test_build_is_deterministic()
+{
+    const sp::Ed25519Seed seed = test_seed();
+    for (const std::size_t blocks : {0U, 1U, 40U, 700U}) {
+        const sp::ManifestModel model = st::make_synthetic_model(blocks, 5, blocks + 3);
+        const sp::BuildResult first = sp::build_manifest(model, seed);
+        SW_CHECK(first.status.ok());
+        // Segunda execução, com uma cópia do modelo e depois de outros trabalhos no processo.
+        const sp::ManifestModel copy = model;
+        (void)sp::encode_manifest(st::make_synthetic_model(17, 3, 99), seed);
+        const sp::BuildResult second = sp::build_manifest(copy, seed);
+        SW_CHECK(second.status.ok());
+        SW_CHECK(first.bytes == second.bytes);
+        SW_CHECK(sp::encode_manifest(model, seed) == sp::encode_manifest(copy, seed));
+    }
+    // Chaves diferentes dão assinaturas (e bytes) diferentes, mas o payload é o mesmo.
+    const sp::ManifestModel model = st::make_synthetic_model(30, 4, 5);
+    const Bytes a = sp::encode_manifest(model, seed);
+    const Bytes b = sp::encode_manifest(model, other_seed());
+    SW_CHECK(a != b && a.size() == b.size());
+    SW_CHECK(std::equal(a.begin() + sp::kEnvelopeSize, a.end(), b.begin() + sp::kEnvelopeSize));
+}
+
 // Se o libsodium não iniciar (`sodium_init() < 0`), cada entrada pública devolve erro ou
 // "inválido": nada autentica, nada assina e nada vira "aceito". O gancho de teste simula a falha.
 void test_libsodium_init_failure_is_an_error()
@@ -914,6 +939,8 @@ int main(int argc, char** argv)
     lap("validacoes do 03 secao 8 ok");
     test_resigned_envelopes_and_reader_order();
     lap("envelopes re-assinados e ordem do leitor ok");
+    test_build_is_deterministic();
+    lap("determinismo ok");
     test_libsodium_init_failure_is_an_error();
     lap("falha do sodium_init vira erro ok");
     test_signed_garbage_payloads();
