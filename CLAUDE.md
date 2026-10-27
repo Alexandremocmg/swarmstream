@@ -20,9 +20,10 @@ ctest --test-dir build --output-on-failure
 cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DSANITIZE=ON
 
 # Python (bancada, ferramentas, lint igual ao CI)
-python -m black --config sw-netlab/pyproject.toml --check sw-netlab sw-godot/tools/download_assets.py
-python -m ruff check --config sw-netlab/pyproject.toml sw-netlab sw-godot/tools/download_assets.py
+python -m black --config sw-netlab/pyproject.toml --check sw-netlab sw-godot/tools/download_assets.py third_party/licenses/scan_libsodium_licenses.py
+python -m ruff check --config sw-netlab/pyproject.toml sw-netlab sw-godot/tools/download_assets.py third_party/licenses/scan_libsodium_licenses.py
 python -m mypy --strict sw-netlab
+python -m mypy --config-file sw-netlab/pyproject.toml --strict third_party/licenses/scan_libsodium_licenses.py
 
 # Vetores de teste do formato (~2 min; Python 3.14+ ou `pip install zstandard`; precisa de openssl)
 python sw-pack/testdata/verify_vectors.py
