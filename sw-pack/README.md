@@ -4,8 +4,8 @@ Ferramenta de empacotamento de conteúdo do Swarmstream — trilha **T1
 (Conteúdo/build)**. Divide o build do jogo em blocos comprimidos, identificados
 por hash, e gera o manifesto assinado que a publisher distribui.
 
-> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01) e o SHA-256 que ele
-> usa; o resto abaixo ainda não tem código.
+> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), SHA-256/SHA-512,
+> Ed25519 e o manifesto v0 assinado (F1-04); o resto abaixo ainda não tem código.
 
 ## O que já existe
 
@@ -14,13 +14,29 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   (sem alocação); `split(buffer)` devolve todos. A referência são os vetores de
   [testdata/vectors-v0.json](testdata/README.md), reproduzidos por `tests/test_chunker.cpp`.
 - `include/swarmstream/sha256.hpp`, `src/sha256.cpp`: SHA-256 pequeno, sem dependências.
+- `include/swarmstream/manifest.hpp`, `src/manifest.cpp`: manifesto v0 de
+  [docs/03 §7](../docs/03-formato-de-conteudo.md) ([ADR-0012](../docs/adr/0012-serializacao-do-manifesto.md)).
+  `build_manifest(modelo, semente)` codifica o payload FlatBuffers, assina com Ed25519 e **lê de volta**
+  o resultado antes de devolvê-lo. `ManifestView::open(bytes, opções, saída)` é o leitor, na ordem do §7.1
+  (cabeçalho → chave → **assinatura** → sondagem do `min_reader` → verificador e validações do §8),
+  sem cópia das tabelas colunares. O FlatBuffers é escrito e verificado à mão (esquema fixo e pequeno),
+  então não há dependência nova; o layout é o do FlatBuffers e foi lido com o runtime oficial (ver abaixo).
+- `include/swarmstream/ed25519.hpp`, `sha512.hpp`: Ed25519 (RFC 8032, verificação estrita) e SHA-512,
+  sem dependências. A chave de teste (semente `00..1f`) fica só em `testdata/` e nos testes; nenhum build
+  de release pode confiá-la (ADR-0012, item 4).
+- `tools/sw_manifest_bench.cpp`: mede tamanho do arquivo, custo de abrir e memória residente
+  (`sw-manifest-bench generate --blocks N --out m.bin`, depois `sw-manifest-bench open m.bin`).
+  Números e extrapolação para 150 GB em [docs/medicoes/manifesto-v0.md](../docs/medicoes/manifesto-v0.md).
+- Conferência independente (não usa código do sw-pack): `python -I testdata/verify_manifest_independent.py m.bin`
+  verifica a assinatura com `cryptography`/OpenSSL e lê o payload com o runtime oficial do FlatBuffers.
 - Teste pesado de estabilidade em 1 GiB (mudar, inserir ou remover 1 byte altera ≤ 3 blocos), fora do
   CTest padrão: `cmake -DSW_PACK_HEAVY_TESTS=ON ...` e `ctest -L heavy` (cerca de 1 min em Release).
 
 ## O que vai morar aqui
 
 - Compressão por bloco Zstd/LZ4 por tipo de arquivo (F1-03)
-- Geração e leitura do manifesto v0 (F1-04), classificação core/grupo/opcional (F1-05)
+- Classificação core/grupo/opcional (F1-05); o `piece_hash` (Merkle da peça) e a montagem do manifesto a
+  partir de arquivos ainda não existem: a F1-04 recebe o modelo já pronto
 - Ordenação de blocos em peças por localidade (F1-06)
 - Relatório de tamanho por grupo, nº de peças e taxa de compressão (F1-08)
 - Torrent v2 por pacote com web seed (F2-03)
