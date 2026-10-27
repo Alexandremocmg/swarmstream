@@ -15,6 +15,7 @@ sem fsync) sobrevive. A ordem das barreiras contra queda de energia é provada p
 (04 §3) e pelos testes de cauda rasgada e corrupção do journal (sw-core-journal).
 
 Uso: crash_test.py <sw-core-crash-tool> [iterações] [semente]
+     crash_test.py <sw-core-crash-tool> --quedas <N> [semente]   (F1-31: roda até N quedas)
      crash_test.py <sw-core-crash-tool> 1 --iteration-seed <semente da iteração>
 Toda falha imprime a iteração, a semente dela, os comandos das rodadas e o fim do log.
 """
@@ -138,7 +139,16 @@ def main() -> int:
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")
     tool = sys.argv[1]
-    if len(sys.argv) == 5 and sys.argv[3] == "--iteration-seed":
+    target_crashes = 0
+    if len(sys.argv) >= 3 and sys.argv[2] == "--quedas":
+        target_crashes = int(sys.argv[3])
+        if target_crashes < 1:
+            print("--quedas precisa de N >= 1")
+            return 64
+        base_seed = int(sys.argv[4]) if len(sys.argv) > 4 else 20261026
+        # teto: pelo menos 1 queda por iteração
+        seeds = [base_seed * 1_000_003 + it for it in range(target_crashes)]
+    elif len(sys.argv) == 5 and sys.argv[3] == "--iteration-seed":
         seeds = [int(sys.argv[4])]  # reproduz uma iteração que falhou
         base_seed = seeds[0]
     else:
@@ -149,8 +159,12 @@ def main() -> int:
     crashes = 0
     kills = 0
     t0 = time.monotonic()
+    done = 0
     for it, it_seed in enumerate(seeds):
+        if target_crashes and crashes + kills >= target_crashes:
+            break
         ok, c, k, summary = run_iteration(tool, it, it_seed)
+        done += 1
         crashes += c
         kills += k
         if not ok:
@@ -158,8 +172,11 @@ def main() -> int:
         if it < 3 or it % 25 == 0:
             print(f"iteração {it} (semente {it_seed}): {summary}", flush=True)
     elapsed = time.monotonic() - t0
+    if target_crashes and crashes + kills < target_crashes:
+        print(f"FALHA: só {crashes + kills} quedas em {done} iterações (alvo {target_crashes})")
+        return 1
     print(
-        f"{len(seeds)} iterações, {len(seeds) * ROUNDS} rodadas: {crashes} quedas em ponto "
+        f"{done} iterações, {done * ROUNDS} rodadas: {crashes} quedas em ponto "
         f"exato, {kills} processos mortos; 0 peças corrompidas ({elapsed:.1f} s, "
         f"semente base {base_seed})"
     )
