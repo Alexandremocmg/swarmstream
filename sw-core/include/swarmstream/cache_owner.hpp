@@ -41,6 +41,17 @@
 //   * O lease vale para a CacheOwner que o deu. Depois de stop() ninguém remove nada; um lease
 //     que sobreviver à CacheOwner continua seguro de soltar (a tabela é compartilhada), mas não
 //     prende nada numa CacheOwner nova (start() de novo começa sem leases).
+// - Remoção CLOCK (F1-14, docs/04 §Política de remoção): ligada por CacheOwnerConfig::
+//   evict_high_percent/evict_low_percent (0 = desligada, só o Remove explícito). Depois de um
+//   Put que leve o uso (peças = slots ocupados) a >= a marca alta, a dona remove peças até o uso
+//   chegar à marca baixa, na mesma thread, em lotes: um FREE_SLOT por peça e UM sync por lote;
+//   os slots só são liberados depois do sync. O ponteiro do relógio dá segunda chance a quem foi
+//   lido (Get/Acquire) ou gravado como quente desde a última passada. NUNCA saem: peça fixada
+//   (Put com set_pinned(true) ou CacheOp::SetPinned: grupo `core`, UI e boot) e peça com lease.
+//   Peça de um Put frio (set_cold, prefetch) só fica a salvo se for lida antes da passada.
+//   O fixado vale só em memória (não vai ao journal): depois de start() o jogo marca de novo.
+//   Se tudo o que resta está fixado ou preso, a remoção para e o Put devolve OutOfSlots: o uso
+//   do teto nunca passa de 100%.
 // - A peça é identificada pela raiz Merkle (`PieceId::hash`, ADR-0007); o índice da peça no
 //   manifesto (`PieceId::index`) não entra no cache em disco.
 
@@ -68,11 +79,12 @@ using CrashHook = void (*)(CrashPoint point, void* context);
 } // namespace detail
 
 enum class CacheOp : uint8_t {
-    Put,     // grava `input` como a peça; sucesso devolve o tamanho
-    Get,     // copia a peça para `output` e confere os blocos; sucesso devolve o tamanho
-    Remove,  // tira a peça do cache e libera o slot; sucesso devolve 0; SlotBusy com lease
-    Acquire, // prende a peça no PieceLease de quem pede (F1-13); sucesso devolve o tamanho;
-             // pedido sem PieceLease (construtor genérico) dá InvalidSize
+    Put,       // grava `input` como a peça; sucesso devolve o tamanho
+    Get,       // copia a peça para `output` e confere os blocos; sucesso devolve o tamanho
+    Remove,    // tira a peça do cache e libera o slot; sucesso devolve 0; SlotBusy com lease
+    Acquire,   // prende a peça no PieceLease de quem pede (F1-13); sucesso devolve o tamanho;
+               // pedido sem PieceLease (construtor genérico) dá InvalidSize
+    SetPinned, // fixa (ou solta) a peça, segundo o pedido (F1-14); sucesso devolve 0
 };
 
 namespace detail {
@@ -127,7 +139,8 @@ class CacheRequest : private MpscNode
 {
 public:
     CacheRequest(CacheOp op, const PieceId& piece, std::span<const std::byte> input,
-                 std::span<std::byte> output, std::span<const uint32_t> blocks = {}) noexcept;
+                 std::span<std::byte> output, std::span<const uint32_t> blocks = {},
+                 bool pinned = false) noexcept;
     CacheRequest(const PieceId& piece, PieceLease& lease) noexcept; // Acquire
     ~CacheRequest();
     CacheRequest(const CacheRequest&) = delete;
@@ -147,6 +160,14 @@ public:
     {
         return CacheRequest(CacheOp::Remove, piece, {}, {});
     }
+    // Fixa (true) ou solta (false) a peça já gravada: a remoção CLOCK nunca a escolhe (F1-14).
+    [[nodiscard]] static CacheRequest pin(const PieceId& piece, bool pinned = true) noexcept
+    {
+        return CacheRequest(CacheOp::SetPinned, piece, {}, {}, {}, pinned);
+    }
+    // Só para Put (antes de submit): grava a peça já fixada / como fria (prefetch, F1-14).
+    void set_pinned(bool pinned) noexcept { pinned_ = pinned; }
+    void set_cold(bool cold) noexcept { cold_ = cold; }
     [[nodiscard]] static CacheRequest acquire(const PieceId& piece, PieceLease& lease) noexcept
     {
         return CacheRequest(piece, lease);
@@ -185,6 +206,8 @@ private:
     std::span<std::byte> output_;
     std::span<const uint32_t> blocks_;
     PieceLease* lease_ = nullptr; // Acquire
+    bool pinned_ = false;         // Put (fixar ao gravar) e SetPinned (o valor novo)
+    bool cold_ = false;           // Put: entra sem a marca de "lida" (prefetch)
 
     std::atomic<bool> pending_{false}; // entre arm() e complete()
     mutable std::mutex mutex_;
@@ -201,7 +224,15 @@ struct CacheOwnerConfig
     StoreLayout layout = {};
     // Checkpoint (04 §4) quando o journal passa deste tamanho; também há um ao abrir e ao parar.
     uint64_t checkpoint_journal_bytes = uint64_t{64} << 20;
+    // Remoção CLOCK (F1-14), em % do teto (total_slots). 0/0 = desligada. Ligada, exige
+    // 0 < baixa < alta <= 100; senão start() devolve InvalidSize.
+    uint32_t evict_high_percent = 0;
+    uint32_t evict_low_percent = 0;
 };
+
+// Marcas do docs/04: a remoção começa em 95% do teto e para em 85%.
+inline constexpr uint32_t kDefaultEvictHighPercent = 95;
+inline constexpr uint32_t kDefaultEvictLowPercent = 85;
 
 // O que start() encontrou no disco (04 §5). Para os testes e a telemetria.
 struct CacheRecovery
@@ -257,6 +288,9 @@ public:
     [[nodiscard]] uint32_t pieces() const noexcept; // peças publicadas no índice
     // Leases dados por esta CacheOwner e ainda não soltos (F1-13).
     [[nodiscard]] uint64_t leases() const noexcept;
+    // Remoção CLOCK (F1-14): peças removidas e bytes liberados desde start().
+    [[nodiscard]] uint64_t evicted_pieces() const noexcept;
+    [[nodiscard]] uint64_t evicted_bytes() const noexcept;
     // true depois de uma falha de sync: só stop() e um start() novo resolvem.
     [[nodiscard]] bool broken() const noexcept;
     // O que start() encontrou. Escrito antes de a dona existir; só leitura depois.

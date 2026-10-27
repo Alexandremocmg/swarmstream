@@ -112,6 +112,16 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
     add_test(NAME sw-core-lease COMMAND sw-core-lease-tests)
     set_tests_properties(sw-core-lease PROPERTIES TIMEOUT 300)
+    # F1-14: remoção CLOCK com marcas 95%/85% e conjunto fixo (estresse: core e lease nunca saem,
+    # uso nunca passa do teto; o job TSan roda este teste).
+    add_executable(sw-core-eviction-tests tests/test_cache_eviction.cpp)
+    target_link_libraries(sw-core-eviction-tests PRIVATE sw-core)
+    target_include_directories(sw-core-eviction-tests PRIVATE src)
+    if(SANITIZE_THREAD)
+        target_compile_definitions(sw-core-eviction-tests PRIVATE SW_EXPECT_TSAN)
+    endif()
+    add_test(NAME sw-core-eviction COMMAND sw-core-eviction-tests)
+    set_tests_properties(sw-core-eviction PROPERTIES TIMEOUT 300)
     # F1-28: agendador por prazo v1 (fonte falsa controlada pelo teste; estresse com 16 threads
     # pedindo e cancelando; o job TSan roda este teste).
     add_executable(sw-core-scheduler-tests tests/test_deadline_scheduler.cpp)
