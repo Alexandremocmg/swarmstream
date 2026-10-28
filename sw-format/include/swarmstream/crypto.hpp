@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
-// Inicialização do libsodium do `sw-pack`: o ÚNICO ponto que chama `sodium_init()`.
-// Toda entrada pública que usa criptografia (Ed25519, SHA-256, chunker, leitor e construtor do
-// manifesto) confere `crypto_ready()` antes e devolve erro se ela for falsa; nada depende de um
-// `sw_init` futuro. `sodium_init()` é idempotente e seguro entre threads.
+// Inicialização do libsodium do `sw-format` (e de quem o usa): o ÚNICO ponto que chama
+// `sodium_init()`. Toda entrada pública que usa criptografia (Ed25519, SHA-256, chunker, leitor e
+// construtor do manifesto) confere `crypto_ready()` antes e devolve erro se ela for falsa; nada
+// depende de um `sw_init` futuro. `sodium_init()` é idempotente e seguro entre threads.
 #pragma once
 
 #include <string_view>

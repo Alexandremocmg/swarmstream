@@ -45,7 +45,7 @@ No third-party library source code is included in this repository. Binaries
 built from it link third-party libraries obtained in two different ways:
 
   1. Zstandard and LZ4: static libraries compiled by CMake (FetchContent in
-     sw-pack/CMakeLists.txt) from the lib/ directory of source tarballs that
+     sw-format/CMakeLists.txt) from the lib/ directory of source tarballs that
      CMake downloads at build time and checks with URL_HASH (SHA-256). Nothing
      from programs/ or contrib/ of either project is built.
   2. libsodium: built by vcpkg (vcpkg.json, dependency "libsodium", pinned by
@@ -82,8 +82,10 @@ docs/licencas-zstd-lz4.md.
       Copyright (c) 2013-2026 Frank Denis <j at pureftpd dot org>
       https://libsodium.org  (source: https://github.com/jedisct1/libsodium,
       tag 1.0.22-RELEASE)
-      Used by: sw-pack (Ed25519 signature and SHA-256 of the content manifest,
-      docs/adr/0012-serializacao-do-manifesto.md).
+      Used by: sw-format (Ed25519 verification and SHA-256 of the content
+      manifest; this is what a client links) and sw-pack (Ed25519 signing; the
+      build tool, which also links sw-format),
+      docs/adr/0012-serializacao-do-manifesto.md.
       How it is obtained: NOT vendored. vcpkg builds it at build time from the
       manifest (vcpkg.json: dependency "libsodium", builtin-baseline
       e456309491fd875487bf02b8a0dca76c1b1b00cc, port libsodium 1.0.22#1, which

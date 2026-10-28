@@ -58,7 +58,7 @@ Sim para o `sw-pack`: as duas declarações `FetchContent_Declare` usam `URL` + 
 
 ## 6. Riscos
 
-1. **GPL por engano.** Ligar `ZSTD_BUILD_PROGRAMS`, `ZSTD_BUILD_CONTRIB`, `ZSTD_BUILD_TESTS` ou `LZ4_BUILD_CLI` compilaria código GPL. Estão `OFF` (com `FORCE`) em `sw-pack/CMakeLists.txt`. Ninguém deveria vendorizar `programs/` do LZ4 nem copiar trechos de `contrib/`.
+1. **GPL por engano.** Ligar `ZSTD_BUILD_PROGRAMS`, `ZSTD_BUILD_CONTRIB`, `ZSTD_BUILD_TESTS` ou `LZ4_BUILD_CLI` compilaria código GPL. Estão `OFF` (com `FORCE`) em `sw-format/CMakeLists.txt` (movido do `sw-pack` no F1-61). Ninguém deveria vendorizar `programs/` do LZ4 nem copiar trechos de `contrib/`.
 2. **Escolha da licença do Zstd** registrada: BSD-3-Clause, só `lib/` (§2 e `NOTICE`).
 3. **divsufsort (MIT)** e **threading (Tino Reichardt)**: avisos extras fáceis de esquecer; estão na proposta.
 4. **Código de terceiros em testes:** o `test_codec.cpp` usa só `zstd.h` (ligado, não copiado) e um vetor de bytes (`zeros_4096`) gerado pelo projeto (`gen_vectors.py`), sem trecho de terceiros. O Python de vetores usa `zstandard`/`lz4` só localmente, não distribuído.
