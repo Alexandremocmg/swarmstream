@@ -118,15 +118,15 @@ jobs:
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
-      # no log. Se a inspeção for PULADA (ferramenta ausente) o log diz; no Linux isso é erro.
+      # no log. Se a inspeção for PULADA (ferramenta ausente) é ERRO no CI, em qualquer sistema.
       - name: "Símbolos do cliente mínimo (sw-format, Debug)"
         shell: bash
         run: |
           out="$(ctest --test-dir build --build-config Debug -R sw-format-symbols -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
           echo "$out"
-          if echo "$out" | grep -q 'PULADO:'; then
-            if [ "$RUNNER_OS" = "Linux" ]; then echo "::error::inspecao de simbolos PULADA no Linux"; exit 1; fi
-            echo "::warning::inspecao de simbolos PULADA nesta configuracao (ver 'PULADO:' no log)"
+          if echo "$out" | grep -q '^[0-9]*: -- PULADO:'; then
+            echo "::error::inspecao de simbolos PULADA (ferramenta ausente); no CI isso e erro"
+            exit 1
           fi
 
       # F1-54: no Windows o Release (F1-46) roda neste mesmo job, depois do Debug, para pagar uma
@@ -154,16 +154,16 @@ jobs:
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
-      # no log. Se a inspeção for PULADA (ferramenta ausente) o log diz; no Linux isso é erro.
+      # no log. Se a inspeção for PULADA (ferramenta ausente) é ERRO no CI, em qualquer sistema.
       - name: "[Release] Símbolos do cliente mínimo (sw-format)"
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: bash
         run: |
           out="$(ctest --test-dir build-release --build-config Release -R sw-format-symbols -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
           echo "$out"
-          if echo "$out" | grep -q 'PULADO:'; then
-            if [ "$RUNNER_OS" = "Linux" ]; then echo "::error::inspecao de simbolos PULADA no Linux"; exit 1; fi
-            echo "::warning::inspecao de simbolos PULADA nesta configuracao (ver 'PULADO:' no log)"
+          if echo "$out" | grep -q '^[0-9]*: -- PULADO:'; then
+            echo "::error::inspecao de simbolos PULADA (ferramenta ausente); no CI isso e erro"
+            exit 1
           fi
 
   # F1-46: build com NDEBUG. No Windows este teste roda dentro do job build-test (F1-54). O `assert` some nesse build; os testes usam SW_CHECK (tests/check.hpp),
@@ -204,15 +204,15 @@ jobs:
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
-      # no log. Se a inspeção for PULADA (ferramenta ausente) o log diz; no Linux isso é erro.
+      # no log. Se a inspeção for PULADA (ferramenta ausente) é ERRO no CI, em qualquer sistema.
       - name: "Símbolos do cliente mínimo (sw-format, Release)"
         shell: bash
         run: |
           out="$(ctest --test-dir build --build-config Release -R sw-format-symbols -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
           echo "$out"
-          if echo "$out" | grep -q 'PULADO:'; then
-            if [ "$RUNNER_OS" = "Linux" ]; then echo "::error::inspecao de simbolos PULADA no Linux"; exit 1; fi
-            echo "::warning::inspecao de simbolos PULADA nesta configuracao (ver 'PULADO:' no log)"
+          if echo "$out" | grep -q '^[0-9]*: -- PULADO:'; then
+            echo "::error::inspecao de simbolos PULADA (ferramenta ausente); no CI isso e erro"
+            exit 1
           fi
 
   sanitizers:

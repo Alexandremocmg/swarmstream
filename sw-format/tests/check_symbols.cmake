@@ -216,7 +216,8 @@ endif()
 set(ONLY_IN_FORMAT # leitura, descompressão e verificação: só no sw-format
     "${P_OPEN}" "${P_DECOMPRESS}" "${P_READY}" "${P_VERIFY}" "${P_PROBE}" "${P_KEYID}" "${P_SHA}")
 set(ONLY_IN_PACK # escrita, assinatura, compressão e chunker: só no sw-pack
-    "${P_COMPRESS}" "${P_BUILD}" "${P_ENCODE}" "${P_SIGNP}" "${P_SIGN}" "${P_PUBKEY}" "${P_CHUNKER}")
+    "${P_COMPRESS}" "${P_BUILD}" "${P_ENCODE}" "${P_SIGNP}" "${P_SIGN}" "${P_PUBKEY}" "${P_CHUNKER}"
+    "${P_CODEC_EXT}" "${P_CODEC_PATH}")
 foreach(pattern IN LISTS ONLY_IN_FORMAT)
     if(NOT "${format_defs}" MATCHES "${pattern}")
         message(STATUS "ERRO: ${pattern} não é definido no sw-format")

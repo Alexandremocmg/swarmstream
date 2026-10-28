@@ -33,6 +33,6 @@ sw-pack   ────────────────────► sw-for
   build (compilador, ligador, flags, tipo, LTO, `--gc-sections`). **Exige** no executável o leitor, a
   descompressão e a verificação; **proíbe** o chunker, o construtor, a assinatura e `compress_block`; **só
   relata** os símbolos de compressão de terceiros (`ZSTD_compress*`, `LZ4_compress*`), porque o que o
-  ligador descarta depende dele e das flags. Se a ferramenta faltar, o teste se declara PULADO (nunca
+  ligador descarta depende dele e das flags. Se a ferramenta faltar, o teste se declara PULADO (no CI isso é erro; nunca
   passa em silêncio). Os testes de leitura e verificação (ordem do ADR-0012, `crypto_ready()` em toda
   entrada, adulteração) continuam em `sw-pack/tests/test_manifest.cpp`, contra este alvo.
