@@ -26,11 +26,14 @@ sw-pack   ────────────────────► sw-for
 `sw-format` não depende de `sw-core`, `sw-pack` nem `sw-godot`.
 
 ## Testes
-- `sw-format-client-min`: executável que liga **só** o `sw-format`, descomprime um quadro Zstd e um LZ4 e
-  confere que o leitor recusa lixo.
+- `sw-format-client-min`: executável que liga **só** o `sw-format`. Abre um manifesto VÁLIDO com assinatura
+  Ed25519 real (`tests/client_min_fixture.hpp`, receita no cabeçalho), descomprime o bloco que ele descreve e confere o
+  SHA-256, descomprime um quadro LZ4 e confere que o leitor recusa payload alterado, chave não confiável e lixo.
 - `sw-format-symbols` (registrado no `sw-pack`, que enxerga os dois lados): inspeciona os símbolos desse
   executável (`nm`; no MSVC, o mapa do ligador) e as bibliotecas `.a`/`.lib`. Imprime a configuração de
-  build (compilador, ligador, flags, tipo, LTO, `--gc-sections`). **Exige** no executável o leitor, a
+  build (compilador, ligador, flags, tipo, LTO, `--gc-sections`) e, para cada símbolo, a CLASSE: definição (código no
+  executável), referência indefinida `U` (biblioteca dinâmica) ou importação (DLL); no Windows lista também o que
+  a `libsodium.dll` exporta (`dumpbin /EXPORTS`). O classificador tem autoteste (`sw-format-symbols-selftest`). **Exige** no executável o leitor, a
   descompressão e a verificação; **proíbe** o chunker, o construtor, a assinatura e `compress_block`; **só
   relata** os símbolos de compressão de terceiros (`ZSTD_compress*`, `LZ4_compress*`), porque o que o
   ligador descarta depende dele e das flags. Se a ferramenta faltar, o teste se declara PULADO (no CI isso é erro; nunca

@@ -122,7 +122,7 @@ jobs:
       - name: "Símbolos do cliente mínimo (sw-format, Debug)"
         shell: bash
         run: |
-          out="$(ctest --test-dir build --build-config Debug -R sw-format-symbols -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
+          out="$(ctest --test-dir build --build-config Debug -R sw-format-symbols --no-tests=error -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
           echo "$out"
           if echo "$out" | grep -q '^[0-9]*: -- PULADO:'; then
             echo "::error::inspecao de simbolos PULADA (ferramenta ausente); no CI isso e erro"
@@ -159,7 +159,7 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: bash
         run: |
-          out="$(ctest --test-dir build-release --build-config Release -R sw-format-symbols -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
+          out="$(ctest --test-dir build-release --build-config Release -R sw-format-symbols --no-tests=error -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
           echo "$out"
           if echo "$out" | grep -q '^[0-9]*: -- PULADO:'; then
             echo "::error::inspecao de simbolos PULADA (ferramenta ausente); no CI isso e erro"
@@ -208,7 +208,7 @@ jobs:
       - name: "Símbolos do cliente mínimo (sw-format, Release)"
         shell: bash
         run: |
-          out="$(ctest --test-dir build --build-config Release -R sw-format-symbols -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
+          out="$(ctest --test-dir build --build-config Release -R sw-format-symbols --no-tests=error -V --timeout 120 2>&1)" || { echo "$out"; exit 1; }
           echo "$out"
           if echo "$out" | grep -q '^[0-9]*: -- PULADO:'; then
             echo "::error::inspecao de simbolos PULADA (ferramenta ausente); no CI isso e erro"

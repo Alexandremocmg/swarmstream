@@ -91,6 +91,20 @@ if(exe_len LESS 1000)
 endif()
 message(STATUS "símbolos do executável: ${exe_source} (${exe_len} bytes)")
 
+# "Está no binário" tem 3 sentidos que NÃO se misturam (ver symbol_classes.cmake): DEFINIÇÃO (o código
+# está no executável), REFERÊNCIA INDEFINIDA `U` (vem de uma biblioteca dinâmica na hora de rodar) e
+# IMPORTAÇÃO do Windows (`__imp_`/DLL). Cada símbolo abaixo sai com a sua classe.
+include("${CMAKE_CURRENT_LIST_DIR}/symbol_classes.cmake")
+if(MSVC_MODE)
+    set(sym_mode "map")
+else()
+    set(sym_mode "nm")
+endif()
+string(REPLACE "
+" ";" exe_lines "${exe_syms}")
+message(STATUS "classes: definido=código NO executável (nm T/t/W...; mapa .obj) | indefinido(U)=pedido a "
+               "biblioteca dinâmica | importacao=DLL (__imp_/.dll) | outros=seções/depuração")
+
 # Padrões independentes de decoração: Itanium (`_ZN11swarmstream4pack12ManifestView4open...`),
 # MSVC (`?open@ManifestView@pack@swarmstream@@...`) e nome C simples. Os NOSSOS símbolos são
 # casados com o namespace (`pack`) para não confundir com nomes parecidos de terceiros
@@ -149,8 +163,34 @@ endif()
 
 set(failures 0)
 foreach(pattern IN LISTS REQUIRED)
+    sw_classify(C "exe_lines" "${pattern}" ${sym_mode})
     if("${exe_syms}" MATCHES "${pattern}")
-        message(STATUS "PRESENTE  (exigido)  ${pattern}")
+        message(STATUS "PRESENTE  (exigido)  ${pattern}   [${C_TEXTO}]")
+        # No nm (formato conhecido) o NOSSO símbolo e os decodificadores têm de ser DEFINIÇÃO; só o
+        # libsodium pode ser definição OU referência dinâmica (libsodium-dev nos jobs sem vcpkg).
+        if(NOT MSVC_MODE)
+            if(pattern STREQUAL "crypto_sign_verify_detached")
+                math(EXPR any "${C_DEF}+${C_UND}+${C_IMP}")
+                if(any EQUAL 0)
+                    message(STATUS "  ERRO: ${pattern} casa no texto mas não é definição nem referência")
+                    math(EXPR failures "${failures}+1")
+                endif()
+            elseif(C_DEF EQUAL 0)
+                if(lto_state STREQUAL "SIM")
+                    # Com LTO a função pode ter sido INLINADA: sobra só um nome sem código (nm tipo A/N).
+                    message(STATUS "  AVISO: ${pattern} não é definição; com LTO a função pode estar inlinada "
+                                   "(o nome que sobrou não é código). Presença NÃO provada por símbolo.")
+                else()
+                    message(STATUS "  ERRO: ${pattern} não é DEFINIÇÃO (T/t/W...) no executável")
+                    math(EXPR failures "${failures}+1")
+                endif()
+            endif()
+        else()
+            math(EXPR any "${C_DEF}+${C_IMP}")
+            if(any EQUAL 0)
+                message(STATUS "  AVISO: classificação do mapa não reconhecida para ${pattern} (o texto casou)")
+            endif()
+        endif()
     else()
         message(STATUS "AUSENTE   (exigido)  ${pattern}   <-- ERRO")
         math(EXPR failures "${failures}+1")
@@ -158,7 +198,8 @@ foreach(pattern IN LISTS REQUIRED)
 endforeach()
 foreach(pattern IN LISTS FORBIDDEN)
     if("${exe_syms}" MATCHES "${pattern}")
-        message(STATUS "PRESENTE  (proibido) ${pattern}   <-- ERRO")
+        sw_classify(C "exe_lines" "${pattern}" ${sym_mode})
+        message(STATUS "PRESENTE  (proibido) ${pattern}   [${C_TEXTO}]   <-- ERRO")
         math(EXPR failures "${failures}+1")
     else()
         message(STATUS "AUSENTE   (proibido) ${pattern}")
@@ -166,7 +207,8 @@ foreach(pattern IN LISTS FORBIDDEN)
 endforeach()
 foreach(pattern IN LISTS REPORT_ONLY)
     if("${exe_syms}" MATCHES "${pattern}")
-        message(STATUS "PRESENTE  (so relato) ${pattern}")
+        sw_classify(C "exe_lines" "${pattern}" ${sym_mode})
+        message(STATUS "PRESENTE  (so relato) ${pattern}   [${C_TEXTO}]")
     else()
         message(STATUS "AUSENTE   (so relato) ${pattern}")
     endif()
@@ -175,6 +217,41 @@ endforeach()
 message(STATUS "(so relato: presença NÃO é falha; o que o ligador descarta de uma biblioteca de "
                "terceiros depende dele e das flags. Ex.: o lz4.c é UMA unidade de tradução, então "
                "LZ4_compress* entra junto de LZ4_decompress*; ver o cartão F1-61.)")
+
+# ---------------------------------------------------------------- conteúdo da DLL distribuída (Windows)
+# Ausência de IMPORTAÇÃO no .exe não é ausência na distribuição: o vcpkg (x64-windows) distribui a
+# libsodium.dll inteira ao lado do executável. Aqui se lista o que ela EXPORTA (dumpbin /EXPORTS).
+# Se a DLL ou a ferramenta não existir, diz que NÃO inspecionou (não falha: é informação).
+if(MSVC_MODE)
+    get_filename_component(exe_dir "${EXE}" DIRECTORY)
+    set(dll_path "${exe_dir}/libsodium.dll")
+    if(EXISTS "${dll_path}" AND DUMPBIN)
+        execute_process(COMMAND "${DUMPBIN}" /EXPORTS "${dll_path}" OUTPUT_VARIABLE dll_text
+                        RESULT_VARIABLE dll_rc)
+        if(dll_rc EQUAL 0)
+            string(REPLACE "
+" ";" dll_lines "${dll_text}")
+            set(dll_exports ${dll_lines})
+            list(FILTER dll_exports INCLUDE REGEX "^ +[0-9]+ +[0-9A-Fa-f]+ +[0-9A-Fa-f]+ +[A-Za-z_]")
+            list(LENGTH dll_exports dll_n)
+            message(STATUS "DLL distribuída: ${dll_path}: ${dll_n} funções exportadas (dumpbin /EXPORTS)")
+            foreach(fn crypto_sign_detached crypto_sign_seed_keypair crypto_sign_verify_detached
+                       crypto_hash_sha256)
+                if("${dll_text}" MATCHES "[ ]${fn}[ 
+]")
+                    message(STATUS "  DLL EXPORTA ${fn}")
+                else()
+                    message(STATUS "  DLL NÃO exporta ${fn}")
+                endif()
+            endforeach()
+        else()
+            message(STATUS "DLL distribuída: dumpbin /EXPORTS falhou (${dll_rc}); conteúdo da DLL NÃO inspecionado")
+        endif()
+    else()
+        message(STATUS "DLL distribuída: libsodium.dll não encontrada ao lado de ${EXE} (ou sem dumpbin); "
+                       "conteúdo da DLL NÃO inspecionado")
+    endif()
+endif()
 
 # ---------------------------------------------------------------- uma só implementação (arquivos .a/.lib)
 function(defined_symbols out lib)

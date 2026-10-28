@@ -112,6 +112,10 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
                 "-DLINK_FLAGS=${CMAKE_EXE_LINKER_FLAGS} $<$<CONFIG:Debug>:${CMAKE_EXE_LINKER_FLAGS_DEBUG}>$<$<CONFIG:Release>:${CMAKE_EXE_LINKER_FLAGS_RELEASE}> $<JOIN:$<TARGET_PROPERTY:sw-format-client-min,LINK_OPTIONS>, >"
                 ${SW_SYMBOL_ARGS}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/../sw-format/tests/check_symbols.cmake)
+        # Autoteste do classificador (definição x referência indefinida U x importação); não usa nm.
+        add_test(NAME sw-format-symbols-selftest
+            COMMAND ${CMAKE_COMMAND}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/../sw-format/tests/symbol_classes_selftest.cmake)
         # Sem a ferramenta (nm/dumpbin/mapa) o script escreve "PULADO:" e o CTest o marca Skipped.
         set_tests_properties(sw-format-symbols PROPERTIES TIMEOUT 120
             SKIP_REGULAR_EXPRESSION "PULADO:")

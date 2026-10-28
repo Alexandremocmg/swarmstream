@@ -97,7 +97,7 @@ endif()
 if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     enable_testing()
 
-    add_executable(sw-format-client-min tests/client_min.cpp)
+    add_executable(sw-format-client-min tests/client_min.cpp tests/client_min_fixture.hpp)
     target_link_libraries(sw-format-client-min PRIVATE sw-format)
     if(MSVC)
         target_compile_options(sw-format-client-min PRIVATE /W4 /permissive-)
