@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 2 | 3 | 22 | 29 |
+| 3 | 0 | 2 | 4 | 22 | 29 |
 
 ## Espera o dono do produto
 - [F1-04](cartoes/F1-04.md): Geração do manifesto v0, assinado com a chave de teste (ADR-0012)
@@ -19,6 +19,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-58](cartoes/F1-58.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Remedir o manifesto v0 com libsodium real e atender (ou renegociar) tempo, tamanho e memória
 - [F1-59](cartoes/F1-59.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Integrar a telemetria às leituras reais (`sw_read`) e o `telemetry_path` ao `sw_init`
 - [F1-60](cartoes/F1-60.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real (`sw_init`, `sw_open`, `sw_read`, `sw_shutdown`) sobre cache, agendador, fonte e VFS
+- [F1-62](cartoes/F1-62.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Medir o custo das funções de compressão (LZ4) e de assinatura (libsodium) no binário do cliente e avaliar alternativas
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
