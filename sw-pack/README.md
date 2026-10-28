@@ -4,8 +4,14 @@ Ferramenta de empacotamento de conteúdo do Swarmstream — trilha **T1
 (Conteúdo/build)**. Divide o build do jogo em blocos comprimidos, identificados
 por hash, e gera o manifesto assinado que a publisher distribui.
 
-> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), SHA-256 e Ed25519 (ambos
-> libsodium; o `sw-pack` não tem criptografia escrita à mão), a compressão por bloco (F1-03) e o manifesto v0 assinado (F1-04); o resto abaixo ainda não tem código.
+> **Estado:** Fase 1a. Existem o chunker `swarmstream-fastcdc-v0` (F1-01), a assinatura Ed25519 (libsodium;
+> o `sw-pack` não tem criptografia escrita à mão), a compressão por bloco (F1-03) e a escrita do manifesto
+> v0 assinado (F1-04); o resto abaixo ainda não tem código.
+>
+> **Leitura, descompressão e verificação não moram aqui:** são do [`sw-format`](../sw-format/README.md)
+> (F1-61), que é o que o cliente liga. O `sw-pack` é a ferramenta de build e **depende** do `sw-format`
+> (`sw-pack` → `sw-format`, nunca o contrário); os cabeçalhos `manifest.hpp`, `codec.hpp` e `ed25519.hpp`
+> daqui incluem os do `sw-format`, então quem escreve e relê usa um include só.
 
 ## O que já existe
 
@@ -13,23 +19,13 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   `Chunker::make(params)` valida os parâmetros; `cut(janela)` devolve o tamanho do primeiro bloco
   (sem alocação); `split(buffer)` devolve todos. A referência são os vetores de
   [testdata/vectors-v0.json](testdata/README.md), reproduzidos por `tests/test_chunker.cpp`.
-- `include/swarmstream/sha256.hpp`, `src/sha256.cpp`: SHA-256 sobre `crypto_hash_sha256_*` do libsodium. Se o
-  libsodium não iniciar o programa termina com mensagem (último recurso: as entradas públicas conferem
-  `crypto_ready()` antes e devolvem erro).
-- `include/swarmstream/manifest.hpp`, `src/manifest.cpp`: manifesto v0 de
+- `include/swarmstream/manifest.hpp`, `src/manifest_build.cpp`: **escrita** do manifesto v0 de
   [docs/03 §7](../docs/03-formato-de-conteudo.md) ([ADR-0012](../docs/adr/0012-serializacao-do-manifesto.md)).
-  `build_manifest(modelo, semente)` codifica o payload FlatBuffers, assina com Ed25519 e **lê de volta**
-  o resultado antes de devolvê-lo. `ManifestView::open(bytes, opções, saída)` é o leitor, na ordem do §7.1
-  (cabeçalho → chave → **assinatura** → sondagem do `min_reader` → verificador e validações do §8),
-  sem cópia das tabelas colunares. O FlatBuffers é escrito e verificado à mão (esquema fixo e pequeno),
-  então não há dependência nova; o layout é o do FlatBuffers e foi lido com o runtime oficial (ver abaixo).
-- `include/swarmstream/crypto.hpp`, `src/crypto.cpp`: o **único** ponto que chama `sodium_init()`
-  (`crypto_ready()`). Toda entrada pública com criptografia o confere e devolve erro se falhar; há um gancho
-  só para testes (`testing::force_crypto_failure`) que simula a falha.
-- `include/swarmstream/ed25519.hpp`, `src/ed25519.cpp`: interface fina (3 funções) sobre o **libsodium**
-  (`crypto_sign_seed_keypair`, `crypto_sign_detached`, `crypto_sign_verify_detached`, a verificação estrita).
-  Se o libsodium não iniciar: falha vira "assinatura inválida" ou `nullopt`, nunca aviso. O libsodium assina
-  mensagem contígua, então com várias partes a interface monta uma cópia temporária da mensagem (o payload).
+  `build_manifest(modelo, semente)` codifica o payload FlatBuffers (escritor à mão, esquema fixo e pequeno),
+  assina com Ed25519 e **lê de volta** o resultado, com o MESMO `ManifestView::open` do cliente (do
+  `sw-format`; não há segunda implementação do leitor), antes de devolvê-lo.
+- `include/swarmstream/ed25519.hpp`, `src/ed25519.cpp`: **assinar** (`ed25519_public_key`, `ed25519_sign`)
+  sobre o **libsodium** (`crypto_sign_seed_keypair`, `crypto_sign_detached`). A verificação é do `sw-format`.
   A chave de teste (semente `00..1f`) fica só em `testdata/` e nos testes; nenhum build de release pode
   confiá-la (ADR-0012, item 4).
 - `tools/sw_manifest_bench.cpp`: mede tamanho do arquivo, custo de abrir e memória residente
@@ -37,11 +33,11 @@ por hash, e gera o manifesto assinado que a publisher distribui.
   Números e extrapolação para 150 GB em [docs/medicoes/manifesto-v0.md](../docs/medicoes/manifesto-v0.md).
 - Conferência independente (não usa código do sw-pack): `python -I testdata/verify_manifest_independent.py m.bin`
   verifica a assinatura com `cryptography`/OpenSSL e lê o payload com o runtime oficial do FlatBuffers.
-- `include/swarmstream/codec.hpp`, `src/codec.cpp`: compressão por bloco ([docs/03 §4](../docs/03-formato-de-conteudo.md)).
+- `include/swarmstream/codec.hpp`, `src/codec.cpp`: **compressão** por bloco ([docs/03 §4](../docs/03-formato-de-conteudo.md)).
   `compress_block` usa Zstd (frame padrão, com `Frame_Content_Size`, sem dicionário) ou LZ4 (block
-  format) e cai para NONE se não reduzir; `decompress_block` exige saída com exatamente `raw_size`
-  bytes. `codec_for_path` escolhe o codec pela extensão (já comprimido: NONE; binário de engine:
-  LZ4; texto e o resto: Zstd). Zstd 1.5.6 e LZ4 1.10.0 vêm por `FetchContent`, com hash fixo.
+  format) e cai para NONE se não reduzir. `codec_for_path` escolhe o codec pela extensão (já comprimido:
+  NONE; binário de engine: LZ4; texto e o resto: Zstd). `decompress_block` (e o enum `Codec`) é do
+  `sw-format`. Zstd 1.5.6 e LZ4 1.10.0 vêm por `FetchContent` (em `sw-format/CMakeLists.txt`), com hash fixo.
 - `sw-pack-report <pasta> [--codec auto|none|zstd|lz4] [--zstd-level N]`: comprime e descomprime cada
   bloco de uma pasta, confere que volta idêntico e imprime, por tipo de arquivo, taxa e MB/s de
   compressão e descompressão. Use com `--codec zstd` e `--codec lz4` para comparar e ajustar a
