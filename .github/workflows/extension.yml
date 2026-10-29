@@ -85,16 +85,18 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             GODOT_CPP_DIR="$(cygpath -m "$RUNNER_TEMP/godot-cpp")"
             # A fonte é sw-godot/extension; o vcpkg.json fica na raiz do repositório.
-            VCPKG_ARGS=(-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+            EXTRA_ARGS=(-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
                         -DVCPKG_MANIFEST_DIR="$(cygpath -m "$GITHUB_WORKSPACE")")
           else
             GODOT_CPP_DIR="$RUNNER_TEMP/godot-cpp"
-            VCPKG_ARGS=()
+            # Mapa do ligador (só escreve um arquivo; o .so não muda): o passo "Símbolos e
+            # dependências do .so" lê dele o que entrou no .so, porque o .so sai sem símbolos.
+            EXTRA_ARGS=(-DCMAKE_SHARED_LINKER_FLAGS="-Wl,-Map=$GITHUB_WORKSPACE/build-godot/swarmstream_godot.map")
           fi
           cmake -S sw-godot/extension -B build-godot \
             -DCMAKE_BUILD_TYPE=Release \
             -DGODOT_CPP_DIR="$GODOT_CPP_DIR" \
-            "${VCPKG_ARGS[@]}"
+            "${EXTRA_ARGS[@]}"
 
       - name: Compilar a extensão
         # Ubuntu: 2 jobs de compilação. Com --parallel total, o runner de 4 CPUs/~16 GB foi
@@ -114,38 +116,46 @@ jobs:
       # F1-17: evidência na extensão REAL (o .so que o portão carrega), não só num executável
       # equivalente. Não é migração: a extensão atual usa componentes C++ do sw-core (os mocks, via
       # gate_core.cpp) e continua assim. O sw-core passou a ligar o sw-format (libsodium, Zstd,
-      # LZ4), mas o adaptador não referencia o VFS, então nada disso pode entrar no .so. Cada
-      # contagem de "zero" tem um controle positivo (símbolos que SABEMOS que estão lá), para o
-      # zero não ser fruto de uma tabela de símbolos vazia ou de um padrão errado.
+      # LZ4), mas o adaptador não referencia o VFS, então nada disso pode entrar no .so.
+      # O .so sai SEM tabela de símbolos (`nm` diz "no symbols": o primeiro desta evidência falhou
+      # por isso), então a prova do que entrou é o mapa do ligador (seção "Archive member included":
+      # os membros de biblioteca estática que o ligador puxou para satisfazer referências) e o que o
+      # .so exige em tempo de execução (readelf/ldd). Cada "zero" tem um controle positivo: membros
+      # que SABEMOS que entram (o adaptador gate_core e os mocks do sw-core), para o zero não ser
+      # fruto de um mapa vazio ou de um padrão errado.
       - name: Símbolos e dependências do .so (evidência F1-17)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           so=sw-godot/project/addons/swarmstream/bin/swarmstream_godot.so
+          map=build-godot/swarmstream_godot.map
           test -f "$so"
+          test -f "$map"
           file "$so"
           echo "--- readelf -d (NEEDED)"
           readelf -d "$so" | grep NEEDED
           echo "--- ldd"
           ldd "$so"
-          syms="$RUNNER_TEMP/so_symbols.txt"
-          nm -C "$so" > "$syms"
-          count() { awk -v re="$1" '$0 ~ re { n++ } END { print n + 0 }' "$2"; }
-          total=$(wc -l < "$syms")
-          known=$(count 'swarmstream::MemoryCacheStore' "$syms")
-          entry=$(count 'swarmstream_godot_init' "$syms")
-          forbidden=$(count 'Vfs|ManifestView|crypto_sign|crypto_hash|sodium_|ZSTD_|LZ4_' "$syms")
+          members="$RUNNER_TEMP/members.txt"
+          awk '/^Archive member included/ { on = 1; next } /^(Discarded input sections|Memory Configuration)/ { on = 0 } on' "$map" > "$members"
+          count() { RE="$1" awk '$0 ~ ENVIRON["RE"] { n++ } END { print n + 0 }' "$2"; }
+          total=$(wc -l < "$members")
+          core=$(count 'libsw-core\.a\(memory_cache_store\.cpp\.o\)' "$members")
+          gate=$(count 'gate_core\.cpp\.o' "$members")
+          godot=$(count 'godot-cpp' "$members")
+          forbidden=$(count 'libsw-format|libzstd|liblz4|sodium|vfs\.cpp\.o' "$members")
           sodium_dep=$(ldd "$so" | awk '/sodium/ { n++ } END { print n + 0 }')
           libc_dep=$(ldd "$so" | awk '/libc\.so/ { n++ } END { print n + 0 }')
-          echo "símbolos (nm -C): total=$total  controle MemoryCacheStore=$known  controle swarmstream_godot_init=$entry  proibidos(Vfs|ManifestView|crypto_|sodium_|ZSTD_|LZ4_)=$forbidden"
+          echo "mapa (membros puxados): linhas=$total  controles: libsw-core(memory_cache_store)=$core gate_core=$gate godot-cpp=$godot  proibidos(libsw-format|zstd|lz4|sodium|vfs.cpp.o)=$forbidden"
           echo "ldd: libsodium=$sodium_dep  controle libc.so=$libc_dep"
           if [ "$forbidden" -ne 0 ]; then
-            echo "--- símbolos proibidos encontrados (até 20):"
-            awk '/Vfs|ManifestView|crypto_sign|crypto_hash|sodium_|ZSTD_|LZ4_/ { print "  " $0 }' "$syms" | head -n 20
+            echo "--- membros proibidos encontrados (até 20):"
+            awk '/libsw-format|libzstd|liblz4|sodium|vfs\.cpp\.o/ { print "  " $0 }' "$members" | head -n 20
           fi
-          test "$total" -gt 1000
-          test "$known" -ge 1
-          test "$entry" -ge 1
+          test "$total" -gt 100
+          test "$core" -ge 1
+          test "$gate" -ge 1
+          test "$godot" -ge 1
           test "$forbidden" -eq 0
           test "$libc_dep" -ge 1
           test "$sodium_dep" -eq 0
