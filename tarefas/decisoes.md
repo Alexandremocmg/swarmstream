@@ -74,4 +74,4 @@ Continuam valendo, sem exceção: nenhuma sessão aceita o próprio PR; só o do
 | Incluir os cartões F1-37 a F1-47 no backlog de [docs/11](../docs/11-backlog-inicial.md) (exige PR) | 2026-10-18 |
 | Apagar os branches já incorporados no GitHub, se quiser (ex.: `baseline/limites-aprovados-r1` e `feat/F0-08-vetores-de-teste`; o `test/ci-vermelho` convém manter, é a evidência do CI vermelho). Ninguém apagou sem a sua ordem | 2026-10-18 |
 | Decidir se o DiskFull ao gravar no journal deve continuar quebrando o cache até reabrir (hoje quebra; ver F1-32) | 2026-10-27 |
-| Aceitar (ou recusar) o [ADR-0017](../docs/adr/0017-conflito-arquivo-diretorio-no-manifesto.md): conflito arquivo/diretório no manifesto v0 (recusa no VFS com `SW_E_MANIFEST_INVALID`); depois, editar o §8 do docs/03 | 2026-10-29 |
+| Aceitar (ou recusar) o [ADR-0017](../docs/adr/0017-semantica-do-vfs.md): semântica do VFS (conflito arquivo/diretório recusado no VFS com `SW_E_MANIFEST_INVALID`, sem alterar `sw-format`/`sw-pack`; leitura que passa do fim = `SW_E_OUT_OF_RANGE` integral). Escolha técnica dada em 2026-10-29; falta o aceite final do texto | 2026-10-29 |
