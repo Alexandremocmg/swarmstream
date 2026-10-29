@@ -45,6 +45,17 @@ else()
     target_compile_options(sw-pack-report PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Gerador das fixtures do VFS (F1-17): manifestos assinados para os testes do sw-core. Só compila
+# aqui (para não apodrecer); o cabeçalho gerado é versionado em sw-core/tests/vfs_fixture.hpp.
+add_executable(gen-vfs-fixture tools/gen_vfs_fixture.cpp)
+target_link_libraries(gen-vfs-fixture PRIVATE sw-pack)
+target_include_directories(gen-vfs-fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sw-core/tests)
+if(MSVC)
+    target_compile_options(gen-vfs-fixture PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(gen-vfs-fixture PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 # Testes. Os vetores (testdata/vectors-v0.json) são a referência do chunker.
 if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     enable_testing()

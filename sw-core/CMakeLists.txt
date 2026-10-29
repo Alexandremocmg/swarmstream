@@ -8,6 +8,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# F1-17: o VFS lê o ManifestView do sw-format (o cliente do formato, F1-61). A ligação é só
+# sw-core -> sw-format: o sw-pack (ferramenta de build) não entra aqui, e o sw-format não conhece o sw-core.
+if(NOT TARGET sw-format)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../sw-format sw-format)
+endif()
+
 # Core library (headers and mocks)
 add_library(sw-core STATIC
     src/api_stub.cpp
@@ -23,12 +29,13 @@ add_library(sw-core STATIC
     src/store_files.cpp
     src/telemetry.cpp
     src/tcp_socket.cpp
+    src/vfs.cpp
     src/xxh3.cpp
 )
 
 # Fonte HTTP (F1-27): threads e, no Windows, Winsock.
 find_package(Threads REQUIRED)
-target_link_libraries(sw-core PUBLIC Threads::Threads)
+target_link_libraries(sw-core PUBLIC Threads::Threads sw-format)
 if(WIN32)
     target_link_libraries(sw-core PUBLIC ws2_32)
 endif()
@@ -158,6 +165,15 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     add_executable(sw-cache-inspect tools/sw_cache_inspect.cpp)
     target_link_libraries(sw-cache-inspect PRIVATE sw-core)
     target_include_directories(sw-cache-inspect PRIVATE src)
+    # F1-17: VFS (caminho + offset + tamanho -> trechos de blocos; listagem de diretório). Fixtures:
+    # manifestos assinados (tests/vfs_fixture.hpp, gerado por sw-pack/tools/gen_vfs_fixture.cpp).
+    add_executable(sw-core-vfs-tests tests/test_vfs.cpp)
+    target_link_libraries(sw-core-vfs-tests PRIVATE sw-core)
+    if(NOT MSVC)
+        target_link_libraries(sw-core-vfs-tests PRIVATE pthread)
+    endif()
+    add_test(NAME sw-core-vfs COMMAND sw-core-vfs-tests)
+    set_tests_properties(sw-core-vfs PROPERTIES TIMEOUT 300)
     # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
     # está ligado; sem isso, "nenhuma corrida" não provaria nada).
     if(SANITIZE_THREAD)
