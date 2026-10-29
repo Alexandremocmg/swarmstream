@@ -588,6 +588,47 @@ void test_empty_manifest_and_conflict()
     SW_CHECK(Vfs::build(open_manifest(fx::kMainManifest), ok) == VfsBuildStatus::Ok);
 }
 
+// Definição: há conflito arquivo/diretório se existem, no manifesto, um caminho P e outro caminho
+// que começa com P seguido de "/" (P é arquivo e também diretório). Prefixo SEM barra ("a" / "ab",
+// "a" / "a-1") não é conflito. Todos os manifestos abaixo passam pelo ManifestView::open (o §8 não
+// recusa nenhum deles).
+void test_file_directory_conflict_definition()
+{
+    std::cout << "[Test] conflito arquivo/diretório: \"a\" vs \"a/b\" é conflito; \"a\" vs \"ab\", "
+                 "\"a-1\", \"a.x\", \"a0\" não\n";
+    Vfs vfs;
+    // "a" < "a-1" < "a.x" < "a/b": os vizinhos que ficam entre "a" e "a/b" na ordem bytewise não
+    // escondem o conflito.
+    SW_CHECK(Vfs::build(open_manifest(fx::kConflictManifest), vfs) ==
+             VfsBuildStatus::FileDirectoryConflict);
+    // O mesmo conflito num subdiretório: "x/a" e "x/a/b" (com "x/a-1" no meio e "x/b" depois).
+    SW_CHECK(Vfs::build(open_manifest(fx::kNestedConflictManifest), vfs) ==
+             VfsBuildStatus::FileDirectoryConflict);
+
+    // Sem conflito: "a" é prefixo de "a-1", "a.x", "a0" e "ab" sem barra; "d/e" de "d/e-1" e
+    // "d/ef". O manifesto é aceito e "a" continua sendo só arquivo.
+    Vfs prefix;
+    SW_CHECK(Vfs::build(open_manifest(fx::kPrefixManifest), prefix) == VfsBuildStatus::Ok);
+    VfsStat info;
+    for (const char* p : {"a", "a-1", "a.x", "a0", "ab", "d/e", "d/e-1", "d/ef"}) {
+        SW_CHECK(prefix.stat(p, info) == VfsStatus::Ok && info.kind == VfsKind::File);
+    }
+    SW_CHECK(prefix.stat("d", info) == VfsStatus::Ok && info.kind == VfsKind::Directory);
+    VfsDir dir;
+    SW_CHECK(prefix.open_dir("a", dir) == VfsStatus::NotDirectory);
+    SW_CHECK(prefix.open_dir("d/e", dir) == VfsStatus::NotDirectory);
+    SW_CHECK(prefix.stat("a/", info) == VfsStatus::NotFound);
+    SW_CHECK(prefix.open_dir("", dir) == VfsStatus::Ok);
+    const std::vector<std::pair<std::string, VfsKind>> root = {
+        {"a", VfsKind::File},  {"a-1", VfsKind::File}, {"a.x", VfsKind::File},
+        {"a0", VfsKind::File}, {"ab", VfsKind::File},  {"d", VfsKind::Directory}};
+    VfsDirEntry e;
+    for (const auto& [name, kind] : root) {
+        SW_CHECK(dir.next(e) && e.name == name && e.kind == kind);
+    }
+    SW_CHECK(!dir.next(e));
+}
+
 void test_resolve_does_not_allocate()
 {
     std::cout << "[Test] sem alocação: stat, open, resolve e next (com controle positivo)\n";
@@ -705,6 +746,7 @@ int main()
     test_paths();
     test_directory_listing();
     test_empty_manifest_and_conflict();
+    test_file_directory_conflict_definition();
     test_resolve_does_not_allocate();
     test_concurrent_resolves();
     std::cout << "VFS: todos os testes passaram\n";

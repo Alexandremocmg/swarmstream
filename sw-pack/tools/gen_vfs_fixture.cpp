@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
-// F1-17: gera as fixtures do VFS (sw-core/tests/vfs_fixture.hpp): três manifestos v0 ASSINADOS com
+// F1-17: gera as fixtures do VFS (sw-core/tests/vfs_fixture.hpp): cinco manifestos v0 ASSINADOS com
 // a chave de TESTE do ADR-0012 (semente 00..1f), a partir dos dados de
 // sw-core/tests/vfs_fixture_data.hpp:
 //   principal  12 arquivos, 9 blocos, 2 grupos (`core` e `extra`), 2 peças;
 //   conflito   "a" é arquivo e também diretório ("a/b"): o §8 aceita, o Vfs::build recusa;
+//   aninhado   o mesmo conflito um nível abaixo ("x/a" e "x/a/b");
+//   prefixos   "a", "a-1", "a.x", "a0", "ab", "d/e", "d/e-1", "d/ef": SEM conflito;
 //   vazio      nenhum arquivo, nenhum bloco (a raiz existe e está vazia).
 //
 // Uso:  gen-vfs-fixture <saida.hpp>      (escreve o cabeçalho de fixtures)
-//       gen-vfs-fixture --bin <dir>      (grava principal.bin, conflito.bin, vazio.bin)
+//       gen-vfs-fixture --bin <dir>      (grava os cinco .bin: principal, conflito, vazio,
+//                                         aninhado, prefixos)
 // Ed25519 é determinístico: o mesmo libsodium gera os mesmos bytes.
 #include "swarmstream/chunker.hpp"
 #include "swarmstream/manifest.hpp"
@@ -94,9 +97,11 @@ sp::ManifestModel main_model()
     return m;
 }
 
-sp::ManifestModel conflict_model()
+// Manifesto de 1 bloco (10 bytes) em que cada caminho é um arquivo de 10 bytes. `paths` já deve
+// vir em ordem bytewise (o leitor recusa o contrário).
+sp::ManifestModel paths_model(const char* game_id, const std::vector<std::string>& paths)
 {
-    sp::ManifestModel m = base_model("swarmstream.vfsconflict");
+    sp::ManifestModel m = base_model(game_id);
     const std::vector<std::uint8_t> bytes(10, 0x5A);
     m.block_hash = {sp::sha256(std::as_bytes(std::span(bytes)))};
     m.block_raw_size = {10};
@@ -107,13 +112,32 @@ sp::ManifestModel conflict_model()
     m.piece_first_block = {0};
     m.piece_block_count = {1};
     m.piece_group = {0};
-    // "a" < "a-1" < "a.x" < "a/b": o diretório "a/" só aparece depois de dois arquivos que não
-    // são dele.
-    for (const char* p : {"a", "a-1", "a.x", "a/b"}) {
+    for (const std::string& p : paths) {
         add_file(m, p, sp::FileClass::Core, 0, {0}, 10);
     }
     m.groups = {group("core", 0, 0, 1)};
     return m;
+}
+
+// "a" é arquivo e também diretório ("a/b"). Em ordem bytewise "a" < "a-1" < "a.x" < "a/b": o
+// diretório "a/" só aparece depois de dois arquivos que não são dele.
+sp::ManifestModel conflict_model()
+{
+    return paths_model("swarmstream.vfsconflict", {"a", "a-1", "a.x", "a/b"});
+}
+
+// O mesmo conflito, um nível abaixo ("x/a" arquivo e "x/a/b"), com um vizinho sem conflito.
+sp::ManifestModel nested_conflict_model()
+{
+    return paths_model("swarmstream.vfsnested", {"x/a", "x/a-1", "x/a/b", "x/b"});
+}
+
+// SEM conflito: um arquivo que é prefixo de outro sem barra depois ("a" / "a-1" / "a.x" / "a0" /
+// "ab", "d/e" / "d/e-1" / "d/ef"). Nenhum nome de arquivo é seguido de "/" em outro caminho.
+sp::ManifestModel prefix_model()
+{
+    return paths_model("swarmstream.vfsprefix",
+                       {"a", "a-1", "a.x", "a0", "ab", "d/e", "d/e-1", "d/ef"});
 }
 
 sp::ManifestModel empty_model()
@@ -156,7 +180,10 @@ int main(int argc, char** argv)
     const auto main_built = sp::build_manifest(main_model(), seed);
     const auto conflict_built = sp::build_manifest(conflict_model(), seed);
     const auto empty_built = sp::build_manifest(empty_model(), seed);
-    for (const auto* b : {&main_built, &conflict_built, &empty_built}) {
+    const auto nested_built = sp::build_manifest(nested_conflict_model(), seed);
+    const auto prefix_built = sp::build_manifest(prefix_model(), seed);
+    for (const auto* b :
+         {&main_built, &conflict_built, &empty_built, &nested_built, &prefix_built}) {
         if (!b->status.ok()) {
             std::fprintf(stderr, "build_manifest falhou: %s\n", b->status.detail);
             return 1;
@@ -171,7 +198,9 @@ int main(int argc, char** argv)
         const std::pair<const char*, const std::vector<std::byte>*> outs[] = {
             {"principal.bin", &main_built.bytes},
             {"conflito.bin", &conflict_built.bytes},
-            {"vazio.bin", &empty_built.bytes}};
+            {"vazio.bin", &empty_built.bytes},
+            {"aninhado.bin", &nested_built.bytes},
+            {"prefixos.bin", &prefix_built.bytes}};
         for (const auto& [name, bytes] : outs) {
             std::ofstream out(dir + "/" + name, std::ios::binary);
             out.write(reinterpret_cast<const char*>(bytes->data()),
@@ -190,7 +219,9 @@ int main(int argc, char** argv)
         "// GERADO por sw-pack/tools/gen_vfs_fixture.cpp (F1-17); não edite à mão. Manifestos v0\n"
         "// assinados com a chave de TESTE do ADR-0012 (semente 00..1f), a partir de\n"
         "// vfs_fixture_data.hpp: principal (12 arquivos, 9 blocos, 2 grupos), conflito (\"a\" é\n"
-        "// arquivo e diretório) e vazio (sem arquivos). Para regenerar: construir o alvo\n"
+        "// arquivo e diretório), conflito aninhado (\"x/a\"), prefixo sem conflito (\"a\" / "
+        "\"ab\") e\n"
+        "// vazio (sem arquivos). Para regenerar: construir o alvo\n"
         "// `gen-vfs-fixture` e rodar `gen-vfs-fixture sw-core/tests/vfs_fixture.hpp`.\n"
         "#pragma once\n\n#include <array>\n#include <cstdint>\n\n"
         "namespace swarmstream::test::vfs_fixture {\n\n";
@@ -205,6 +236,8 @@ int main(int argc, char** argv)
     text += array_text("kMainManifest", main_built.bytes);
     text += array_text("kConflictManifest", conflict_built.bytes);
     text += array_text("kEmptyManifest", empty_built.bytes);
+    text += array_text("kNestedConflictManifest", nested_built.bytes);
+    text += array_text("kPrefixManifest", prefix_built.bytes);
     text += "} // namespace swarmstream::test::vfs_fixture\n";
 
     std::ofstream out(argv[1], std::ios::binary);
