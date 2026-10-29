@@ -89,8 +89,9 @@ jobs:
                         -DVCPKG_MANIFEST_DIR="$(cygpath -m "$GITHUB_WORKSPACE")")
           else
             GODOT_CPP_DIR="$RUNNER_TEMP/godot-cpp"
-            # Mapa do ligador (só escreve um arquivo; o .so não muda): o passo "Símbolos e
-            # dependências do .so" lê dele o que entrou no .so, porque o .so sai sem símbolos.
+            # Mapa do ligador (só escreve um arquivo; o .so não muda): o passo "Membros de
+            # biblioteca incorporados e dependências do .so" lê dele quais membros de arquivo (.a)
+            # o ligador incorporou ao .so.
             EXTRA_ARGS=(-DCMAKE_SHARED_LINKER_FLAGS="-Wl,-Map=$GITHUB_WORKSPACE/build-godot/swarmstream_godot.map")
           fi
           cmake -S sw-godot/extension -B build-godot \
@@ -116,14 +117,14 @@ jobs:
       # F1-17: evidência na extensão REAL (o .so que o portão carrega), não só num executável
       # equivalente. Não é migração: a extensão atual usa componentes C++ do sw-core (os mocks, via
       # gate_core.cpp) e continua assim. O sw-core passou a ligar o sw-format (libsodium, Zstd,
-      # LZ4), mas o adaptador não referencia o VFS, então nada disso pode entrar no .so.
-      # O .so sai SEM tabela de símbolos (`nm` diz "no symbols": o primeiro desta evidência falhou
-      # por isso), então a prova do que entrou é o mapa do ligador (seção "Archive member included":
-      # os membros de biblioteca estática que o ligador puxou para satisfazer referências) e o que o
-      # .so exige em tempo de execução (readelf/ldd). Cada "zero" tem um controle positivo: membros
-      # que SABEMOS que entram (o adaptador gate_core e os mocks do sw-core), para o zero não ser
-      # fruto de um mapa vazio ou de um padrão errado.
-      - name: Símbolos e dependências do .so (evidência F1-17)
+      # LZ4), mas o adaptador não referencia o VFS, então nenhum desses membros deve entrar no .so.
+      # O QUE ISTO PROVA, e o que não: (1) os MEMBROS DE ARQUIVO (.a) que o ligador incorporou ao
+      # .so (seção "Archive member included" do mapa do ld), e (2) o que o .so exige em tempo de
+      # execução (readelf -d / ldd). NÃO é uma lista de símbolos do .so: o Release sai sem tabela de
+      # símbolos (a primeira versão, com `nm`, falhou por isso). Cada "zero" tem um controle positivo
+      # (membros que SABEMOS que entram: o adaptador gate_core, os mocks do sw-core, o godot-cpp),
+      # para o zero não ser fruto de um mapa vazio ou de um padrão errado.
+      - name: Membros de biblioteca incorporados e dependências do .so (evidência F1-17)
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -146,8 +147,8 @@ jobs:
           forbidden=$(count 'libsw-format|libzstd|liblz4|sodium|vfs\.cpp\.o' "$members")
           sodium_dep=$(ldd "$so" | awk '/sodium/ { n++ } END { print n + 0 }')
           libc_dep=$(ldd "$so" | awk '/libc\.so/ { n++ } END { print n + 0 }')
-          echo "mapa (membros puxados): linhas=$total  controles: libsw-core(memory_cache_store)=$core gate_core=$gate godot-cpp=$godot  proibidos(libsw-format|zstd|lz4|sodium|vfs.cpp.o)=$forbidden"
-          echo "ldd: libsodium=$sodium_dep  controle libc.so=$libc_dep"
+          echo "membros de arquivo incorporados (mapa do ld): linhas=$total  controles positivos: libsw-core(memory_cache_store)=$core gate_core=$gate godot-cpp=$godot  proibidos(libsw-format|zstd|lz4|sodium|vfs.cpp.o)=$forbidden"
+          echo "dependências em tempo de execução (ldd): libsodium=$sodium_dep  controle libc.so=$libc_dep"
           if [ "$forbidden" -ne 0 ]; then
             echo "--- membros proibidos encontrados (até 20):"
             awk '/libsw-format|libzstd|liblz4|sodium|vfs\.cpp\.o/ { print "  " $0 }' "$members" | head -n 20

@@ -6,9 +6,10 @@
 // swarmstream.h). O VFS SÓ RESOLVE: não lê cache nem rede, não verifica bytes, não agenda e não é
 // a API C (isso é do F1-60, que mapeia `VfsStatus` para `sw_result`).
 //
-//   Vfs::build()    índice sobre o manifesto (uma tabela de deslocamentos por referência de bloco,
-//                   conferida contra o conflito arquivo/diretório). Aloca; roda uma vez, em
-//                   sw_init.
+//   Vfs::build()    índice sobre o manifesto (uma tabela de deslocamentos por referência de bloco).
+//                   Recusa um manifesto em que um caminho é arquivo e também prefixo "caminho/" de
+//                   outro (recusa do VFS, PENDENTE DE ADR: o §8 do docs/03 não exige isso hoje).
+//                   Aloca; roda uma vez, em sw_init.
 //   Vfs::stat()     arquivo, diretório ou nada. Sem alocação.
 //   Vfs::open()     arquivo -> VfsFile. Sem alocação.
 //   VfsFile::resolve(offset, size) -> VfsSpans, um cursor sobre os trechos (bloco, deslocamento no
@@ -18,7 +19,8 @@
 //
 // Caminhos: comparação EXATA em bytes com o caminho do manifesto (já NFC, sem "/" inicial ou final,
 // docs/03 §6). Nenhuma normalização: "/a", "a/", "a//b", "./a" simplesmente não existem. O caminho
-// vazio é a raiz (um diretório).
+// vazio é a raiz (um diretório). O VFS recebe `string_view`: argumento inválido (ponteiro nulo
+// etc.) é da API C (F1-60); aqui não há semântica de "nulo".
 //
 // Tempo de vida: o `Vfs` guarda uma cópia do `ManifestView`, que aponta para os bytes do manifesto;
 // esses bytes têm de viver (e não mudar) mais que o `Vfs` e que todo `VfsFile`, `VfsSpans` e
@@ -44,13 +46,15 @@ enum class VfsStatus : std::uint8_t {
     NotFound,     // nem arquivo nem diretório
     IsDirectory,  // pediu um arquivo e o caminho é um diretório (inclui a raiz "")
     NotDirectory, // pediu um diretório e o caminho é um arquivo
-    OutOfRange,   // offset > tamanho do arquivo
-    OutOfMemory,  // só open_dir (aloca a lista de filhos)
+    OutOfRange, // offset > tamanho, ou offset < tamanho e size > tamanho - offset (nada é entregue)
+    OutOfMemory, // só open_dir (aloca a lista de filhos)
 };
 
 enum class VfsBuildStatus : std::uint8_t {
     Ok,
-    FileDirectoryConflict, // um caminho é arquivo e também prefixo "caminho/" de outro arquivo
+    // Um caminho é arquivo e também prefixo "caminho/" de outro arquivo. Recusa do VFS, pendente de
+    // ADR (o §8 do docs/03 aceita esse manifesto); o mapeamento é do F1-60.
+    FileDirectoryConflict,
     OutOfMemory,
 };
 
@@ -77,8 +81,8 @@ class Vfs;
 class VfsSpans
 {
 public:
-    // Quantos bytes a leitura entrega (já limitado ao fim do arquivo). Constante durante a
-    // iteração.
+    // Quantos bytes a leitura entrega: igual ao `size` pedido, ou 0 quando offset == tamanho.
+    // Constante durante a iteração.
     [[nodiscard]] std::uint64_t total_bytes() const noexcept { return total_; }
     // Próximo trecho; false quando acabou.
     [[nodiscard]] bool next(BlockSpan& out) noexcept;
@@ -103,12 +107,14 @@ public:
     [[nodiscard]] std::uint16_t group() const noexcept;
     [[nodiscard]] std::string_view path() const noexcept;
 
-    // Resolve [offset, offset + size) em trechos. Semântica do swarmstream.h:
-    //   offset == tamanho  -> Ok, 0 bytes;     offset > tamanho -> OutOfRange (mesmo com size 0);
-    //   size 0 e offset <= tamanho -> Ok, 0 bytes;
-    //   passou do fim -> Ok até o fim do arquivo (`total_bytes() < size`); nunca soma offset +
-    //   size, então não há estouro de uint64.
-    // O cursor só é preenchido quando o resultado é Ok.
+    // Resolve [offset, offset + size) em trechos. Tudo ou nada:
+    //   offset == tamanho  -> Ok, 0 bytes (para qualquer size);
+    //   offset > tamanho   -> OutOfRange (mesmo com size 0);
+    //   size 0 e offset <= tamanho -> Ok, 0 trechos;
+    //   offset < tamanho e size > tamanho - offset -> OutOfRange: nenhum trecho parcial, o chamador
+    //   (F1-60) não trunca em silêncio. size == tamanho - offset é Ok.
+    // O intervalo é validado SEM somar offset + size (não estoura uint64). O cursor `out` só é
+    // preenchido quando o resultado é Ok; em erro fica intocado.
     [[nodiscard]] VfsStatus resolve(std::uint64_t offset, std::uint64_t size,
                                     VfsSpans& out) const noexcept;
 

@@ -64,7 +64,8 @@ VfsBuildStatus Vfs::build(const pack::ManifestView& view, Vfs& out) noexcept
             }
         }
 
-        // Conflito arquivo/diretório (o §8 aceita "a" e "a/b" juntos). Os caminhos sob "p/" são
+        // Conflito arquivo/diretório: recusa do VFS, pendente de ADR (o §8 do docs/03 aceita "a" e
+        // "a/b" juntos). Os caminhos sob "p/" são
         // contíguos logo depois de "p" e dos que começam com "p" seguido de byte < '/'. Uma pilha
         // com os arquivos que ainda são prefixo do caminho atual acha o conflito em uma passada.
         std::vector<std::string_view> prefixes;
@@ -218,7 +219,13 @@ VfsStatus VfsFile::resolve(std::uint64_t offset, std::uint64_t size, VfsSpans& o
     if (offset > file_size) {
         return VfsStatus::OutOfRange;
     }
-    const std::uint64_t length = std::min(size, file_size - offset); // sem offset + size
+    // Tudo ou nada, sem somar offset + size: em offset == tamanho, 0 bytes para qualquer size;
+    // antes do fim, size maior que o resto do arquivo é erro (nenhum trecho parcial).
+    const std::uint64_t remaining = file_size - offset;
+    if (remaining != 0 && size > remaining) {
+        return VfsStatus::OutOfRange;
+    }
+    const std::uint64_t length = remaining == 0 ? 0 : size;
     out = VfsSpans{};
     out.vfs_ = vfs_;
     out.total_ = length;

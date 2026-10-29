@@ -5,7 +5,8 @@
 // a chave de TESTE do ADR-0012 (semente 00..1f), a partir dos dados de
 // sw-core/tests/vfs_fixture_data.hpp:
 //   principal  12 arquivos, 9 blocos, 2 grupos (`core` e `extra`), 2 peças;
-//   conflito   "a" é arquivo e também diretório ("a/b"): o §8 aceita, o Vfs::build recusa;
+//   conflito   "a" é arquivo e também diretório ("a/b"): o §8 aceita; o Vfs::build recusa
+//              (recusa do VFS, pendente de ADR);
 //   aninhado   o mesmo conflito um nível abaixo ("x/a" e "x/a/b");
 //   prefixos   "a", "a-1", "a.x", "a0", "ab", "d/e", "d/e-1", "d/ef": SEM conflito;
 //   vazio      nenhum arquivo, nenhum bloco (a raiz existe e está vazia).

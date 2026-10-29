@@ -152,10 +152,28 @@ VfsFile open_file(const Vfs& vfs, std::string_view path)
 std::vector<std::uint8_t> expected_slice(const std::vector<std::uint8_t>& original,
                                          std::uint64_t offset, std::uint64_t size)
 {
-    SW_CHECK(offset <= original.size());
-    const std::uint64_t n = std::min<std::uint64_t>(size, original.size() - offset);
+    // Só para leituras DENTRO do arquivo (offset + size <= tamanho; escrito sem somar).
+    SW_CHECK(offset <= original.size() && size <= original.size() - offset);
     return {original.begin() + static_cast<std::ptrdiff_t>(offset),
-            original.begin() + static_cast<std::ptrdiff_t>(offset + n)};
+            original.begin() + static_cast<std::ptrdiff_t>(offset + size)};
+}
+
+// O que resolve() deve responder (decisão do dono, 2026-10-29): offset > tamanho -> OutOfRange;
+// offset == tamanho -> Ok com 0 bytes (qualquer size); antes do fim, size > tamanho - offset ->
+// OutOfRange (tudo ou nada); senão Ok. Calculado sem somar offset + size.
+VfsStatus expected_status(std::uint64_t file_size, std::uint64_t offset, std::uint64_t size)
+{
+    if (offset > file_size) return VfsStatus::OutOfRange;
+    if (offset == file_size) return VfsStatus::Ok;
+    return size > file_size - offset ? VfsStatus::OutOfRange : VfsStatus::Ok;
+}
+
+// Bytes esperados quando o status é Ok.
+std::vector<std::uint8_t> expected_bytes(const std::vector<std::uint8_t>& original,
+                                         std::uint64_t offset, std::uint64_t size)
+{
+    if (offset == original.size()) return {};
+    return expected_slice(original, offset, size);
 }
 
 class SplitMix64
@@ -317,21 +335,29 @@ void test_every_file_against_random_reads()
                     marks.push_back(static_cast<std::uint64_t>(v));
             }
         }
-        for (const std::uint64_t o : marks) {
-            if (o > n) continue; // offset além do fim tem teste próprio (test_resolve_edges)
-            for (const std::uint64_t s : marks) {
-                const Rebuilt r = rebuild(file, o, s);
-                SW_CHECK(r.status == VfsStatus::Ok);
-                SW_CHECK(r.bytes == expected_slice(original, o, s));
+        // Cada (offset, size) responde como manda a decisão: Ok com os bytes certos, ou OutOfRange
+        // sem nenhum trecho (inclusive quando size passa do fim por 1 byte).
+        const auto check = [&](std::uint64_t o, std::uint64_t sz) {
+            const Rebuilt r = rebuild(file, o, sz);
+            SW_CHECK(r.status == expected_status(n, o, sz));
+            if (r.status == VfsStatus::Ok) {
+                SW_CHECK(r.bytes == expected_bytes(original, o, sz));
                 SW_CHECK(r.total == r.bytes.size());
+            } else {
+                SW_CHECK(r.spans.empty() && r.bytes.empty());
             }
+        };
+        for (const std::uint64_t o : marks) {
+            for (const std::uint64_t sz : marks) {
+                check(o, sz);
+            }
+            check(o, n - std::min(o, n)); // exatamente até o fim: Ok
+            check(o,
+                  n - std::min(o, n) + 1); // 1 byte além do fim: OutOfRange (se offset < tamanho)
         }
         for (int i = 0; i < 3000; ++i) {
             const std::uint64_t o = n ? rng.next() % (n + 1) : 0;
-            const std::uint64_t s = rng.next() % (n + 8192);
-            const Rebuilt r = rebuild(file, o, s);
-            SW_CHECK(r.status == VfsStatus::Ok);
-            SW_CHECK(r.bytes == expected_slice(original, o, s));
+            check(o, rng.next() % (n + 8192));
         }
     }
 }
@@ -351,9 +377,24 @@ void test_resolve_edges()
         SW_CHECK(r.total == 0);
         SW_CHECK(r.spans.empty());
     }
+    // Um cursor já preenchido por uma leitura boa NÃO pode ser tocado por uma leitura que falha
+    // ("destino intocado"): é o que o F1-60 vê quando recebe OutOfRange.
+    VfsSpans kept;
+    SW_CHECK(file.resolve(10, 100, kept) == VfsStatus::Ok);
+    const auto still_intact = [&] {
+        VfsSpans copy = kept;
+        BlockSpan bs;
+        SW_CHECK(kept.total_bytes() == 100);
+        SW_CHECK(copy.next(bs) && bs == (BlockSpan{0u, 10, 100}));
+        SW_CHECK(!copy.next(bs));
+    };
+    still_intact();
+
     // offset > tamanho: OutOfRange, também com size 0, e o cursor fica como estava.
     for (const std::uint64_t o : {std::uint64_t{1001}, std::uint64_t{1} << 40, kMax}) {
         for (const std::uint64_t s : {std::uint64_t{0}, std::uint64_t{1}, kMax}) {
+            SW_CHECK(file.resolve(o, s, kept) == VfsStatus::OutOfRange);
+            still_intact();
             VfsSpans spans;
             SW_CHECK(file.resolve(o, s, spans) == VfsStatus::OutOfRange);
             BlockSpan bs;
@@ -365,19 +406,29 @@ void test_resolve_edges()
     SW_CHECK(rebuild(file, 0, 0).total == 0);
     SW_CHECK(rebuild(file, 500, 0).spans.empty());
 
-    // Passa do fim: leitura curta até o fim do arquivo (swarmstream.h: "leitura curta só no fim").
-    const Rebuilt past = rebuild(file, 990, 100);
-    SW_CHECK(past.status == VfsStatus::Ok);
-    SW_CHECK(past.total == 10);
-    SW_CHECK(past.bytes == expected_slice(original, 990, 100));
-
-    // offset + size estoura uint64: nada de dar a volta.
-    const Rebuilt huge = rebuild(file, 5, kMax);
-    SW_CHECK(huge.status == VfsStatus::Ok);
-    SW_CHECK(huge.total == 995);
-    SW_CHECK(huge.bytes == expected_slice(original, 5, kMax));
-    SW_CHECK(rebuild(file, 999, kMax).total == 1);
-    SW_CHECK(rebuild(file, kMax - 1, 2).status == VfsStatus::OutOfRange);
+    // Passa do fim com offset < tamanho: OutOfRange, nada é entregue (decisão do dono, 2026-10-29).
+    for (const auto& [o, s] : {std::pair<std::uint64_t, std::uint64_t>{990, 100},
+                               {5, kMax},
+                               {999, 2},
+                               {0, 1001},
+                               {1, 1000},
+                               {999, kMax},
+                               {kMax - 1, 2}}) {
+        SW_CHECK(rebuild(file, o, s).status == VfsStatus::OutOfRange);
+        SW_CHECK(file.resolve(o, s, kept) == VfsStatus::OutOfRange);
+        still_intact();
+    }
+    // O limite exato é Ok: size == tamanho - offset (e um byte a mais já não é).
+    for (const std::uint64_t o :
+         {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{500}, std::uint64_t{999}}) {
+        const Rebuilt exact = rebuild(file, o, 1000 - o);
+        SW_CHECK(exact.status == VfsStatus::Ok && exact.total == 1000 - o);
+        SW_CHECK(exact.bytes == expected_slice(original, o, 1000 - o));
+        SW_CHECK(rebuild(file, o, 1000 - o + 1).status == VfsStatus::OutOfRange);
+    }
+    SW_CHECK(rebuild(file, 990, 10).bytes == expected_slice(original, 990, 10));
+    // offset == tamanho continua Ok com 0 bytes, mesmo com size enorme (nunca soma offset + size).
+    SW_CHECK(rebuild(file, 1000, kMax).status == VfsStatus::Ok);
 
     // Arquivo vazio (0 bytes, 0 referências).
     const VfsFile empty = open_file(main_vfs(), "empty.bin");
@@ -651,7 +702,8 @@ void test_resolve_does_not_allocate()
         for (const VfsFile* file : {&big, &dedup, &empty}) {
             VfsSpans spans;
             const std::uint64_t offset = static_cast<std::uint64_t>(i) % (file->size() + 1);
-            SW_CHECK(file->resolve(offset, 9000, spans) == VfsStatus::Ok);
+            // do offset até o fim do arquivo: o maior size que ainda é Ok
+            SW_CHECK(file->resolve(offset, file->size() - offset, spans) == VfsStatus::Ok);
             BlockSpan s;
             while (spans.next(s)) {
                 checksum += s.block + s.offset + s.length;
@@ -708,7 +760,7 @@ void test_concurrent_resolves()
                 }
                 const std::uint64_t n = originals[k].size();
                 const std::uint64_t o = rng.next() % (n + 1);
-                const std::uint64_t s = rng.next() % (n + 100);
+                const std::uint64_t s = rng.next() % (n - o + 1); // sempre dentro do arquivo
                 VfsSpans spans;
                 if (f.resolve(o, s, spans) != VfsStatus::Ok) {
                     ++failures;
