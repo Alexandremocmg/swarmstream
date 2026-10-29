@@ -15,12 +15,16 @@ on:
     paths:
       - "sw-godot/**"
       - "sw-core/**"
+      - "sw-format/**"
+      - "vcpkg.json"
       - ".github/workflows/extension.yml"
   push:
     branches: [main]
     paths:
       - "sw-godot/**"
       - "sw-core/**"
+      - "sw-format/**"
+      - "vcpkg.json"
       - ".github/workflows/extension.yml"
   schedule:
     - cron: "17 5 * * 1"
@@ -51,25 +55,46 @@ jobs:
         run: |
           git clone --depth 1 --branch "$GODOT_CPP_TAG" https://github.com/godotengine/godot-cpp.git "$RUNNER_TEMP/godot-cpp"
 
+      # F1-17: o sw-core passou a ligar o sw-format (ManifestView do VFS), que precisa do libsodium
+      # (ADR-0012). A extensão configura o sw-core sozinha, sem o toolchain do vcpkg, então este
+      # job tem de prover o libsodium como os outros jobs: pacote do sistema + pkg-config no Linux
+      # (como o job de sanitizers) e o vcpkg do runner no Windows (como o build+test do ci.yml).
+      - name: Instala libsodium (Linux, sem vcpkg)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
+
+      # O clone do vcpkg do runner pode não ter o commit do builtin-baseline do vcpkg.json (F1-04).
+      - name: Busca o baseline do vcpkg no clone do runner (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git -C 'C:/vcpkg' fetch --depth=1 origin e456309491fd875487bf02b8a0dca76c1b1b00cc || git -C 'C:/vcpkg' fetch origin e456309491fd875487bf02b8a0dca76c1b1b00cc
+
+      # A chave mudou (v2) para não restaurar um build-godot configurado antes do libsodium/toolchain.
       - name: Cache do build da extensão (godot-cpp incluído)
         uses: actions/cache@v4
         with:
           path: build-godot
-          key: godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-${{ hashFiles('sw-godot/extension/**', 'sw-core/**') }}
+          key: godot-build-v2-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-${{ hashFiles('sw-godot/extension/**', 'sw-core/**', 'sw-format/**', 'vcpkg.json') }}
           restore-keys: |
-            godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-
+            godot-build-v2-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-
 
       - name: Configurar (CMake)
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             GODOT_CPP_DIR="$(cygpath -m "$RUNNER_TEMP/godot-cpp")"
+            # A fonte é sw-godot/extension; o vcpkg.json fica na raiz do repositório.
+            VCPKG_ARGS=(-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+                        -DVCPKG_MANIFEST_DIR="$(cygpath -m "$GITHUB_WORKSPACE")")
           else
             GODOT_CPP_DIR="$RUNNER_TEMP/godot-cpp"
+            VCPKG_ARGS=()
           fi
           cmake -S sw-godot/extension -B build-godot \
             -DCMAKE_BUILD_TYPE=Release \
-            -DGODOT_CPP_DIR="$GODOT_CPP_DIR"
+            -DGODOT_CPP_DIR="$GODOT_CPP_DIR" \
+            "${VCPKG_ARGS[@]}"
 
       - name: Compilar a extensão
         # Ubuntu: 2 jobs de compilação. Com --parallel total, o runner de 4 CPUs/~16 GB foi
