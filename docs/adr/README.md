@@ -20,6 +20,7 @@ Cada decisão técnica importante vira um arquivo curto: contexto, decisão, con
 | [0014](0014-contrato-swarmstream-h-v0.md) | Contrato `swarmstream.h` v0 e regras de compatibilidade da API | Aceita (header congelado) |
 | [0015](0015-politica-de-contribuicao-dco.md) | Contribuições com DCO, sem CLA | Aceita |
 | [0016](0016-ponto-de-intercepcao-godot.md) | Ponto de intercepção de leitura no Godot: loader na frente + dicas; `.pck` como reserva | Aceita |
+| [0017](0017-conflito-arquivo-diretorio-no-manifesto.md) | Conflito arquivo/diretório no manifesto v0: recusa com `SW_E_MANIFEST_INVALID` | Proposta |
 
 Status possíveis: **Proposta** → **Aceita** → (**Substituída por ADR-XXXX** | **Descartada**).
 
