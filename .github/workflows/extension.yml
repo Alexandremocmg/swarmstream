@@ -15,12 +15,16 @@ on:
     paths:
       - "sw-godot/**"
       - "sw-core/**"
+      - "sw-format/**"
+      - "vcpkg.json"
       - ".github/workflows/extension.yml"
   push:
     branches: [main]
     paths:
       - "sw-godot/**"
       - "sw-core/**"
+      - "sw-format/**"
+      - "vcpkg.json"
       - ".github/workflows/extension.yml"
   schedule:
     - cron: "17 5 * * 1"
@@ -51,25 +55,49 @@ jobs:
         run: |
           git clone --depth 1 --branch "$GODOT_CPP_TAG" https://github.com/godotengine/godot-cpp.git "$RUNNER_TEMP/godot-cpp"
 
+      # F1-17: o sw-core passou a ligar o sw-format (ManifestView do VFS), que precisa do libsodium
+      # (ADR-0012). A extensão configura o sw-core sozinha, sem o toolchain do vcpkg, então este
+      # job tem de prover o libsodium como os outros jobs: pacote do sistema + pkg-config no Linux
+      # (como o job de sanitizers) e o vcpkg do runner no Windows (como o build+test do ci.yml).
+      - name: Instala libsodium (Linux, sem vcpkg)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
+
+      # O clone do vcpkg do runner pode não ter o commit do builtin-baseline do vcpkg.json (F1-04).
+      - name: Busca o baseline do vcpkg no clone do runner (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git -C 'C:/vcpkg' fetch --depth=1 origin e456309491fd875487bf02b8a0dca76c1b1b00cc || git -C 'C:/vcpkg' fetch origin e456309491fd875487bf02b8a0dca76c1b1b00cc
+
+      # A chave mudou (v2) para não restaurar um build-godot configurado antes do libsodium/toolchain.
       - name: Cache do build da extensão (godot-cpp incluído)
         uses: actions/cache@v4
         with:
           path: build-godot
-          key: godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-${{ hashFiles('sw-godot/extension/**', 'sw-core/**') }}
+          key: godot-build-v2-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-${{ hashFiles('sw-godot/extension/**', 'sw-core/**', 'sw-format/**', 'vcpkg.json') }}
           restore-keys: |
-            godot-build-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-
+            godot-build-v2-${{ matrix.os }}-${{ env.GODOT_CPP_TAG }}-
 
       - name: Configurar (CMake)
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             GODOT_CPP_DIR="$(cygpath -m "$RUNNER_TEMP/godot-cpp")"
+            # A fonte é sw-godot/extension; o vcpkg.json fica na raiz do repositório.
+            EXTRA_ARGS=(-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+                        -DVCPKG_MANIFEST_DIR="$(cygpath -m "$GITHUB_WORKSPACE")")
           else
             GODOT_CPP_DIR="$RUNNER_TEMP/godot-cpp"
+            # Mapa do ligador (só escreve um arquivo; o .so não muda): o passo "Membros de
+            # biblioteca incorporados e dependências do .so" lê dele quais membros de arquivo (.a)
+            # o ligador incorporou ao .so.
+            EXTRA_ARGS=(-DCMAKE_SHARED_LINKER_FLAGS="-Wl,-Map=$GITHUB_WORKSPACE/build-godot/swarmstream_godot.map")
           fi
           cmake -S sw-godot/extension -B build-godot \
             -DCMAKE_BUILD_TYPE=Release \
-            -DGODOT_CPP_DIR="$GODOT_CPP_DIR"
+            -DGODOT_CPP_DIR="$GODOT_CPP_DIR" \
+            "${EXTRA_ARGS[@]}"
 
       - name: Compilar a extensão
         # Ubuntu: 2 jobs de compilação. Com --parallel total, o runner de 4 CPUs/~16 GB foi
@@ -85,6 +113,53 @@ jobs:
           test -f sw-godot/project/addons/swarmstream/swarmstream.gdextension || \
             test -f sw-godot/project/addons/swarmstream/bin/swarmstream_godot.dll || \
             test -f sw-godot/project/addons/swarmstream/bin/swarmstream_godot.so
+
+      # F1-17: evidência na extensão REAL (o .so que o portão carrega), não só num executável
+      # equivalente. Não é migração: a extensão atual usa componentes C++ do sw-core (os mocks, via
+      # gate_core.cpp) e continua assim. O sw-core passou a ligar o sw-format (libsodium, Zstd,
+      # LZ4), mas o adaptador não referencia o VFS, então nenhum desses membros deve entrar no .so.
+      # O QUE ISTO PROVA, e o que não: (1) os MEMBROS DE ARQUIVO (.a) que o ligador incorporou ao
+      # .so (seção "Archive member included" do mapa do ld), e (2) o que o .so exige em tempo de
+      # execução (readelf -d / ldd). NÃO é uma lista de símbolos do .so: o Release sai sem tabela de
+      # símbolos (a primeira versão, com `nm`, falhou por isso). Cada "zero" tem um controle positivo
+      # (membros que SABEMOS que entram: o adaptador gate_core, os mocks do sw-core, o godot-cpp),
+      # para o zero não ser fruto de um mapa vazio ou de um padrão errado.
+      - name: Membros de biblioteca incorporados e dependências do .so (evidência F1-17)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          so=sw-godot/project/addons/swarmstream/bin/swarmstream_godot.so
+          map=build-godot/swarmstream_godot.map
+          test -f "$so"
+          test -f "$map"
+          file "$so"
+          echo "--- readelf -d (NEEDED)"
+          readelf -d "$so" | grep NEEDED
+          echo "--- ldd"
+          ldd "$so"
+          members="$RUNNER_TEMP/members.txt"
+          awk '/^Archive member included/ { on = 1; next } /^(Discarded input sections|Memory Configuration)/ { on = 0 } on' "$map" > "$members"
+          count() { RE="$1" awk '$0 ~ ENVIRON["RE"] { n++ } END { print n + 0 }' "$2"; }
+          total=$(wc -l < "$members")
+          core=$(count 'libsw-core\.a\(memory_cache_store\.cpp\.o\)' "$members")
+          gate=$(count 'gate_core\.cpp\.o' "$members")
+          godot=$(count 'godot-cpp' "$members")
+          forbidden=$(count 'libsw-format|libzstd|liblz4|sodium|vfs\.cpp\.o' "$members")
+          sodium_dep=$(ldd "$so" | awk '/sodium/ { n++ } END { print n + 0 }')
+          libc_dep=$(ldd "$so" | awk '/libc\.so/ { n++ } END { print n + 0 }')
+          echo "membros de arquivo incorporados (mapa do ld): linhas=$total  controles positivos: libsw-core(memory_cache_store)=$core gate_core=$gate godot-cpp=$godot  proibidos(libsw-format|zstd|lz4|sodium|vfs.cpp.o)=$forbidden"
+          echo "dependências em tempo de execução (ldd): libsodium=$sodium_dep  controle libc.so=$libc_dep"
+          if [ "$forbidden" -ne 0 ]; then
+            echo "--- membros proibidos encontrados (até 20):"
+            awk '/libsw-format|libzstd|liblz4|sodium|vfs\.cpp\.o/ { print "  " $0 }' "$members" | head -n 20
+          fi
+          test "$total" -gt 100
+          test "$core" -ge 1
+          test "$gate" -ge 1
+          test "$godot" -ge 1
+          test "$forbidden" -eq 0
+          test "$libc_dep" -ge 1
+          test "$sodium_dep" -eq 0
 
       - name: ffmpeg (gera o OGG de teste)
         if: matrix.os == 'ubuntu-latest'

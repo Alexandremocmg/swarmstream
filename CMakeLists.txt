@@ -49,8 +49,9 @@ if(SANITIZE_THREAD)
 endif()
 
 # Submodules
-add_subdirectory(sw-core)
+# sw-format antes do sw-core: o sw-core depende dele (F1-17), e o sw-pack também.
 add_subdirectory(sw-format)
+add_subdirectory(sw-core)
 add_subdirectory(sw-pack)
 
 # Parte da GDExtension do Godot que roda sem o Godot (F1-20)
