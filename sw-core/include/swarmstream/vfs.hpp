@@ -49,6 +49,8 @@
 //     - atribuído por cima (cópia ou move), movido (o endereço muda) ou destruído.
 //   Um `Vfs` de que se MOVEU só pode ser destruído ou receber uma atribuição/um `build` novo: o
 //   move esvazia a tabela de índices mas não a visão, então consultá-lo é comportamento indefinido.
+//   Quem integra (F1-60) não pode reutilizar um Vfs movido-de; operações de move próprias, que o
+//   deixariam vazio e seguro, ficam para um cartão à parte.
 //   Uma reconstrução que FALHA não invalida nada (garantia acima). `valid()` não detecta nenhum
 //   desses casos: só diz que o handle foi preenchido por um open. Descarte os handles e reabra
 //   depois de reconstruir. Construir uma CÓPIA do Vfs não afeta os handles do original, que também
