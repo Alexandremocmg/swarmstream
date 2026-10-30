@@ -1,6 +1,6 @@
 # ADR-0017: Semântica do VFS (F1-17): conflito arquivo/diretório e leitura além do fim
 
-**Status:** Proposta (escolhas técnicas do dono registradas em 2026-10-29; aguarda o aceite final do texto) · **Data:** 2026-10-29 · **Autor:** Planejador (a pedido do dono)
+**Status:** Aceita (2026-10-29: escolhas técnicas e aceite do texto pelo dono do produto, na apresentação do PR #26; mesclado como `5522c9c106df956f25a366b3135f21a7d5c9040d`) · **Data:** 2026-10-29 · **Autor:** Planejador (a pedido do dono)
 
 ## Contexto
 O VFS do `sw-core` ([F1-17](../../tarefas/cartoes/F1-17.md)) traduz caminho, offset e tamanho em trechos de blocos e lista diretórios virtuais. Ele não lê cache nem rede. O contrato [`swarmstream.h`](../../sw-core/include/swarmstream.h) v0 e o formato ([03](../03-formato-de-conteudo.md)) deixam lacunas que o VFS precisou fechar. Este ADR registra **o que já estava escrito**, **o que apenas esclarece** e **o que acrescenta comportamento**, e como os estados internos do VFS viram códigos públicos **existentes** (sem código novo, sem editar o header, sem editar o `docs/03`).

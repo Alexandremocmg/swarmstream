@@ -34,7 +34,9 @@ def faltando(cartao: dict[str, str]) -> list[str]:
 
 
 def dependencias(cartao: dict[str, str]) -> list[str]:
-    return re.findall(r"F1-\d+", cartao.get("Depende de", "").split("|")[0])
+    # sem repetição: o link [F1-63](F1-63.md) casa duas vezes, e um ID citado de novo no texto também
+    ids = re.findall(r"F1-\d+", cartao.get("Depende de", "").split("|")[0])
+    return list(dict.fromkeys(ids))
 
 
 def montar(cartoes: list[dict[str, str]]) -> str:
