@@ -15,6 +15,11 @@
 //
 // test_resolve_does_not_allocate conta as chamadas a `operator new` (substituído neste executável)
 // durante stat/open/resolve/next. O controle positivo prova que o contador enxerga um `new` real.
+//
+// F1-63: o mesmo `operator new` ganha injeção de falha (`g_fail_countdown`): enquanto a contagem
+// está ligada, a k-ésima alocação (k = 0, 1, ...) lança std::bad_alloc. Os testes de falha de
+// `Vfs::build` varrem todos os k de cada manifesto (tabela de índices, pilha de prefixos) com `out`
+// vazio e com `out` já válido, e provam que `out` fica exatamente como estava.
 #include "check.hpp"
 #include "swarmstream/vfs.hpp"
 #include "vfs_fixture.hpp"
@@ -24,16 +29,28 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <new>
 #include <span>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <crtdbg.h>
+#include <windows.h>
+#endif
 
 using namespace swarmstream;
 namespace fx = swarmstream::test::vfs_fixture;
@@ -42,13 +59,28 @@ namespace fx = swarmstream::test::vfs_fixture;
 namespace {
 std::atomic<bool> g_counting{false};
 std::atomic<std::uint64_t> g_allocations{0};
+// < 0: sem injeção. >= 0: a alocação contada em que este valor chega a 0 lança bad_alloc.
+std::atomic<std::int64_t> g_fail_countdown{-1};
 void* volatile g_sink = nullptr;
+// Chamada opaca (ponteiro volátil): o objeto passado para ela existe de verdade, então o compilador
+// não pode elidir a alocação de um objeto construído e logo destruído (visto em Release).
+void observe_object(const void*) {}
+void (*volatile g_escape)(const void*) = &observe_object;
+// Tamanho das primeiras alocações contadas (preenchido sem alocar; só threads de um teste por vez).
+constexpr std::size_t kTrackedAllocs = 64;
+std::size_t g_alloc_sizes[kTrackedAllocs];
 } // namespace
 
 void* operator new(std::size_t n)
 {
     if (g_counting.load(std::memory_order_relaxed)) {
-        g_allocations.fetch_add(1, std::memory_order_relaxed);
+        const std::uint64_t idx = g_allocations.fetch_add(1, std::memory_order_relaxed);
+        if (idx < kTrackedAllocs) {
+            g_alloc_sizes[idx] = n;
+        }
+        if (g_fail_countdown.fetch_sub(1, std::memory_order_relaxed) == 0) {
+            throw std::bad_alloc();
+        }
     }
     if (void* p = std::malloc(n == 0 ? 1 : n)) return p;
     throw std::bad_alloc();
@@ -85,6 +117,7 @@ Vfs build_vfs(std::span<const std::uint8_t> bytes)
 {
     Vfs vfs;
     SW_CHECK(Vfs::build(open_manifest(bytes), vfs) == VfsBuildStatus::Ok);
+    SW_CHECK(vfs.index_size() == vfs.manifest().block_ref_count());
     return vfs;
 }
 
@@ -680,6 +713,590 @@ void test_file_directory_conflict_definition()
     SW_CHECK(!dir.next(e));
 }
 
+// ---------------------------------------------------------------- F1-63: garantia de build
+
+// Tudo o que o Vfs responde sobre os caminhos de TODAS as fixtures, em texto: stat, open, resolve
+// (inteiro, a partir de 1 e no fim) com os trechos, open_dir com as entradas. Dois Vfs com o mesmo
+// texto respondem igual a estas consultas. Só chamar com um Vfs coerente (ver `coherent`).
+std::string observe(const Vfs& vfs)
+{
+    static const char* const kProbes[] = {"",
+                                          "config.ini",
+                                          "empty.bin",
+                                          "maps",
+                                          "maps/level1.bin",
+                                          "maps/level2.bin",
+                                          "maps/sub",
+                                          "maps/sub.bin",
+                                          "maps/sub/deep.bin",
+                                          "textures",
+                                          "textures/a.bin",
+                                          "a",
+                                          "a-1",
+                                          "a.x",
+                                          "a0",
+                                          "ab",
+                                          "a/b",
+                                          "d",
+                                          "d/e",
+                                          "d/e-1",
+                                          "d/ef",
+                                          "x",
+                                          "x/a",
+                                          "x/a/b",
+                                          "x/b",
+                                          "nada",
+                                          "maps/"};
+    std::ostringstream o;
+    o << "files=" << vfs.manifest().file_count() << " refs=" << vfs.manifest().block_ref_count()
+      << "\n";
+    for (const char* path : kProbes) {
+        VfsStat info;
+        const VfsStatus st = vfs.stat(path, info);
+        o << "[" << path << "] stat=" << int(st) << "/" << int(info.kind) << "/" << info.size << "/"
+          << int(info.file_class) << "/" << info.group;
+        VfsFile f;
+        const VfsStatus os = vfs.open(path, f);
+        o << " open=" << int(os);
+        if (os == VfsStatus::Ok) {
+            const std::uint64_t n = f.size();
+            o << " size=" << n << " path=" << f.path();
+            for (const std::uint64_t off : {std::uint64_t{0}, std::uint64_t{1}, n}) {
+                VfsSpans spans;
+                const VfsStatus rs = f.resolve(off, off <= n ? n - off : 0, spans);
+                o << " r" << off << "=" << int(rs);
+                if (rs == VfsStatus::Ok) {
+                    o << ":" << spans.total_bytes();
+                    BlockSpan s;
+                    while (spans.next(s)) {
+                        o << "(" << s.block << "," << s.offset << "," << s.length << ")";
+                    }
+                }
+            }
+        }
+        VfsDir dir;
+        const VfsStatus ds = vfs.open_dir(path, dir);
+        o << " dir=" << int(ds);
+        if (ds == VfsStatus::Ok) {
+            VfsDirEntry e;
+            while (dir.next(e)) {
+                o << " " << e.name << ":" << int(e.kind) << ":" << e.size;
+            }
+        }
+        o << "\n";
+    }
+    return o.str();
+}
+
+// A visão e a tabela de `vfs` batem com as de `reference`? Conferido SEM consultar o caminho
+// (`observe`), para que um estado incoerente (visão nova com tabela vazia) seja pego aqui e não por
+// um acesso fora dos limites lá dentro.
+bool coherent(const Vfs& vfs, const Vfs& reference)
+{
+    // Invariante do Vfs: uma entrada de índice por referência de bloco da visão, nos dois.
+    return vfs.index_size() == vfs.manifest().block_ref_count() &&
+           reference.index_size() == reference.manifest().block_ref_count() &&
+           vfs.index_size() == reference.index_size() &&
+           vfs.manifest().file_count() == reference.manifest().file_count() &&
+           vfs.manifest().block_ref_count() == reference.manifest().block_ref_count() &&
+           vfs.manifest().block_count() == reference.manifest().block_count();
+}
+
+struct Source
+{
+    const char* name;
+    std::span<const std::uint8_t> bytes;
+    VfsBuildStatus expected;
+};
+
+const std::array<Source, 5>& sources()
+{
+    static const std::array<Source, 5> all = {{
+        {"principal", fx::kMainManifest, VfsBuildStatus::Ok},
+        {"prefixos", fx::kPrefixManifest, VfsBuildStatus::Ok},
+        {"vazio", fx::kEmptyManifest, VfsBuildStatus::Ok},
+        {"conflito", fx::kConflictManifest, VfsBuildStatus::FileDirectoryConflict},
+        {"conflito aninhado", fx::kNestedConflictManifest, VfsBuildStatus::FileDirectoryConflict},
+    }};
+    return all;
+}
+
+// Roda `Vfs::build` com falha de alocação na k-ésima alocação (k < 0: sem falha) e devolve o status
+// e quantas alocações o build fez.
+VfsBuildStatus build_with_failure(const pack::ManifestView& view, Vfs& out, std::int64_t k,
+                                  std::uint64_t& allocations)
+{
+    g_allocations.store(0);
+    g_fail_countdown.store(k);
+    g_counting.store(true);
+    const VfsBuildStatus st = Vfs::build(view, out);
+    g_counting.store(false);
+    g_fail_countdown.store(-1);
+    allocations = g_allocations.load();
+    return st;
+}
+
+// Os trechos de um arquivo, de ponta a ponta, como texto.
+std::string spans_text(const VfsFile& f)
+{
+    VfsSpans spans;
+    SW_CHECK(f.resolve(0, f.size(), spans) == VfsStatus::Ok);
+    std::ostringstream o;
+    BlockSpan s;
+    while (spans.next(s)) {
+        o << "(" << s.block << "," << s.offset << "," << s.length << ")";
+    }
+    return o.str();
+}
+
+void test_build_failure_keeps_out_untouched()
+{
+    std::cout << "[Test] build: em QUALQUER falha (conflito, alocação em cada etapa) `out` fica "
+                 "exatamente como estava (vazio ou já válido)\n";
+    static_assert(std::is_nothrow_move_assignable_v<Vfs>,
+                  "a publicação em `out` não pode falhar depois da validação");
+    const Source& main_src = sources()[0];
+    const Source& prefix_src = sources()[1];
+    // Estado inicial do `out`: nullptr = vazio (Vfs{}); senão, já construído a partir do manifesto.
+    const std::array<const Source*, 3> initials = {nullptr, &main_src, &prefix_src};
+
+    std::uint64_t oom_seen = 0;
+    std::uint64_t conflict_seen = 0;
+    for (const Source& src : sources()) {
+        const pack::ManifestView view = open_manifest(src.bytes);
+        // O que um build bem-sucedido deste manifesto responde.
+        Vfs fresh;
+        std::string fresh_text;
+        if (src.expected == VfsBuildStatus::Ok) {
+            SW_CHECK(Vfs::build(view, fresh) == VfsBuildStatus::Ok);
+            SW_CHECK(fresh.index_size() == view.block_ref_count()); // antes de consultar
+            fresh_text = observe(fresh);
+        }
+
+        // Quantas alocações este build faz até terminar (ou até achar o conflito).
+        Vfs probe;
+        std::uint64_t total = 0;
+        SW_CHECK(build_with_failure(view, probe, -1, total) == src.expected);
+        std::cout << "        " << src.name << ": " << total << " alocações no build\n";
+        // O varrimento de k abaixo falha CADA alocação que o build fez de fato nesta STL (a cópia
+        // da visão, se a std::string `chunker.algorithm` não couber no SSO; a tabela de índices; o
+        // crescimento da pilha de prefixos; o que mais a STL alocar). Nenhum mínimo depende da
+        // implementação, só o que é inevitável: guardar N > 0 entradas de 64 bits exige memória
+        // dinâmica, então a tabela de um manifesto com referências de bloco é pelo menos 1
+        // alocação.
+        if (view.block_ref_count() > 0) {
+            SW_CHECK(total >= 1);
+        }
+
+        for (const Source* init : initials) {
+            for (std::int64_t k = 0; k <= static_cast<std::int64_t>(total); ++k) {
+                Vfs out;
+                Vfs reference;
+                if (init != nullptr) {
+                    SW_CHECK(Vfs::build(open_manifest(init->bytes), out) == VfsBuildStatus::Ok);
+                    SW_CHECK(Vfs::build(open_manifest(init->bytes), reference) ==
+                             VfsBuildStatus::Ok);
+                }
+                const std::string before = observe(out);
+
+                // Arquivo, cursor e diretório abertos ANTES da tentativa (só com `out` válido).
+                VfsFile held;
+                VfsSpans cursor;
+                VfsDir held_dir;
+                std::vector<BlockSpan> cursor_rest;
+                std::string held_text;
+                if (init != nullptr) {
+                    held = open_file(out, init == &main_src ? "maps/level1.bin" : "a");
+                    held_text = spans_text(held);
+                    SW_CHECK(held.resolve(0, held.size(), cursor) == VfsStatus::Ok);
+                    BlockSpan first;
+                    SW_CHECK(cursor.next(first)); // o cursor já andou um trecho
+                    VfsSpans ahead = cursor;
+                    BlockSpan s;
+                    while (ahead.next(s)) {
+                        cursor_rest.push_back(s);
+                    }
+                    SW_CHECK(out.open_dir("", held_dir) == VfsStatus::Ok);
+                }
+
+                std::uint64_t used = 0;
+                const VfsBuildStatus st = build_with_failure(view, out, k, used);
+
+                if (static_cast<std::uint64_t>(k) < total) {
+                    SW_CHECK(st == VfsBuildStatus::OutOfMemory); // a k-ésima alocação existe
+                    ++oom_seen;
+                } else {
+                    SW_CHECK(st == src.expected);
+                    if (st == VfsBuildStatus::FileDirectoryConflict) {
+                        ++conflict_seen;
+                    }
+                }
+
+                if (st == VfsBuildStatus::Ok) {
+                    // Sucesso: `out` passa a responder como um build novo do manifesto.
+                    SW_CHECK(coherent(out, fresh));
+                    SW_CHECK(observe(out) == fresh_text);
+                    continue;
+                }
+
+                // Falha: `out` é o que era. Primeiro os contadores, depois as consultas completas.
+                SW_CHECK(coherent(out, reference));
+                SW_CHECK(observe(out) == before);
+                if (init != nullptr) {
+                    // Os handles abertos antes continuam valendo, com os mesmos resultados.
+                    SW_CHECK(spans_text(held) == held_text);
+                    std::vector<BlockSpan> rest;
+                    BlockSpan s;
+                    while (cursor.next(s)) {
+                        rest.push_back(s);
+                    }
+                    SW_CHECK(rest == cursor_rest);
+                    VfsDirEntry e;
+                    std::size_t listed = 0;
+                    while (held_dir.next(e)) {
+                        ++listed;
+                    }
+                    SW_CHECK(listed == held_dir.entry_count() && listed > 0);
+                }
+            }
+        }
+    }
+    SW_CHECK(oom_seen > 0 && conflict_seen > 0);
+}
+
+// `build(out.manifest(), out)`: a visão de origem é a do próprio `out`. Em falha, nada muda; em
+// sucesso, o Vfs responde igual (a tabela foi refeita).
+void test_build_failure_when_source_is_the_destination()
+{
+    std::cout << "[Test] build: reconstruir `out` a partir do próprio manifesto (alias), com e sem "
+                 "falha de alocação\n";
+    std::uint64_t total = 0;
+    Vfs probe;
+    SW_CHECK(build_with_failure(open_manifest(fx::kMainManifest), probe, -1, total) ==
+             VfsBuildStatus::Ok);
+    SW_CHECK(total >= 1);
+    for (std::int64_t k = 0; k <= static_cast<std::int64_t>(total); ++k) {
+        Vfs out = build_vfs(fx::kMainManifest);
+        const std::string before = observe(out);
+        std::uint64_t used = 0;
+        const VfsBuildStatus st = build_with_failure(out.manifest(), out, k, used);
+        SW_CHECK(st == (static_cast<std::uint64_t>(k) < total ? VfsBuildStatus::OutOfMemory
+                                                              : VfsBuildStatus::Ok));
+        SW_CHECK(observe(out) == before);
+    }
+}
+
+// Reconstrução BEM-SUCEDIDA sobre um Vfs com handles abertos (desenho do F1-63, vfs.hpp):
+//  - VfsFile e VfsSpans abertos antes ficam INVÁLIDOS (apontam para o Vfs, cujo conteúdo foi
+//    trocado): não se usam depois, e `valid()` NÃO detecta isso. O teste só faz o que é definido:
+//    reabrir depois e conferir que o novo estado é o do manifesto novo.
+//  - VfsDir NÃO depende do Vfs: guarda cópias das entradas, que apontam para os bytes do manifesto
+//    ANTIGO, e continua valendo enquanto esses bytes viverem.
+//  - Handles pertencem ao OBJETO Vfs onde foram abertos: uma cópia do Vfs tem os seus.
+void test_successful_rebuild_effect_on_open_handles()
+{
+    std::cout << "[Test] build: efeito de uma reconstrução bem-sucedida sobre handles abertos "
+                 "(VfsDir segue valendo; VfsFile/VfsSpans antigos são descartados e reabertos)\n";
+    Vfs out = build_vfs(fx::kMainManifest);
+    const Vfs main_reference = build_vfs(fx::kMainManifest);
+    const Vfs prefix_reference = build_vfs(fx::kPrefixManifest);
+
+    VfsDir dir_before;
+    SW_CHECK(out.open_dir("maps", dir_before) == VfsStatus::Ok);
+    const std::size_t entries_before = dir_before.entry_count();
+    SW_CHECK(entries_before == 7);
+    VfsDirEntry first_before;
+    SW_CHECK(dir_before.next(first_before)); // o cursor de diretório já andou uma entrada
+    const std::string first_name(first_before.name);
+    const VfsFile old_file = open_file(out, "maps/level1.bin");
+
+    SW_CHECK(Vfs::build(open_manifest(fx::kPrefixManifest), out) == VfsBuildStatus::Ok);
+
+    // O novo estado é o do manifesto novo, e só dele.
+    SW_CHECK(observe(out) == observe(prefix_reference));
+    SW_CHECK(observe(out) != observe(main_reference));
+    VfsFile f;
+    SW_CHECK(out.open("maps/level1.bin", f) == VfsStatus::NotFound);
+    SW_CHECK(!f.valid());
+    SW_CHECK(open_file(out, "d/e").valid());
+
+    // VfsDir{} default é uma listagem vazia (definido no header).
+    VfsDir none;
+    VfsDirEntry none_entry;
+    SW_CHECK(none.entry_count() == 0 && !none.next(none_entry));
+
+    // VfsDir: independente do Vfs. Continua de onde estava, com as mesmas entradas.
+    SW_CHECK(dir_before.entry_count() == entries_before);
+    std::size_t remaining = 0;
+    VfsDirEntry e;
+    while (dir_before.next(e)) {
+        SW_CHECK(!e.name.empty() && e.name != first_name);
+        ++remaining;
+    }
+    SW_CHECK(remaining == entries_before - 1);
+
+    // `valid()` só diz que o handle foi preenchido por um open; NÃO diz que o Vfs não foi
+    // reconstruído desde então. Por isso o handle antigo é descartado e reaberto.
+    SW_CHECK(old_file.valid());
+
+    // De volta ao principal: handles reabertos respondem como no Vfs de referência.
+    SW_CHECK(Vfs::build(open_manifest(fx::kMainManifest), out) == VfsBuildStatus::Ok);
+    SW_CHECK(observe(out) == observe(main_reference));
+    SW_CHECK(spans_text(open_file(out, "maps/level1.bin")) ==
+             spans_text(open_file(main_reference, "maps/level1.bin")));
+
+    // Cópia do Vfs: handles abertos na cópia valem enquanto a CÓPIA viver, mesmo depois que o
+    // original é reconstruído e destruído; os do original não migram para a cópia.
+    auto* original = new Vfs;
+    SW_CHECK(Vfs::build(open_manifest(fx::kMainManifest), *original) == VfsBuildStatus::Ok);
+    const Vfs copy = *original;
+    const VfsFile on_copy = open_file(copy, "maps/level1.bin");
+    SW_CHECK(Vfs::build(open_manifest(fx::kPrefixManifest), *original) == VfsBuildStatus::Ok);
+    delete original;
+    SW_CHECK(spans_text(on_copy) == spans_text(open_file(main_reference, "maps/level1.bin")));
+}
+
+// Cópia da visão POR CONSTRUÇÃO (o desenho de `Vfs::build`: `view_(view)` no construtor privado).
+// A alocação da `std::string chunker.algorithm` ("swarmstream-fastcdc-v0", 22 bytes) depende da
+// STL: aloca na libstdc++ e no MSVC (SSO de 15 bytes; no MSVC Debug ainda há o proxy do iterador),
+// não aloca na libc++ (SSO de 22). Onde aloca, a falha TEM de ser demonstrada, e o k é medido
+// DENTRO do build (não vale o da cópia isolada: as contagens do MSVC Debug são outras): as
+// primeiras alocações do build têm de ter os mesmos tamanhos, na mesma ordem, que as da cópia
+// por construção. Onde não aloca, o teste DECLARA e não finge cobrir.
+void test_build_view_copy_stage()
+{
+    std::cout
+        << "[Test] build: falha de alocação na cópia da visão por construção (injeção direta, "
+           "tamanhos conferidos DENTRO do build)\n";
+    const pack::ManifestView view = open_manifest(fx::kMainManifest);
+
+    // Alocações da cópia por construção, isoladas.
+    std::size_t copy_sizes[kTrackedAllocs] = {};
+    std::uint64_t copy_allocs = 0;
+    {
+        g_allocations.store(0);
+        g_fail_countdown.store(-1);
+        g_counting.store(true);
+        alignas(pack::ManifestView) unsigned char storage[sizeof(pack::ManifestView)];
+        auto* copy = new (storage) pack::ManifestView(view);
+        g_escape(copy);
+        g_counting.store(false);
+        copy->~ManifestView();
+        copy_allocs = g_allocations.load();
+        for (std::uint64_t i = 0; i < copy_allocs && i < kTrackedAllocs; ++i) {
+            copy_sizes[i] = g_alloc_sizes[i];
+        }
+    }
+    std::cout << "        a cópia do ManifestView por construção faz " << copy_allocs
+              << " alocação(ões) nesta STL";
+    for (std::uint64_t i = 0; i < copy_allocs && i < kTrackedAllocs; ++i) {
+        std::cout << (i == 0 ? " (tamanhos: " : ", ") << copy_sizes[i];
+    }
+    std::cout << (copy_allocs > 0 ? ")\n" : "\n");
+    if (copy_allocs == 0) {
+        std::cout
+            << "        nesta STL a cópia da visão não aloca (algorithm cabe no SSO): a etapa "
+               "não tem ponto de falha; DECLARADO, nada a injetar\n";
+        return;
+    }
+    SW_CHECK(copy_allocs <= kTrackedAllocs);
+
+    // Dentro do build: as primeiras `copy_allocs` alocações são as da cópia (mesmos tamanhos).
+    std::uint64_t total = 0;
+    Vfs probe;
+    SW_CHECK(build_with_failure(view, probe, -1, total) == VfsBuildStatus::Ok);
+    SW_CHECK(total > copy_allocs); // depois da cópia ainda há a tabela e a pilha
+    for (std::uint64_t i = 0; i < copy_allocs; ++i) {
+        SW_CHECK(g_alloc_sizes[i] == copy_sizes[i]);
+    }
+
+    for (std::int64_t k = 0; k < static_cast<std::int64_t>(copy_allocs); ++k) {
+        // Controle positivo: a injeção dispara DENTRO da cópia por construção.
+        bool threw = false;
+        g_allocations.store(0);
+        g_fail_countdown.store(k);
+        g_counting.store(true);
+        try {
+            alignas(pack::ManifestView) unsigned char storage[sizeof(pack::ManifestView)];
+            auto* victim = new (storage) pack::ManifestView(view);
+            g_escape(victim);
+            victim->~ManifestView(); // não deve chegar aqui
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        g_counting.store(false);
+        g_fail_countdown.store(-1);
+        SW_CHECK(threw);
+
+        // O mesmo k no build: OutOfMemory, sem terminate, com out vazio e com out já válido.
+        std::uint64_t used = 0;
+        Vfs empty_out;
+        SW_CHECK(build_with_failure(view, empty_out, k, used) == VfsBuildStatus::OutOfMemory);
+        SW_CHECK(empty_out.manifest().file_count() == 0 && empty_out.index_size() == 0);
+        Vfs valid_out = build_vfs(fx::kMainManifest);
+        const std::string before = observe(valid_out);
+        SW_CHECK(build_with_failure(view, valid_out, k, used) == VfsBuildStatus::OutOfMemory);
+        SW_CHECK(observe(valid_out) == before);
+    }
+}
+
+// A publicação final de `build` é `out = std::move(next)`. Ela não pode lançar: o static_assert
+// garante a declaração; aqui se mede o que a STL de fato faz (alocações durante essa atribuição) e
+// se injeta falha em todas as alocações que ocorressem. Valor observado declarado na saída.
+void test_publication_does_not_allocate()
+{
+    std::cout
+        << "[Test] build: a publicação `out = std::move(next)` não aloca (medido) e não lança\n";
+    static_assert(std::is_nothrow_move_assignable_v<Vfs>);
+    const std::array<const Source*, 3> targets = {nullptr, &sources()[0], &sources()[1]};
+    for (const Source* target : targets) {
+        for (const Source& src : sources()) {
+            if (src.expected != VfsBuildStatus::Ok) continue;
+            Vfs out;
+            if (target != nullptr) {
+                SW_CHECK(Vfs::build(open_manifest(target->bytes), out) == VfsBuildStatus::Ok);
+            }
+            Vfs next;
+            SW_CHECK(Vfs::build(open_manifest(src.bytes), next) == VfsBuildStatus::Ok);
+            const std::string expected = observe(next);
+            g_allocations.store(0);
+            g_fail_countdown.store(0); // se houver QUALQUER alocação na publicação, ela lança
+            g_counting.store(true);
+            bool threw = false;
+            try {
+                out = std::move(next);
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+            g_counting.store(false);
+            g_fail_countdown.store(-1);
+            const std::uint64_t allocs = g_allocations.load();
+            std::cout << "        publicação de \"" << src.name << "\" sobre "
+                      << (target == nullptr ? "out vazio" : target->name) << ": " << allocs
+                      << " alocação(ões)\n";
+            SW_CHECK(!threw);
+            SW_CHECK(allocs == 0);
+            SW_CHECK(observe(out) == expected);
+        }
+    }
+}
+
+// O que a STL deste build declara noexcept, impresso (no MSVC Debug é o que a pilha do CI mostrou:
+// o construtor padrão de string/vector é noexcept e aloca o proxy). É a ASSINATURA do header
+// instalado, avaliada pelo compilador, não o texto do header.
+void print_stl_facts()
+{
+    std::cout << "[Info] STL: ";
+#ifdef _MSC_FULL_VER
+    std::cout << "_MSC_FULL_VER=" << _MSC_FULL_VER << " ";
+#endif
+#ifdef _ITERATOR_DEBUG_LEVEL
+    std::cout << "_ITERATOR_DEBUG_LEVEL=" << _ITERATOR_DEBUG_LEVEL << " ";
+#endif
+#ifdef __GLIBCXX__
+    std::cout << "__GLIBCXX__=" << __GLIBCXX__ << " ";
+#endif
+#ifdef _LIBCPP_VERSION
+    std::cout << "_LIBCPP_VERSION=" << _LIBCPP_VERSION << " ";
+#endif
+    std::cout << "\n        noexcept: string()="
+              << std::is_nothrow_default_constructible_v<std::string> << " vector<u64>()="
+              << std::is_nothrow_default_constructible_v<
+                     std::vector<std::uint64_t>> << " string(const string&)="
+              << std::is_nothrow_copy_constructible_v<std::string> << " vector<u64>(n,v)="
+              << std::is_nothrow_constructible_v<std::vector<std::uint64_t>, std::size_t,
+                                                 const std::uint64_t&> << " vector<string_view>(n)="
+              << std::is_nothrow_constructible_v<std::vector<std::string_view>,
+                                                 std::size_t> << " ManifestView(const&)="
+              << std::is_nothrow_copy_constructible_v<pack::ManifestView> << " Vfs()="
+              << std::is_nothrow_default_constructible_v<Vfs> << " Vfs=Vfs&&="
+              << std::is_nothrow_move_assignable_v<Vfs> << "\n";
+}
+
+// Texto com tudo o que o ManifestView expõe SEM passar pelo modelo (`to_model`): é o que um move do
+// Vfs preserva (membros trivialmente copiáveis; as strings string_view apontam para os bytes do
+// manifesto, que continuam vivos).
+std::string view_digest(const pack::ManifestView& v)
+{
+    std::ostringstream o;
+    const auto hex = [&o](const auto& h) {
+        for (const auto b : h)
+            o << std::hex << int(b) << std::dec << ",";
+    };
+    o << v.game_id() << "|" << v.build_id() << "|" << v.build_seq() << "|" << v.created_at() << "|"
+      << v.min_reader() << "|" << v.payload_size() << "|";
+    hex(v.manifest_id());
+    o << "\nblocks=" << v.block_count() << " refs=" << v.block_ref_count()
+      << " pieces=" << v.piece_count() << " files=" << v.file_count()
+      << " groups=" << v.group_count() << "\n";
+    for (std::size_t i = 0; i < v.block_count(); ++i) {
+        o << "b" << i << ":" << v.block_raw_size(i) << "/" << v.block_packed_size(i) << "/"
+          << int(v.block_codec(i)) << "/";
+        hex(v.block_hash(i));
+        o << "\n";
+    }
+    for (std::size_t i = 0; i < v.block_ref_count(); ++i)
+        o << v.block_ref(i) << ",";
+    o << "\n";
+    for (std::size_t i = 0; i < v.file_count(); ++i) {
+        o << v.file_path(i) << ":" << v.file_size(i) << "/" << int(v.file_class(i)) << "/"
+          << v.file_group(i) << "/" << v.file_first_ref(i) << "/" << v.file_ref_count(i) << "\n";
+    }
+    return o.str();
+}
+
+// Estado de um Vfs DE QUE SE MOVEU (move gerado pelo compilador, sem move próprio), membro a
+// membro:
+//   preservado (garantido, membros trivialmente copiáveis): tudo o que `view_digest` lê;
+//   tabela de índices: vazia após o construtor de move (garantia do std::vector); após a atribuição
+//     de move é "válida, não especificada" (o teste só chama, não confere o valor);
+//   NÃO garantido: `manifest().to_model().chunker.algorithm` (std::string movida: válida, valor
+//     não especificado; vazia na prática) e, portanto, todo o `to_model()` além das strings.
+// Os handles abertos antes do move ficam inválidos e não são tocados aqui.
+void test_moved_from_vfs_allowed_operations()
+{
+    std::cout << "[Test] Vfs movido-de: o que é preservado, o que não é garantido e as operações "
+                 "permitidas (sem tocar handles invalidados)\n";
+    const Vfs reference = build_vfs(fx::kMainManifest);
+    const std::string reference_digest = view_digest(reference.manifest());
+    const std::string reference_text = observe(reference);
+    SW_CHECK(!reference.manifest().to_model().chunker.algorithm.empty());
+
+    // Construtor de move.
+    Vfs a = build_vfs(fx::kMainManifest);
+    Vfs b(std::move(a));
+    SW_CHECK(a.index_size() == 0);                           // garantido pelo move do std::vector
+    SW_CHECK(view_digest(a.manifest()) == reference_digest); // chamada segura E valor preservado
+    // Chamada segura, valor NÃO garantido: só se chama; o valor não é conferido.
+    const std::string moved_algorithm = a.manifest().to_model().chunker.algorithm;
+    std::cout << "        chunker.algorithm do movido-de tem " << moved_algorithm.size()
+              << " byte(s) nesta STL (não garantido)\n";
+    SW_CHECK(b.index_size() == b.manifest().block_ref_count());
+    SW_CHECK(observe(b) == reference_text); // o destino responde como a referência
+
+    // Permitido: atribuir por cima (cópia), e o Vfs volta a ser completo.
+    a = reference;
+    SW_CHECK(observe(a) == reference_text);
+
+    // Permitido: usar um movido-de como `out` de um build novo.
+    Vfs c(std::move(a));
+    SW_CHECK(Vfs::build(open_manifest(fx::kPrefixManifest), a) == VfsBuildStatus::Ok);
+    SW_CHECK(observe(a) == observe(build_vfs(fx::kPrefixManifest)));
+    SW_CHECK(observe(c) == reference_text);
+
+    // Atribuição de move: o destino é completo; o movido-de preserva a visão e só pode ser
+    // consultado nas leituras seguras (o valor da tabela não é conferido).
+    Vfs d;
+    d = std::move(c);
+    SW_CHECK(observe(d) == reference_text);
+    SW_CHECK(view_digest(c.manifest()) == reference_digest);
+    (void)c.index_size();
+    (void)c.manifest().to_model();
+    // Permitido: destruir (fim do escopo) e atribuir por cima.
+    c = reference;
+    SW_CHECK(observe(c) == reference_text);
+}
+
 void test_resolve_does_not_allocate()
 {
     std::cout << "[Test] sem alocação: stat, open, resolve e next (com controle positivo)\n";
@@ -788,6 +1405,25 @@ void test_concurrent_resolves()
 
 int main()
 {
+    // Uma exceção que escape de uma função noexcept (ex.: bad_alloc injetado fora de um try em
+    // `Vfs::build`) vira std::terminate -> abort(). No MSVC Debug o abort() abre uma caixa de
+    // diálogo que trava o CI até o timeout; aqui termina na hora, com mensagem, como o SW_CHECK.
+    std::set_terminate([] {
+        std::fputs("std::terminate: exceção escapou de uma função noexcept\n", stderr);
+        std::fflush(nullptr);
+        std::_Exit(1);
+    });
+#ifdef _MSC_VER
+    // Mesmo cuidado de sw-core/tests/main.cpp: no Debug, avisos do CRT/STL (verificação de
+    // iteradores, abort) abrem uma caixa de diálogo e esperam; no CI o teste ficaria pendurado.
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    for (int type : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT}) {
+        _CrtSetReportMode(type, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(type, _CRTDBG_FILE_STDERR);
+    }
+#endif
+    print_stl_facts();
     test_fixture_is_what_the_manifest_describes();
     test_whole_file_reconstruction();
     test_reads_inside_one_block();
@@ -799,6 +1435,12 @@ int main()
     test_directory_listing();
     test_empty_manifest_and_conflict();
     test_file_directory_conflict_definition();
+    test_build_failure_keeps_out_untouched();
+    test_build_failure_when_source_is_the_destination();
+    test_successful_rebuild_effect_on_open_handles();
+    test_build_view_copy_stage();
+    test_publication_does_not_allocate();
+    test_moved_from_vfs_allowed_operations();
     test_resolve_does_not_allocate();
     test_concurrent_resolves();
     std::cout << "VFS: todos os testes passaram\n";

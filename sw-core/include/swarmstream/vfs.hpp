@@ -8,8 +8,9 @@
 //
 //   Vfs::build()    índice sobre o manifesto (uma tabela de deslocamentos por referência de bloco).
 //                   Recusa um manifesto em que um caminho é arquivo e também prefixo "caminho/" de
-//                   outro (recusa do VFS, PENDENTE DE ADR: o §8 do docs/03 não exige isso hoje).
-//                   Aloca; roda uma vez, em sw_init.
+//                   outro (recusa do VFS, decidida no ADR-0017, aceito:
+//                   docs/adr/0017-semantica-do-vfs.md; o §8 do docs/03 aceita esse manifesto).
+//                   Aloca; roda uma vez, em sw_init. GARANTIA FORTE, ver "Falha de build" abaixo.
 //   Vfs::stat()     arquivo, diretório ou nada. Sem alocação.
 //   Vfs::open()     arquivo -> VfsFile. Sem alocação.
 //   VfsFile::resolve(offset, size) -> VfsSpans, um cursor sobre os trechos (bloco, deslocamento no
@@ -25,6 +26,69 @@
 // Tempo de vida: o `Vfs` guarda uma cópia do `ManifestView`, que aponta para os bytes do manifesto;
 // esses bytes têm de viver (e não mudar) mais que o `Vfs` e que todo `VfsFile`, `VfsSpans` e
 // `VfsDir` dele. Depois de `build`, tudo é imutável: pode ser chamado por várias threads.
+//
+// Falha de build (garantia forte, F1-63): `build` monta o índice num objeto TEMPORÁRIO e só o
+// publica em `out` depois de sucesso completo (a publicação é um move, que não lança). Em QUALQUER
+// falha (FileDirectoryConflict, OutOfMemory) `out` fica EXATAMENTE como estava: vazio continua
+// vazio, e um Vfs já construído continua válido e responde igual (stat/open/resolve/next, e os
+// handles abertos nele antes continuam valendo). `view` pode ser o próprio `out.manifest()`.
+// Desenho (vale também para o MSVC em Debug, sem exceção à garantia): o temporário nasce pelo
+// construtor PRIVADO `Vfs(view, n)` (cópia da visão e tabela `vector(n, 0)`) e a pilha de prefixos
+// por `vector(0)`, tudo dentro do `try`. Motivo: no MSVC com _ITERATOR_DEBUG_LEVEL != 0 os
+// construtores PADRÃO de std::string e std::vector são noexcept e alocam o proxy dos iteradores,
+// e uma falta de memória ali é std::terminate mesmo dentro de um `try` (pilha medida no CI, run
+// 41346678621). Os construtores escolhidos não são noexcept, então a falta de memória, inclusive a
+// do proxy, vira bad_alloc e `build` devolve OutOfMemory. A publicação é `out = std::move(next)`
+// (move-assign noexcept, `static_assert`; medido: zero alocações). Limites da evidência: o
+// `noexcept` dos construtores da STL é avaliado pelo compilador (static_assert em vfs.cpp, e o
+// teste imprime as propriedades), não lido no texto do header do MSVC; o rastreio por pilha do CI
+// usou dbghelp no ponto da falha. Quem trocar esses construtores por `Vfs next;`/`vector()` não é
+// pego em libstdc++/libc++ (lá não alocam); só o teste de falha de alocação no MSVC Debug pega.
+//
+// Handles (VfsFile, VfsSpans, VfsDir) e o que pode acontecer com eles:
+//   Precondição (F1-65): um `VfsFile` ou `VfsSpans` só é usado depois de o `Vfs::open` ou o
+//   `VfsFile::resolve` que o preencheu devolver Ok. Um `VfsFile{}` default, ou o que o `open`
+//   deixou vazio por erro (o destino é zerado), é inválido: `size()`, `path()`, `file_class()`,
+//   `group()` e `resolve()` nele são comportamento indefinido (desreferenciam ponteiro nulo). O
+//   mesmo vale para um `VfsSpans` que nunca foi preenchido por um `resolve` Ok: `next()` nele não é
+//   contratado. NÃO há verificação no caminho quente, de propósito. `VfsFile::valid()` é para quem
+//   recebe o handle por fora (a API C, F1-60): ela valida o handle ANTES de repassá-lo ao VFS, e
+//   essa prova é critério de aceite do F1-60, não daqui.
+//   Um handle é do OBJETO `Vfs` em que foi aberto (guarda o endereço dele), não do manifesto.
+//   VfsFile e VfsSpans ficam INVÁLIDOS (usá-los é comportamento indefinido) quando o `Vfs` é:
+//     - reconstruído com sucesso por cima (`build(..., out)` que devolve Ok troca o conteúdo de
+//       `out`: os índices e o `file_` antigos não valem mais);
+//     - atribuído por cima (cópia ou move), movido (o endereço muda) ou destruído.
+//   Estado de um `Vfs` DE QUE SE MOVEU (construtor ou atribuição de move). Os membros de move são
+//   os gerados pelo compilador; NÃO há move próprio. Membro a membro:
+//     - visão (`ManifestView`): todos os membros são trivialmente copiáveis (inteiros, arrays,
+//       `span` e `string_view` para os bytes do manifesto) e o move os COPIA; ficam com o mesmo
+//       valor (GARANTIDO), enquanto os bytes do manifesto viverem. Isso vale para tudo o que os
+//       acessores de `manifest()` devolvem (contagens, ids, `game_id`, `build_id`, hashes,
+//       tamanhos, `file_path(i)` etc.). A ÚNICA exceção é `chunker.algorithm`, uma `std::string`
+//       que é MOVIDA: depois do move seu valor é "válido, mas não especificado" (vazio na prática,
+//       o que foi observado). Ela só é alcançável por `manifest().to_model().chunker.algorithm`, e
+//       esse valor NÃO é garantido.
+//     - tabela de índices: vazia depois do construtor de move (garantido para `std::vector`);
+//       depois da atribuição de move é "válida, mas não especificada" (o valor não é garantido).
+//     Visão cheia com tabela vazia é um estado INCOERENTE.
+//   "Chamada segura" não é "valor preservado": `manifest()`, `index_size()` e `to_model()` podem
+//   ser chamados num movido-de sem comportamento indefinido; só os valores listados como GARANTIDOS
+//   acima podem ser usados. Operações permitidas: destruir; atribuir por cima (cópia ou move);
+//   usá-lo como `out` de um `build` novo; chamar `manifest()`, `index_size()` e `to_model()` e ler
+//   os valores garantidos. Qualquer outra (`stat`, `open`, `open_dir`, `resolve` de handle antigo)
+//   não é contratada, e `resolve` lê fora dos limites. Os handles abertos antes do move são
+//   inválidos. Quem integra (F1-60) não pode reutilizar um Vfs movido-de. Um move próprio (que o
+//   deixaria vazio e seguro) NÃO é implementado aqui: seria cartão à parte.
+//   Uma reconstrução que FALHA não invalida nada (garantia acima). `valid()` não detecta nenhum
+//   desses casos: só diz que o handle foi preenchido por um open. Descarte os handles e reabra
+//   depois de reconstruir. Construir uma CÓPIA do Vfs não afeta os handles do original, que também
+//   não migram para a cópia (a cópia tem os seus).
+//   VfsDir NÃO depende do `Vfs` depois de aberto (guarda cópias das entradas, cujos nomes apontam
+//   para os bytes do manifesto): continua válido numa reconstrução, num move ou depois de o Vfs ser
+//   destruído, enquanto os bytes do manifesto ANTIGO viverem, e mostra o diretório como era. Um
+//   `VfsDir{}` default, ou o que o `open_dir` deixou vazio por erro, é uma listagem vazia
+//   (definido).
 #pragma once
 
 #include "swarmstream/manifest_view.hpp"
@@ -52,11 +116,15 @@ enum class VfsStatus : std::uint8_t {
 
 enum class VfsBuildStatus : std::uint8_t {
     Ok,
-    // Um caminho é arquivo e também prefixo "caminho/" de outro arquivo. Recusa do VFS, pendente de
-    // ADR (o §8 do docs/03 aceita esse manifesto); o mapeamento é do F1-60.
+    // Um caminho é arquivo e também prefixo "caminho/" de outro arquivo. Recusa do VFS, decidida no
+    // ADR-0017 (o §8 do docs/03 aceita esse manifesto); o mapeamento é do F1-60.
     FileDirectoryConflict,
+    // Falta de memória ao montar o índice. O mapeamento para SW_E_OUT_OF_MEMORY é requisito de
+    // integração do F1-60 (cartão F1-63), com teste de falha de alocação na construção do VFS em
+    // sw_init; o ADR-0017 §4 só lista o OutOfMemory de `open_dir`, não o do `build`.
     OutOfMemory,
 };
+// Nos dois erros, `out` fica como estava (garantia forte de `Vfs::build`).
 
 struct VfsStat
 {
@@ -77,7 +145,9 @@ struct BlockSpan
 
 class Vfs;
 
-// Cursor sobre os trechos de uma leitura. Trivialmente copiável; não aloca.
+// Cursor sobre os trechos de uma leitura. Trivialmente copiável; não aloca. Só se usa depois de um
+// `VfsFile::resolve` Ok, e só enquanto o `Vfs` dele não for reconstruído, movido nem destruído
+// (precondições e invalidação: ver "Handles" no topo do arquivo).
 class VfsSpans
 {
 public:
@@ -97,10 +167,16 @@ private:
     std::size_t ref_ = 0;    // índice (global) da referência de bloco que contém pos_
 };
 
+// Arquivo aberto. PRECONDIÇÃO: só se usa depois de `Vfs::open` Ok e enquanto o `Vfs` dele não for
+// reconstruído, movido nem destruído; `VfsFile{}` (ou o que um open com erro deixou) é inválido e
+// usá-lo é comportamento indefinido (ver "Handles" no topo do arquivo). Sem verificação no caminho
+// quente.
 class VfsFile
 {
 public:
     VfsFile() = default;
+    // true se um `open` Ok preencheu este handle. NÃO prova que o Vfs ainda é o mesmo
+    // (reconstruído, movido ou destruído depois do open).
     [[nodiscard]] bool valid() const noexcept { return vfs_ != nullptr; }
     [[nodiscard]] std::uint64_t size() const noexcept;
     [[nodiscard]] pack::FileClass file_class() const noexcept;
@@ -135,6 +211,8 @@ struct VfsDirEntry
 
 // Filhos diretos de um diretório, ordenados por nome em bytes UTF-8 (arquivos e subdiretórios
 // misturados: "sub" vem antes de "sub.bin", embora no manifesto "sub.bin" preceda "sub/x").
+// Independente do `Vfs` depois de aberto: sobrevive a reconstrução, move e destruição dele enquanto
+// os bytes do manifesto vivem; `VfsDir{}` é uma listagem vazia (ver "Handles" no topo do arquivo).
 class VfsDir
 {
 public:
@@ -151,8 +229,15 @@ private:
 class Vfs
 {
 public:
+    // Vfs vazio (sem arquivos; só a raiz existe). Cópia e move: os gerados pelo compilador.
+    Vfs() = default;
+
     // O `view` precisa ter vindo de `ManifestView::open` com sucesso (todas as validações do §8
     // já foram feitas) e os bytes dele têm de sobreviver ao Vfs.
+    // Garantia forte: devolve Ok e então `out` passa a ser o índice de `view` (sobrescrevendo o que
+    // tinha, e invalidando VfsFile/VfsSpans abertos em `out`, ver o topo do arquivo); em qualquer
+    // outro resultado `out` é exatamente o que era antes da chamada. `view` pode ser
+    // `out.manifest()`.
     [[nodiscard]] static VfsBuildStatus build(const pack::ManifestView& view, Vfs& out) noexcept;
 
     [[nodiscard]] VfsStatus stat(std::string_view path, VfsStat& out) const noexcept;
@@ -160,10 +245,31 @@ public:
     [[nodiscard]] VfsStatus open_dir(std::string_view path, VfsDir& out) const noexcept;
 
     [[nodiscard]] const pack::ManifestView& manifest() const noexcept { return view_; }
+    // Entradas da tabela de índices (uma por referência de bloco). INVARIANTE: igual a
+    // `manifest().block_ref_count()` (0 num Vfs vazio), exceto num Vfs de que se moveu.
+    // Por que existe (F1-63): a garantia de `build` é "visão e tabela nunca ficam incoerentes", e
+    // a API existente não a deixa observar: `manifest()` mostra só a visão, e olhar a tabela por
+    // `resolve()` é justamente a leitura fora dos limites que se quer detectar (um `clear()` não
+    // libera a memória, então a leitura devolveria dados velhos e o defeito passaria). Superfície
+    // adicional: um getter `const noexcept` inline sobre `size()`, sem estado, sem alocação, que
+    // `stat/open/resolve/next` não chamam (não é caminho quente). Interno ao sw-core; não faz
+    // parte do `swarmstream.h`.
+    [[nodiscard]] std::size_t index_size() const noexcept { return ref_start_.size(); }
 
 private:
     friend class VfsSpans;
     friend class VfsFile;
+
+    // Usado só por `build`: copia a visão e cria a tabela (n entradas zeradas) JÁ na construção.
+    // Existe por causa do MSVC em Debug (_ITERATOR_DEBUG_LEVEL != 0): os construtores PADRÃO de
+    // std::string e std::vector são noexcept e mesmo assim alocam o proxy dos iteradores; uma falta
+    // de memória ali é std::terminate, mesmo dentro de um try (medido no CI, run 41346678621).
+    // Os construtores usados aqui (cópia de string, vector(n, valor)) NÃO são noexcept, então a
+    // falha de alocação, inclusive a do proxy, é um bad_alloc que `build` captura. Ver o topo.
+    Vfs(const pack::ManifestView& view, std::size_t index_n)
+        : view_(view), ref_start_(index_n, std::uint64_t{0})
+    {
+    }
 
     // Índice do arquivo com este caminho exato, ou file_count().
     [[nodiscard]] std::size_t find_file(std::string_view path) const noexcept;

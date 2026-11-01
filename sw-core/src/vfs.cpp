@@ -5,6 +5,11 @@
 
 #include <algorithm>
 #include <new>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace swarmstream {
 namespace {
@@ -51,24 +56,47 @@ bool before_dir(std::string_view path, std::string_view dir) noexcept
 
 VfsBuildStatus Vfs::build(const pack::ManifestView& view, Vfs& out) noexcept
 {
+    // Garantia forte (F1-63): tudo é construído num objeto TEMPORÁRIO e só vai para `out` depois do
+    // sucesso completo. Em qualquer falha `out` não é tocado. `view` pode ser o próprio
+    // `out.manifest()`: é copiada para o temporário antes de qualquer escrita em `out`.
+    // TUDO o que pode alocar roda DENTRO do `try` E por construtores que não são `noexcept`. Só o
+    // `try` não basta: o construtor padrão de `std::string`/`std::vector` é noexcept e, no MSVC em
+    // Debug (_ITERATOR_DEBUG_LEVEL != 0), aloca o proxy dos iteradores; um bad_alloc ali sai de um
+    // `noexcept` da STL e vira std::terminate antes de chegar ao catch (pilha medida no CI, run
+    // 41346678621: basic_string() <- ChunkerInfo() <- ManifestView() <- Vfs() <- build). Por isso:
+    //   - o temporário nasce pelo construtor privado `Vfs(view, n)` (cópia da visão + `vector(n,
+    //     valor)`), nunca por `Vfs next;` + atribuição;
+    //   - a pilha de prefixos nasce com `vector(0)` (contagem zero: construtor não-noexcept).
+    // A dependência dos detalhes da STL é travada em compilação logo abaixo, e a varredura de
+    // falhas de alocação do teste exercita CADA alocação do build.
+    static_assert(!std::is_nothrow_copy_constructible_v<std::string>,
+                  "a cópia da visão precisa poder lançar bad_alloc (ver o comentário acima)");
+    static_assert(!std::is_nothrow_constructible_v<std::vector<std::uint64_t>, std::size_t,
+                                                   const std::uint64_t&>,
+                  "vector(n, valor) precisa poder lançar bad_alloc (ver o comentário acima)");
+    static_assert(!std::is_nothrow_constructible_v<std::vector<std::string_view>, std::size_t>,
+                  "vector(n) precisa poder lançar bad_alloc (ver o comentário acima)");
+    static_assert(!std::is_nothrow_copy_constructible_v<pack::ManifestView>,
+                  "a cópia da visão precisa poder lançar bad_alloc (ver o comentário acima)");
+    static_assert(std::is_nothrow_move_assignable_v<Vfs>,
+                  "publicar em `out` não pode falhar depois da validação");
     try {
-        out.view_ = view;
-        out.ref_start_.assign(view.block_ref_count(), 0);
+        Vfs next(view, view.block_ref_count());
         for (std::size_t f = 0; f < view.file_count(); ++f) {
             const std::size_t first = view.file_first_ref(f);
             const std::size_t count = view.file_ref_count(f);
             std::uint64_t running = 0;
             for (std::size_t r = first; r < first + count; ++r) {
-                out.ref_start_[r] = running;
+                next.ref_start_[r] = running;
                 running += view.block_raw_size(view.block_ref(r));
             }
         }
 
-        // Conflito arquivo/diretório: recusa do VFS, pendente de ADR (o §8 do docs/03 aceita "a" e
-        // "a/b" juntos). Os caminhos sob "p/" são
+        // Conflito arquivo/diretório: recusa do VFS, decidida no ADR-0017 (aceito; o §8 do docs/03
+        // aceita "a" e "a/b" juntos). Os caminhos sob "p/" são
         // contíguos logo depois de "p" e dos que começam com "p" seguido de byte < '/'. Uma pilha
         // com os arquivos que ainda são prefixo do caminho atual acha o conflito em uma passada.
-        std::vector<std::string_view> prefixes;
+        std::vector<std::string_view> prefixes(std::size_t{0}); // vector(0): ver o comentário acima
         for (std::size_t i = 0; i < view.file_count(); ++i) {
             const std::string_view path = view.file_path(i);
             while (!prefixes.empty() && !path.starts_with(prefixes.back())) {
@@ -76,16 +104,16 @@ VfsBuildStatus Vfs::build(const pack::ManifestView& view, Vfs& out) noexcept
             }
             for (const std::string_view prefix : prefixes) {
                 if (path[prefix.size()] == '/') {
-                    out.ref_start_.clear();
                     return VfsBuildStatus::FileDirectoryConflict;
                 }
             }
             prefixes.push_back(path);
         }
+        out = std::move(next); // publica: só chega aqui com tudo validado (o move não lança)
+        return VfsBuildStatus::Ok;
     } catch (const std::bad_alloc&) {
         return VfsBuildStatus::OutOfMemory;
     }
-    return VfsBuildStatus::Ok;
 }
 
 // ---------------------------------------------------------------- busca
