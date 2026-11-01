@@ -47,10 +47,15 @@
 //     - reconstruído com sucesso por cima (`build(..., out)` que devolve Ok troca o conteúdo de
 //       `out`: os índices e o `file_` antigos não valem mais);
 //     - atribuído por cima (cópia ou move), movido (o endereço muda) ou destruído.
-//   Um `Vfs` de que se MOVEU só pode ser destruído ou receber uma atribuição/um `build` novo: o
-//   move esvazia a tabela de índices mas não a visão, então consultá-lo é comportamento indefinido.
-//   Quem integra (F1-60) não pode reutilizar um Vfs movido-de; operações de move próprias, que o
-//   deixariam vazio e seguro, ficam para um cartão à parte.
+//   Estado de um `Vfs` DE QUE SE MOVEU (construtor ou atribuição de move; os membros de move são os
+//   gerados pelo compilador, NÃO há move próprio): a visão (`ManifestView`) continua como era, pois
+//   é copiada, e a tabela de índices fica vazia (garantido no construtor de move; na atribuição o
+//   padrão só diz "válido, mas não especificado" e as implementações a esvaziam). Visão cheia com
+//   tabela vazia é um estado INCOERENTE. Operações permitidas nele: destruir; atribuir por cima
+//   (cópia ou move); usá-lo como `out` de um `build` novo; `manifest()` e `index_size()` (só leem).
+//   Qualquer outra (`stat`, `open`, `open_dir`, `resolve` de handle antigo) não é contratada, e
+//   `resolve` lê fora dos limites. Quem integra (F1-60) não pode reutilizar um Vfs movido-de. Um
+//   move próprio (que o deixaria vazio e seguro) NÃO é implementado aqui: seria cartão à parte.
 //   Uma reconstrução que FALHA não invalida nada (garantia acima). `valid()` não detecta nenhum
 //   desses casos: só diz que o handle foi preenchido por um open. Descarte os handles e reabra
 //   depois de reconstruir. Construir uma CÓPIA do Vfs não afeta os handles do original, que também
@@ -211,9 +216,15 @@ public:
     [[nodiscard]] VfsStatus open_dir(std::string_view path, VfsDir& out) const noexcept;
 
     [[nodiscard]] const pack::ManifestView& manifest() const noexcept { return view_; }
-    // Entradas da tabela de índices (uma por referência de bloco). INVARIANTE: é sempre igual a
-    // `manifest().block_ref_count()` (0 num Vfs vazio). Existe para os testes de falha do `build`
-    // (F1-63) conferirem que visão e tabela nunca ficam incoerentes; não é usada no caminho quente.
+    // Entradas da tabela de índices (uma por referência de bloco). INVARIANTE: igual a
+    // `manifest().block_ref_count()` (0 num Vfs vazio), exceto num Vfs de que se moveu.
+    // Por que existe (F1-63): a garantia de `build` é "visão e tabela nunca ficam incoerentes", e
+    // a API existente não a deixa observar: `manifest()` mostra só a visão, e olhar a tabela por
+    // `resolve()` é justamente a leitura fora dos limites que se quer detectar (um `clear()` não
+    // libera a memória, então a leitura devolveria dados velhos e o defeito passaria). Superfície
+    // adicional: um getter `const noexcept` inline sobre `size()`, sem estado, sem alocação, que
+    // `stat/open/resolve/next` não chamam (não é caminho quente). Interno ao sw-core; não faz
+    // parte do `swarmstream.h`.
     [[nodiscard]] std::size_t index_size() const noexcept { return ref_start_.size(); }
 
 private:
