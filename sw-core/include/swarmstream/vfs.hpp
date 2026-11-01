@@ -32,6 +32,18 @@
 // falha (FileDirectoryConflict, OutOfMemory) `out` fica EXATAMENTE como estava: vazio continua
 // vazio, e um Vfs já construído continua válido e responde igual (stat/open/resolve/next, e os
 // handles abertos nele antes continuam valendo). `view` pode ser o próprio `out.manifest()`.
+// Desenho (vale também para o MSVC em Debug, sem exceção à garantia): o temporário nasce pelo
+// construtor PRIVADO `Vfs(view, n)` (cópia da visão e tabela `vector(n, 0)`) e a pilha de prefixos
+// por `vector(0)`, tudo dentro do `try`. Motivo: no MSVC com _ITERATOR_DEBUG_LEVEL != 0 os
+// construtores PADRÃO de std::string e std::vector são noexcept e alocam o proxy dos iteradores,
+// e uma falta de memória ali é std::terminate mesmo dentro de um `try` (pilha medida no CI, run
+// 41346678621). Os construtores escolhidos não são noexcept, então a falta de memória, inclusive a
+// do proxy, vira bad_alloc e `build` devolve OutOfMemory. A publicação é `out = std::move(next)`
+// (move-assign noexcept, `static_assert`; medido: zero alocações). Limites da evidência: o
+// `noexcept` dos construtores da STL é avaliado pelo compilador (static_assert em vfs.cpp, e o
+// teste imprime as propriedades), não lido no texto do header do MSVC; o rastreio por pilha do CI
+// usou dbghelp no ponto da falha. Quem trocar esses construtores por `Vfs next;`/`vector()` não é
+// pego em libstdc++/libc++ (lá não alocam); só o teste de falha de alocação no MSVC Debug pega.
 //
 // Handles (VfsFile, VfsSpans, VfsDir) e o que pode acontecer com eles:
 //   Precondição (F1-65): um `VfsFile` ou `VfsSpans` só é usado depois de o `Vfs::open` ou o
@@ -217,6 +229,9 @@ private:
 class Vfs
 {
 public:
+    // Vfs vazio (sem arquivos; só a raiz existe). Cópia e move: os gerados pelo compilador.
+    Vfs() = default;
+
     // O `view` precisa ter vindo de `ManifestView::open` com sucesso (todas as validações do §8
     // já foram feitas) e os bytes dele têm de sobreviver ao Vfs.
     // Garantia forte: devolve Ok e então `out` passa a ser o índice de `view` (sobrescrevendo o que
@@ -244,6 +259,17 @@ public:
 private:
     friend class VfsSpans;
     friend class VfsFile;
+
+    // Usado só por `build`: copia a visão e cria a tabela (n entradas zeradas) JÁ na construção.
+    // Existe por causa do MSVC em Debug (_ITERATOR_DEBUG_LEVEL != 0): os construtores PADRÃO de
+    // std::string e std::vector são noexcept e mesmo assim alocam o proxy dos iteradores; uma falta
+    // de memória ali é std::terminate, mesmo dentro de um try (medido no CI, run 41346678621).
+    // Os construtores usados aqui (cópia de string, vector(n, valor)) NÃO são noexcept, então a
+    // falha de alocação, inclusive a do proxy, é um bad_alloc que `build` captura. Ver o topo.
+    Vfs(const pack::ManifestView& view, std::size_t index_n)
+        : view_(view), ref_start_(index_n, std::uint64_t{0})
+    {
+    }
 
     // Índice do arquivo com este caminho exato, ou file_count().
     [[nodiscard]] std::size_t find_file(std::string_view path) const noexcept;

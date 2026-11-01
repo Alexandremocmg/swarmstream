@@ -45,7 +45,9 @@
 #include <vector>
 
 #ifdef _MSC_VER
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <crtdbg.h>
 #include <windows.h>
 #endif
@@ -60,12 +62,22 @@ std::atomic<std::uint64_t> g_allocations{0};
 // < 0: sem injeção. >= 0: a alocação contada em que este valor chega a 0 lança bad_alloc.
 std::atomic<std::int64_t> g_fail_countdown{-1};
 void* volatile g_sink = nullptr;
+// Chamada opaca (ponteiro volátil): o objeto passado para ela existe de verdade, então o compilador
+// não pode elidir a alocação de um objeto construído e logo destruído (visto em Release).
+void observe_object(const void*) {}
+void (*volatile g_escape)(const void*) = &observe_object;
+// Tamanho das primeiras alocações contadas (preenchido sem alocar; só threads de um teste por vez).
+constexpr std::size_t kTrackedAllocs = 64;
+std::size_t g_alloc_sizes[kTrackedAllocs];
 } // namespace
 
 void* operator new(std::size_t n)
 {
     if (g_counting.load(std::memory_order_relaxed)) {
-        g_allocations.fetch_add(1, std::memory_order_relaxed);
+        const std::uint64_t idx = g_allocations.fetch_add(1, std::memory_order_relaxed);
+        if (idx < kTrackedAllocs) {
+            g_alloc_sizes[idx] = n;
+        }
         if (g_fail_countdown.fetch_sub(1, std::memory_order_relaxed) == 0) {
             throw std::bad_alloc();
         }
@@ -1044,39 +1056,71 @@ void test_successful_rebuild_effect_on_open_handles()
     SW_CHECK(spans_text(on_copy) == spans_text(open_file(main_reference, "maps/level1.bin")));
 }
 
-// A etapa "cópia da visão" só tem ponto de falha se a std::string `chunker.algorithm`
-// ("swarmstream-fastcdc-v0", 22 bytes) NÃO couber no SSO da STL (libstdc++ e MSVC: 15 bytes, aloca;
-// libc++: 22 bytes, não aloca). Aqui a injeção é DIRETA na cópia, com controle positivo, e depois o
-// mesmo k é injetado no build. Onde a cópia não aloca, o teste diz isso e não finge cobrir.
+// Cópia da visão POR CONSTRUÇÃO (o desenho de `Vfs::build`: `view_(view)` no construtor privado).
+// A alocação da `std::string chunker.algorithm` ("swarmstream-fastcdc-v0", 22 bytes) depende da
+// STL: aloca na libstdc++ e no MSVC (SSO de 15 bytes; no MSVC Debug ainda há o proxy do iterador),
+// não aloca na libc++ (SSO de 22). Onde aloca, a falha TEM de ser demonstrada, e o k é medido
+// DENTRO do build (não vale o da cópia isolada: as contagens do MSVC Debug são outras): as
+// primeiras alocações do build têm de ter os mesmos tamanhos, na mesma ordem, que as da cópia
+// por construção. Onde não aloca, o teste DECLARA e não finge cobrir.
 void test_build_view_copy_stage()
 {
-    std::cout << "[Test] build: falha de alocação na cópia da visão (injeção direta, com controle "
-                 "positivo)\n";
+    std::cout
+        << "[Test] build: falha de alocação na cópia da visão por construção (injeção direta, "
+           "tamanhos conferidos DENTRO do build)\n";
     const pack::ManifestView view = open_manifest(fx::kMainManifest);
-    pack::ManifestView target;
-    g_allocations.store(0);
-    g_fail_countdown.store(-1);
-    g_counting.store(true);
-    target = view;
-    g_counting.store(false);
-    const std::uint64_t copy_allocs = g_allocations.load();
-    std::cout << "        a cópia do ManifestView faz " << copy_allocs
-              << " alocação(ões) nesta STL\n";
+
+    // Alocações da cópia por construção, isoladas.
+    std::size_t copy_sizes[kTrackedAllocs] = {};
+    std::uint64_t copy_allocs = 0;
+    {
+        g_allocations.store(0);
+        g_fail_countdown.store(-1);
+        g_counting.store(true);
+        alignas(pack::ManifestView) unsigned char storage[sizeof(pack::ManifestView)];
+        auto* copy = new (storage) pack::ManifestView(view);
+        g_escape(copy);
+        g_counting.store(false);
+        copy->~ManifestView();
+        copy_allocs = g_allocations.load();
+        for (std::uint64_t i = 0; i < copy_allocs && i < kTrackedAllocs; ++i) {
+            copy_sizes[i] = g_alloc_sizes[i];
+        }
+    }
+    std::cout << "        a cópia do ManifestView por construção faz " << copy_allocs
+              << " alocação(ões) nesta STL";
+    for (std::uint64_t i = 0; i < copy_allocs && i < kTrackedAllocs; ++i) {
+        std::cout << (i == 0 ? " (tamanhos: " : ", ") << copy_sizes[i];
+    }
+    std::cout << (copy_allocs > 0 ? ")\n" : "\n");
     if (copy_allocs == 0) {
         std::cout
             << "        nesta STL a cópia da visão não aloca (algorithm cabe no SSO): a etapa "
-               "não tem ponto de falha; nada a injetar\n";
+               "não tem ponto de falha; DECLARADO, nada a injetar\n";
         return;
     }
+    SW_CHECK(copy_allocs <= kTrackedAllocs);
+
+    // Dentro do build: as primeiras `copy_allocs` alocações são as da cópia (mesmos tamanhos).
+    std::uint64_t total = 0;
+    Vfs probe;
+    SW_CHECK(build_with_failure(view, probe, -1, total) == VfsBuildStatus::Ok);
+    SW_CHECK(total > copy_allocs); // depois da cópia ainda há a tabela e a pilha
+    for (std::uint64_t i = 0; i < copy_allocs; ++i) {
+        SW_CHECK(g_alloc_sizes[i] == copy_sizes[i]);
+    }
+
     for (std::int64_t k = 0; k < static_cast<std::int64_t>(copy_allocs); ++k) {
-        // Controle positivo: a injeção dispara DENTRO da cópia da visão.
-        pack::ManifestView victim;
+        // Controle positivo: a injeção dispara DENTRO da cópia por construção.
         bool threw = false;
         g_allocations.store(0);
         g_fail_countdown.store(k);
         g_counting.store(true);
         try {
-            victim = view;
+            alignas(pack::ManifestView) unsigned char storage[sizeof(pack::ManifestView)];
+            auto* victim = new (storage) pack::ManifestView(view);
+            g_escape(victim);
+            victim->~ManifestView(); // não deve chegar aqui
         } catch (const std::bad_alloc&) {
             threw = true;
         }
@@ -1084,7 +1128,7 @@ void test_build_view_copy_stage()
         g_fail_countdown.store(-1);
         SW_CHECK(threw);
 
-        // O mesmo k no build: out vazio e out já válido ficam como estavam.
+        // O mesmo k no build: OutOfMemory, sem terminate, com out vazio e com out já válido.
         std::uint64_t used = 0;
         Vfs empty_out;
         SW_CHECK(build_with_failure(view, empty_out, k, used) == VfsBuildStatus::OutOfMemory);
@@ -1094,6 +1138,79 @@ void test_build_view_copy_stage()
         SW_CHECK(build_with_failure(view, valid_out, k, used) == VfsBuildStatus::OutOfMemory);
         SW_CHECK(observe(valid_out) == before);
     }
+}
+
+// A publicação final de `build` é `out = std::move(next)`. Ela não pode lançar: o static_assert
+// garante a declaração; aqui se mede o que a STL de fato faz (alocações durante essa atribuição) e
+// se injeta falha em todas as alocações que ocorressem. Valor observado declarado na saída.
+void test_publication_does_not_allocate()
+{
+    std::cout
+        << "[Test] build: a publicação `out = std::move(next)` não aloca (medido) e não lança\n";
+    static_assert(std::is_nothrow_move_assignable_v<Vfs>);
+    const std::array<const Source*, 3> targets = {nullptr, &sources()[0], &sources()[1]};
+    for (const Source* target : targets) {
+        for (const Source& src : sources()) {
+            if (src.expected != VfsBuildStatus::Ok) continue;
+            Vfs out;
+            if (target != nullptr) {
+                SW_CHECK(Vfs::build(open_manifest(target->bytes), out) == VfsBuildStatus::Ok);
+            }
+            Vfs next;
+            SW_CHECK(Vfs::build(open_manifest(src.bytes), next) == VfsBuildStatus::Ok);
+            const std::string expected = observe(next);
+            g_allocations.store(0);
+            g_fail_countdown.store(0); // se houver QUALQUER alocação na publicação, ela lança
+            g_counting.store(true);
+            bool threw = false;
+            try {
+                out = std::move(next);
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+            g_counting.store(false);
+            g_fail_countdown.store(-1);
+            const std::uint64_t allocs = g_allocations.load();
+            std::cout << "        publicação de \"" << src.name << "\" sobre "
+                      << (target == nullptr ? "out vazio" : target->name) << ": " << allocs
+                      << " alocação(ões)\n";
+            SW_CHECK(!threw);
+            SW_CHECK(allocs == 0);
+            SW_CHECK(observe(out) == expected);
+        }
+    }
+}
+
+// O que a STL deste build declara noexcept, impresso (no MSVC Debug é o que a pilha do CI mostrou:
+// o construtor padrão de string/vector é noexcept e aloca o proxy). É a ASSINATURA do header
+// instalado, avaliada pelo compilador, não o texto do header.
+void print_stl_facts()
+{
+    std::cout << "[Info] STL: ";
+#ifdef _MSC_FULL_VER
+    std::cout << "_MSC_FULL_VER=" << _MSC_FULL_VER << " ";
+#endif
+#ifdef _ITERATOR_DEBUG_LEVEL
+    std::cout << "_ITERATOR_DEBUG_LEVEL=" << _ITERATOR_DEBUG_LEVEL << " ";
+#endif
+#ifdef __GLIBCXX__
+    std::cout << "__GLIBCXX__=" << __GLIBCXX__ << " ";
+#endif
+#ifdef _LIBCPP_VERSION
+    std::cout << "_LIBCPP_VERSION=" << _LIBCPP_VERSION << " ";
+#endif
+    std::cout << "\n        noexcept: string()="
+              << std::is_nothrow_default_constructible_v<std::string> << " vector<u64>()="
+              << std::is_nothrow_default_constructible_v<
+                     std::vector<std::uint64_t>> << " string(const string&)="
+              << std::is_nothrow_copy_constructible_v<std::string> << " vector<u64>(n,v)="
+              << std::is_nothrow_constructible_v<std::vector<std::uint64_t>, std::size_t,
+                                                 const std::uint64_t&> << " vector<string_view>(n)="
+              << std::is_nothrow_constructible_v<std::vector<std::string_view>,
+                                                 std::size_t> << " ManifestView(const&)="
+              << std::is_nothrow_copy_constructible_v<pack::ManifestView> << " Vfs()="
+              << std::is_nothrow_default_constructible_v<Vfs> << " Vfs=Vfs&&="
+              << std::is_nothrow_move_assignable_v<Vfs> << "\n";
 }
 
 // Texto com tudo o que o ManifestView expõe SEM passar pelo modelo (`to_model`): é o que um move do
@@ -1306,6 +1423,7 @@ int main()
         _CrtSetReportFile(type, _CRTDBG_FILE_STDERR);
     }
 #endif
+    print_stl_facts();
     test_fixture_is_what_the_manifest_describes();
     test_whole_file_reconstruction();
     test_reads_inside_one_block();
@@ -1321,6 +1439,7 @@ int main()
     test_build_failure_when_source_is_the_destination();
     test_successful_rebuild_effect_on_open_handles();
     test_build_view_copy_stage();
+    test_publication_does_not_allocate();
     test_moved_from_vfs_allowed_operations();
     test_resolve_does_not_allocate();
     test_concurrent_resolves();
