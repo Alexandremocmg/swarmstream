@@ -29,7 +29,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -41,6 +43,12 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#ifdef _MSC_VER
+#define NOMINMAX
+#include <crtdbg.h>
+#include <windows.h>
+#endif
 
 using namespace swarmstream;
 namespace fx = swarmstream::test::vfs_fixture;
@@ -858,15 +866,14 @@ void test_build_failure_keeps_out_untouched()
         std::uint64_t total = 0;
         SW_CHECK(build_with_failure(view, probe, -1, total) == src.expected);
         std::cout << "        " << src.name << ": " << total << " alocações no build\n";
-        // Etapas, na ordem: 0 = cópia da visão (o ManifestView tem std::string: copiar pode
-        // alocar), 1 = tabela de índices, 2.. = crescimento da pilha de prefixos. O varrimento de k
-        // abaixo falha CADA uma delas.
-        SW_CHECK(total >= 1);
+        // O varrimento de k abaixo falha CADA alocação que o build fez de fato nesta STL (a cópia
+        // da visão, se a std::string `chunker.algorithm` não couber no SSO; a tabela de índices; o
+        // crescimento da pilha de prefixos; o que mais a STL alocar). Nenhum mínimo depende da
+        // implementação, só o que é inevitável: guardar N > 0 entradas de 64 bits exige memória
+        // dinâmica, então a tabela de um manifesto com referências de bloco é pelo menos 1
+        // alocação.
         if (view.block_ref_count() > 0) {
-            SW_CHECK(total >= 2); // visão + tabela
-        }
-        if (&src == &prefix_src) {
-            SW_CHECK(total >= 4); // visão + tabela + a pilha crescendo até 2 níveis
+            SW_CHECK(total >= 1);
         }
 
         for (const Source* init : initials) {
@@ -1037,6 +1044,142 @@ void test_successful_rebuild_effect_on_open_handles()
     SW_CHECK(spans_text(on_copy) == spans_text(open_file(main_reference, "maps/level1.bin")));
 }
 
+// A etapa "cópia da visão" só tem ponto de falha se a std::string `chunker.algorithm`
+// ("swarmstream-fastcdc-v0", 22 bytes) NÃO couber no SSO da STL (libstdc++ e MSVC: 15 bytes, aloca;
+// libc++: 22 bytes, não aloca). Aqui a injeção é DIRETA na cópia, com controle positivo, e depois o
+// mesmo k é injetado no build. Onde a cópia não aloca, o teste diz isso e não finge cobrir.
+void test_build_view_copy_stage()
+{
+    std::cout << "[Test] build: falha de alocação na cópia da visão (injeção direta, com controle "
+                 "positivo)\n";
+    const pack::ManifestView view = open_manifest(fx::kMainManifest);
+    pack::ManifestView target;
+    g_allocations.store(0);
+    g_fail_countdown.store(-1);
+    g_counting.store(true);
+    target = view;
+    g_counting.store(false);
+    const std::uint64_t copy_allocs = g_allocations.load();
+    std::cout << "        a cópia do ManifestView faz " << copy_allocs
+              << " alocação(ões) nesta STL\n";
+    if (copy_allocs == 0) {
+        std::cout
+            << "        nesta STL a cópia da visão não aloca (algorithm cabe no SSO): a etapa "
+               "não tem ponto de falha; nada a injetar\n";
+        return;
+    }
+    for (std::int64_t k = 0; k < static_cast<std::int64_t>(copy_allocs); ++k) {
+        // Controle positivo: a injeção dispara DENTRO da cópia da visão.
+        pack::ManifestView victim;
+        bool threw = false;
+        g_allocations.store(0);
+        g_fail_countdown.store(k);
+        g_counting.store(true);
+        try {
+            victim = view;
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        g_counting.store(false);
+        g_fail_countdown.store(-1);
+        SW_CHECK(threw);
+
+        // O mesmo k no build: out vazio e out já válido ficam como estavam.
+        std::uint64_t used = 0;
+        Vfs empty_out;
+        SW_CHECK(build_with_failure(view, empty_out, k, used) == VfsBuildStatus::OutOfMemory);
+        SW_CHECK(empty_out.manifest().file_count() == 0 && empty_out.index_size() == 0);
+        Vfs valid_out = build_vfs(fx::kMainManifest);
+        const std::string before = observe(valid_out);
+        SW_CHECK(build_with_failure(view, valid_out, k, used) == VfsBuildStatus::OutOfMemory);
+        SW_CHECK(observe(valid_out) == before);
+    }
+}
+
+// Texto com tudo o que o ManifestView expõe SEM passar pelo modelo (`to_model`): é o que um move do
+// Vfs preserva (membros trivialmente copiáveis; as strings string_view apontam para os bytes do
+// manifesto, que continuam vivos).
+std::string view_digest(const pack::ManifestView& v)
+{
+    std::ostringstream o;
+    const auto hex = [&o](const auto& h) {
+        for (const auto b : h)
+            o << std::hex << int(b) << std::dec << ",";
+    };
+    o << v.game_id() << "|" << v.build_id() << "|" << v.build_seq() << "|" << v.created_at() << "|"
+      << v.min_reader() << "|" << v.payload_size() << "|";
+    hex(v.manifest_id());
+    o << "\nblocks=" << v.block_count() << " refs=" << v.block_ref_count()
+      << " pieces=" << v.piece_count() << " files=" << v.file_count()
+      << " groups=" << v.group_count() << "\n";
+    for (std::size_t i = 0; i < v.block_count(); ++i) {
+        o << "b" << i << ":" << v.block_raw_size(i) << "/" << v.block_packed_size(i) << "/"
+          << int(v.block_codec(i)) << "/";
+        hex(v.block_hash(i));
+        o << "\n";
+    }
+    for (std::size_t i = 0; i < v.block_ref_count(); ++i)
+        o << v.block_ref(i) << ",";
+    o << "\n";
+    for (std::size_t i = 0; i < v.file_count(); ++i) {
+        o << v.file_path(i) << ":" << v.file_size(i) << "/" << int(v.file_class(i)) << "/"
+          << v.file_group(i) << "/" << v.file_first_ref(i) << "/" << v.file_ref_count(i) << "\n";
+    }
+    return o.str();
+}
+
+// Estado de um Vfs DE QUE SE MOVEU (move gerado pelo compilador, sem move próprio), membro a
+// membro:
+//   preservado (garantido, membros trivialmente copiáveis): tudo o que `view_digest` lê;
+//   tabela de índices: vazia após o construtor de move (garantia do std::vector); após a atribuição
+//     de move é "válida, não especificada" (o teste só chama, não confere o valor);
+//   NÃO garantido: `manifest().to_model().chunker.algorithm` (std::string movida: válida, valor
+//     não especificado; vazia na prática) e, portanto, todo o `to_model()` além das strings.
+// Os handles abertos antes do move ficam inválidos e não são tocados aqui.
+void test_moved_from_vfs_allowed_operations()
+{
+    std::cout << "[Test] Vfs movido-de: o que é preservado, o que não é garantido e as operações "
+                 "permitidas (sem tocar handles invalidados)\n";
+    const Vfs reference = build_vfs(fx::kMainManifest);
+    const std::string reference_digest = view_digest(reference.manifest());
+    const std::string reference_text = observe(reference);
+    SW_CHECK(!reference.manifest().to_model().chunker.algorithm.empty());
+
+    // Construtor de move.
+    Vfs a = build_vfs(fx::kMainManifest);
+    Vfs b(std::move(a));
+    SW_CHECK(a.index_size() == 0);                           // garantido pelo move do std::vector
+    SW_CHECK(view_digest(a.manifest()) == reference_digest); // chamada segura E valor preservado
+    // Chamada segura, valor NÃO garantido: só se chama; o valor não é conferido.
+    const std::string moved_algorithm = a.manifest().to_model().chunker.algorithm;
+    std::cout << "        chunker.algorithm do movido-de tem " << moved_algorithm.size()
+              << " byte(s) nesta STL (não garantido)\n";
+    SW_CHECK(b.index_size() == b.manifest().block_ref_count());
+    SW_CHECK(observe(b) == reference_text); // o destino responde como a referência
+
+    // Permitido: atribuir por cima (cópia), e o Vfs volta a ser completo.
+    a = reference;
+    SW_CHECK(observe(a) == reference_text);
+
+    // Permitido: usar um movido-de como `out` de um build novo.
+    Vfs c(std::move(a));
+    SW_CHECK(Vfs::build(open_manifest(fx::kPrefixManifest), a) == VfsBuildStatus::Ok);
+    SW_CHECK(observe(a) == observe(build_vfs(fx::kPrefixManifest)));
+    SW_CHECK(observe(c) == reference_text);
+
+    // Atribuição de move: o destino é completo; o movido-de preserva a visão e só pode ser
+    // consultado nas leituras seguras (o valor da tabela não é conferido).
+    Vfs d;
+    d = std::move(c);
+    SW_CHECK(observe(d) == reference_text);
+    SW_CHECK(view_digest(c.manifest()) == reference_digest);
+    (void)c.index_size();
+    (void)c.manifest().to_model();
+    // Permitido: destruir (fim do escopo) e atribuir por cima.
+    c = reference;
+    SW_CHECK(observe(c) == reference_text);
+}
+
 void test_resolve_does_not_allocate()
 {
     std::cout << "[Test] sem alocação: stat, open, resolve e next (com controle positivo)\n";
@@ -1145,6 +1288,24 @@ void test_concurrent_resolves()
 
 int main()
 {
+    // Uma exceção que escape de uma função noexcept (ex.: bad_alloc injetado fora de um try em
+    // `Vfs::build`) vira std::terminate -> abort(). No MSVC Debug o abort() abre uma caixa de
+    // diálogo que trava o CI até o timeout; aqui termina na hora, com mensagem, como o SW_CHECK.
+    std::set_terminate([] {
+        std::fputs("std::terminate: exceção escapou de uma função noexcept\n", stderr);
+        std::fflush(nullptr);
+        std::_Exit(1);
+    });
+#ifdef _MSC_VER
+    // Mesmo cuidado de sw-core/tests/main.cpp: no Debug, avisos do CRT/STL (verificação de
+    // iteradores, abort) abrem uma caixa de diálogo e esperam; no CI o teste ficaria pendurado.
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    for (int type : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT}) {
+        _CrtSetReportMode(type, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(type, _CRTDBG_FILE_STDERR);
+    }
+#endif
     test_fixture_is_what_the_manifest_describes();
     test_whole_file_reconstruction();
     test_reads_inside_one_block();
@@ -1159,6 +1320,8 @@ int main()
     test_build_failure_keeps_out_untouched();
     test_build_failure_when_source_is_the_destination();
     test_successful_rebuild_effect_on_open_handles();
+    test_build_view_copy_stage();
+    test_moved_from_vfs_allowed_operations();
     test_resolve_does_not_allocate();
     test_concurrent_resolves();
     std::cout << "VFS: todos os testes passaram\n";

@@ -56,10 +56,13 @@ VfsBuildStatus Vfs::build(const pack::ManifestView& view, Vfs& out) noexcept
     // Garantia forte (F1-63): tudo é construído num objeto TEMPORÁRIO e só vai para `out` depois do
     // sucesso completo. Em qualquer falha `out` não é tocado. `view` pode ser o próprio
     // `out.manifest()`: é copiada para o temporário antes de qualquer escrita em `out`.
+    // TUDO o que pode alocar fica DENTRO do `try`, inclusive a construção do temporário: o
+    // `build` é `noexcept`, e uma exceção que escape dele vira `std::terminate` (em MSVC Debug o
+    // construtor de contêineres e de `std::string` aloca o proxy dos iteradores).
     static_assert(std::is_nothrow_move_assignable_v<Vfs>,
                   "publicar em `out` não pode falhar depois da validação");
-    Vfs next;
     try {
+        Vfs next;
         next.view_ = view;
         next.ref_start_.assign(view.block_ref_count(), 0);
         for (std::size_t f = 0; f < view.file_count(); ++f) {
@@ -89,11 +92,11 @@ VfsBuildStatus Vfs::build(const pack::ManifestView& view, Vfs& out) noexcept
             }
             prefixes.push_back(path);
         }
+        out = std::move(next); // publica: só chega aqui com tudo validado (o move não lança)
+        return VfsBuildStatus::Ok;
     } catch (const std::bad_alloc&) {
         return VfsBuildStatus::OutOfMemory;
     }
-    out = std::move(next); // publica: só chega aqui com tudo validado (move não lança)
-    return VfsBuildStatus::Ok;
 }
 
 // ---------------------------------------------------------------- busca
