@@ -45,10 +45,15 @@
 #include <vector>
 
 #ifdef _MSC_VER
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <crtdbg.h>
 #include <windows.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 #endif
+#include <cstring>
 
 using namespace swarmstream;
 namespace fx = swarmstream::test::vfs_fixture;
@@ -60,13 +65,71 @@ std::atomic<std::uint64_t> g_allocations{0};
 // < 0: sem injeção. >= 0: a alocação contada em que este valor chega a 0 lança bad_alloc.
 std::atomic<std::int64_t> g_fail_countdown{-1};
 void* volatile g_sink = nullptr;
+std::atomic<bool> g_trace{false}; // DIAGNOSTICO: imprime a pilha de cada alocacao contada
 } // namespace
+
+#ifdef _MSC_VER
+// DIAGNOSTICO DESCARTAVEL (F1-63): pilha simbolizada (dbghelp + PDB do Debug) no stderr.
+static void diag_print_stack(const char* why, long long k, std::size_t n)
+{
+    static bool inited = false;
+    HANDLE proc = GetCurrentProcess();
+    if (!inited) {
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        const BOOL ok = SymInitialize(proc, nullptr, TRUE);
+        std::fprintf(stderr, "[diag] SymInitialize=%d\n", int(ok));
+        inited = true;
+    }
+    void* frames[48];
+    const USHORT count = CaptureStackBackTrace(1, 48, frames, nullptr);
+    std::fprintf(stderr, "[diag] %s idx/k=%lld size=%zu frames=%u\n", why, k, n, unsigned(count));
+    alignas(SYMBOL_INFO) char buf[sizeof(SYMBOL_INFO) + 512];
+    for (USHORT i = 0; i < count; ++i) {
+        SYMBOL_INFO* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+        std::memset(sym, 0, sizeof(SYMBOL_INFO));
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 500;
+        DWORD64 disp = 0;
+        const DWORD64 addr = reinterpret_cast<DWORD64>(frames[i]);
+        if (SymFromAddr(proc, addr, &disp, sym)) {
+            IMAGEHLP_LINE64 line;
+            std::memset(&line, 0, sizeof(line));
+            line.SizeOfStruct = sizeof(line);
+            DWORD ldisp = 0;
+            if (SymGetLineFromAddr64(proc, addr, &ldisp, &line)) {
+                std::fprintf(stderr, "[diag]  #%u %s +0x%llx (%s:%lu)\n", unsigned(i), sym->Name,
+                             static_cast<unsigned long long>(disp), line.FileName,
+                             static_cast<unsigned long>(line.LineNumber));
+            } else {
+                std::fprintf(stderr, "[diag]  #%u %s +0x%llx\n", unsigned(i), sym->Name,
+                             static_cast<unsigned long long>(disp));
+            }
+        } else {
+            std::fprintf(stderr, "[diag]  #%u %p\n", unsigned(i), frames[i]);
+        }
+    }
+    std::fflush(stderr);
+}
+#endif
 
 void* operator new(std::size_t n)
 {
     if (g_counting.load(std::memory_order_relaxed)) {
-        g_allocations.fetch_add(1, std::memory_order_relaxed);
+        const std::uint64_t idx = g_allocations.fetch_add(1, std::memory_order_relaxed);
+#ifdef _MSC_VER
+        if (g_trace.load(std::memory_order_relaxed)) {
+            g_counting.store(false); // o diagnostico nao e contado nem injetado
+            diag_print_stack("ALLOC", static_cast<long long>(idx), n);
+            g_counting.store(true);
+        }
+#else
+        (void)idx;
+#endif
         if (g_fail_countdown.fetch_sub(1, std::memory_order_relaxed) == 0) {
+#ifdef _MSC_VER
+            g_counting.store(false);
+            diag_print_stack("INJETADO (lanca bad_alloc aqui)", static_cast<long long>(idx), n);
+#endif
             throw std::bad_alloc();
         }
     }
@@ -864,7 +927,13 @@ void test_build_failure_keeps_out_untouched()
         // Quantas alocações este build faz até terminar (ou até achar o conflito).
         Vfs probe;
         std::uint64_t total = 0;
+#ifdef _MSC_VER
+        g_trace.store(&src == &main_src);
+#endif
         SW_CHECK(build_with_failure(view, probe, -1, total) == src.expected);
+#ifdef _MSC_VER
+        g_trace.store(false);
+#endif
         std::cout << "        " << src.name << ": " << total << " alocações no build\n";
         // O varrimento de k abaixo falha CADA alocação que o build fez de fato nesta STL (a cópia
         // da visão, se a std::string `chunker.algorithm` não couber no SSO; a tabela de índices; o
@@ -908,6 +977,11 @@ void test_build_failure_keeps_out_untouched()
                 }
 
                 std::uint64_t used = 0;
+#ifdef _MSC_VER
+                std::fprintf(stderr, "[diag] sweep src=%s k=%lld\n", src.name,
+                             static_cast<long long>(k));
+                std::fflush(stderr);
+#endif
                 const VfsBuildStatus st = build_with_failure(view, out, k, used);
 
                 if (static_cast<std::uint64_t>(k) < total) {
@@ -1293,6 +1367,9 @@ int main()
     // diálogo que trava o CI até o timeout; aqui termina na hora, com mensagem, como o SW_CHECK.
     std::set_terminate([] {
         std::fputs("std::terminate: exceção escapou de uma função noexcept\n", stderr);
+#ifdef _MSC_VER
+        diag_print_stack("TERMINATE", -1, 0);
+#endif
         std::fflush(nullptr);
         std::_Exit(1);
     });
