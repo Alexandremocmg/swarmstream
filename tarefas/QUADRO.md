@@ -4,14 +4,13 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 4 | 0 | 2 | 3 | 21 | 30 |
+| 3 | 0 | 2 | 3 | 25 | 31 |
 
 ## Espera o dono do produto
 - [F1-04](cartoes/F1-04.md): Geração do manifesto v0, assinado com a chave de teste (ADR-0012)
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
 
 ## EM_ANDAMENTO
-- [F1-17](cartoes/F1-17.md) (R2, sessão: (a atribuir) sessão nova, diferente da Sênior (F1-61) e da que revisará): VFS: caminho + offset + tamanho → blocos
 - [F1-20](cartoes/F1-20.md) (R1, sessão: Arquiteto): GDExtension com `ResourceFormatLoader` na frente sobre o `sw-core` (com mock), conforme o ADR-0016
 - [F1-33](cartoes/F1-33.md) (R3, sessão: Pleno): Script de relatório da rodada (métricas por perfil)
 - [F1-47](cartoes/F1-47.md) (R3, sessão: Pleno): Validar a bancada com uma mudança conhecida (rede mais lenta tem de piorar a espera)
@@ -37,6 +36,10 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
 | [F1-57](cartoes/F1-57.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Teste instável do agendador: destrutor atrás de callback lento (test_deadline_scheduler.cpp:962) |
 | [F1-62](cartoes/F1-62.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Medir o custo das funções de compressão (LZ4) e de assinatura (libsodium) no binário do cliente e avaliar alternativas |
+| [F1-63](cartoes/F1-63.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Garantia de `Vfs::build` em caso de falha (inclusive ao reconstruir um `Vfs` já válido) |
+| [F1-64](cartoes/F1-64.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-63 | Reforçar os testes do VFS: byte alto após o prefixo de diretório, bloco de 262144 bytes e offsets acima de 4 GiB |
+| [F1-65](cartoes/F1-65.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-63 | Precondição de uso de `VfsFile` válido e proteção no F1-60 contra handles inválidos |
+| [F1-66](cartoes/F1-66.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-63 | Atualizar as referências ao ADR-0017 no código e a descrição do PR #25 |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -60,6 +63,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-14](cartoes/F1-14.md): Remoção CLOCK com marcas 95%/85% e conjunto fixo
 - [F1-15](cartoes/F1-15.md): Cache de blocos descomprimidos em RAM + pool de buffers
 - [F1-16](cartoes/F1-16.md): Checksum XXH3 por bloco na leitura
+- [F1-17](cartoes/F1-17.md): VFS: caminho + offset + tamanho → blocos
 - [F1-18](cartoes/F1-18.md): Ferramenta `sw-cache-inspect` (listar peças, uso, estado)
 - [F1-27](cartoes/F1-27.md): Fonte HTTP Range implementando `IContentSource`, com conexões persistentes
 - [F1-28](cartoes/F1-28.md): Agendador por prazo v1 (uma fonte, fila por prazo, cancelamento)
