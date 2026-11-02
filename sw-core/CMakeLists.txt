@@ -208,6 +208,7 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     add_test(NAME sw-core-lock-oom COMMAND sw-core-lock-oom-tests)
     set_tests_properties(sw-core-lock-oom PROPERTIES TIMEOUT 300)
     if(MSVC)
+        target_link_libraries(sw-core-lock-oom-tests PRIVATE dbghelp) # pilha do std::terminate
         target_compile_options(sw-core-lock-tests PRIVATE /W4 /permissive-)
         target_compile_options(sw-core-lock-oom-tests PRIVATE /W4 /permissive-)
         target_compile_options(sw-core-posse-tool PRIVATE /W4 /permissive-)

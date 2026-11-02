@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <new>
@@ -31,6 +32,10 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#if defined(_MSC_VER)
+#include <crtdbg.h>
+#include <dbghelp.h>
+#endif
 #else
 #include <dirent.h>
 #endif
@@ -45,6 +50,9 @@ std::atomic<std::int64_t> g_fail_at{0}; // 0 = desarmado; K > 0: falha na K-ési
 std::atomic<std::int64_t> g_seen{0};    // alocações vistas desde o armamento
 std::atomic<bool> g_fired{false};
 std::atomic<std::uint64_t> g_total{0}; // todas as alocações (para provar "não aloca")
+// Onde a varredura está, para o std::terminate dizer em que ponto a exceção escapou.
+std::atomic<std::int64_t> g_progress_k{0};
+std::atomic<const char*> g_progress_scenario{"(fora da varredura)"};
 } // namespace
 
 void* operator new(std::size_t n)
@@ -164,6 +172,8 @@ int sweep(Scenario scenario)
         const std::size_t handles_before = open_handles();
 
         det::CacheDirLock victim;
+        g_progress_k.store(k);
+        g_progress_scenario.store(name_of(scenario));
         arm(k);
         const det::LockStatus st = det::CacheDirLock::acquire(dir, victim);
         const bool fired = g_fired.load();
@@ -255,10 +265,72 @@ void test_move_and_release_do_not_allocate()
     cleanup(dir);
 }
 
+#if defined(_MSC_VER)
+// Pilha do ponto onde a exceção escapou (símbolos do PDB do Debug), para o CI mostrar de onde veio.
+void print_stack_msvc()
+{
+    void* frames[48] = {};
+    const USHORT n = ::CaptureStackBackTrace(0, 48, frames, nullptr);
+    HANDLE process = ::GetCurrentProcess();
+    ::SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    if (!::SymInitialize(process, nullptr, TRUE)) {
+        std::fputs("(SymInitialize falhou; sem pilha)\n", stderr);
+        return;
+    }
+    alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256] = {};
+    auto* sym = reinterpret_cast<SYMBOL_INFO*>(buffer);
+    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+    sym->MaxNameLen = 255;
+    for (USHORT i = 0; i < n; ++i) {
+        const DWORD64 addr = reinterpret_cast<DWORD64>(frames[i]);
+        DWORD64 disp = 0;
+        const char* name = ::SymFromAddr(process, addr, &disp, sym) ? sym->Name : "?";
+        IMAGEHLP_LINE64 line{};
+        line.SizeOfStruct = sizeof(line);
+        DWORD ldisp = 0;
+        if (::SymGetLineFromAddr64(process, addr, &ldisp, &line))
+            std::fprintf(stderr, "  #%u %s (%s:%lu)\n", static_cast<unsigned>(i), name,
+                         line.FileName, static_cast<unsigned long>(line.LineNumber));
+        else
+            std::fprintf(stderr, "  #%u %s\n", static_cast<unsigned>(i), name);
+    }
+}
+#endif
+
+// Uma exceção que escape de uma função noexcept vira std::terminate. No MSVC Debug o abort()
+// abriria uma caixa de diálogo e travaria o CI até o timeout: aqui o teste termina na hora, diz
+// em que ponto da varredura foi e (MSVC) imprime a pilha.
+void on_terminate()
+{
+    g_fail_at.store(0); // não falhar de novo enquanto diagnostica
+    std::fprintf(stderr,
+                 "std::terminate: excecao escapou de uma funcao noexcept (cenario '%s', K=%lld)\n",
+                 g_progress_scenario.load(), static_cast<long long>(g_progress_k.load()));
+#if defined(_MSC_VER)
+    print_stack_msvc();
+#endif
+    std::fflush(nullptr);
+    std::_Exit(1);
+}
+
+void make_abort_fail_instead_of_hang()
+{
+    std::set_terminate(on_terminate);
+#if defined(_MSC_VER)
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    for (int type : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT}) {
+        _CrtSetReportMode(type, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(type, _CRTDBG_FILE_STDERR);
+    }
+#endif
+}
+
 } // namespace
 
 int main()
 {
+    make_abort_fail_instead_of_hang();
     const int n_existing = sweep(Scenario::ExistingDir);
     const int n_missing = sweep(Scenario::MissingDir);
     const int n_locked = sweep(Scenario::LockedByOther);
