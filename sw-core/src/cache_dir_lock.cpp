@@ -38,6 +38,12 @@ int last_os_error() noexcept { return errno; }
 // dentro de uma função noexcept que possa estar sem memória.
 const fs::path kEmptyPath;
 
+// Nome do arquivo de lock como `path`, também construído na inicialização estática. Anexar um
+// `const char*` ao caminho DENTRO de acquire() converteria estreito -> largo na hora, e no MSVC em
+// Debug essa conversão passa pelo construtor padrão (noexcept) de std::wstring, que aloca o proxy
+// dos iteradores: um bad_alloc ali é std::terminate (pilha medida no CI, run 41511882294, K=4).
+const fs::path kLockFileLeaf(kCacheLockFileName);
+
 // Guarda do arquivo de lock aberto: se QUALQUER coisa sair de acquire_impl depois da abertura (um
 // bad_alloc montando o texto do erro, por exemplo), o destrutor fecha o arquivo, o que também
 // solta o lock do SO. Só `dismiss()` (a aquisição completa) tira o arquivo da guarda.
@@ -225,7 +231,7 @@ LockStatus CacheDirLock::acquire(const fs::path& cache_dir, CacheDirLock& out) n
         // construtores usados (cópia, make_unique) não são noexcept: uma falta de memória vira
         // bad_alloc, nunca std::terminate, nem no MSVC em Debug.
         std::unique_ptr<fs::path> lock_path = std::make_unique<fs::path>(cache_dir);
-        *lock_path /= kCacheLockFileName;
+        *lock_path /= kLockFileLeaf;
 
         NativeHandle handle = invalid_handle();
         LockStatus status = acquire_impl(cache_dir, *lock_path, handle);
