@@ -61,7 +61,7 @@ O comentário de `sw_shutdown` em [`swarmstream.h`](../../sw-core/include/swarms
 | disco cheio ao gravar o checkpoint (`DiskFull`) | `SW_E_DISK_FULL` |
 | `std::bad_alloc` em qualquer etapa | `SW_E_OUT_OF_MEMORY` |
 | outra exceção, ou condição interna inesperada | `SW_E_INTERNAL` |
-| falha de escrita da telemetria (diagnóstico, não dado) | **não muda o retorno**: vai ao `log_fn` (nível ERROR) e ao resumo, se couber |
+| falha de escrita da telemetria (diagnóstico, não dado) | **EM ABERTO.** A regra "só registrar no `log_fn`" **não foi aprovada** pelo dono (2026-11-02). Conclusão da auditoria no F1-71 (leitura preliminar): `~TelemetryLog()` não permite recolher o erro; só um `close()` explícito antes da destruição permitiria devolvê-lo. A regra será decidida junto do aceite do ADR |
 
 Encerramento concluído implica contexto inválido e recursos liberados **também** com `SW_E_OUT_OF_MEMORY` e `SW_E_INTERNAL`: esses dois códigos só saem de `sw_shutdown` **depois** da validação; antes dela só saem `BUSY`, `INVALID_ARGUMENT` e `SHUTTING_DOWN`.
 
