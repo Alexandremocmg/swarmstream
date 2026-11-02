@@ -18,10 +18,12 @@ endif()
 add_library(sw-core STATIC
     src/api_stub.cpp
     src/block_ram_cache.cpp
+    src/cache_dir_lock.cpp
     src/cache_inspect.cpp
     src/cache_journal.cpp
     src/cache_owner.cpp
     src/deadline_scheduler.cpp
+    src/installed_floor.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
     src/http_range_source.cpp
@@ -174,6 +176,56 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
     add_test(NAME sw-core-vfs COMMAND sw-core-vfs-tests)
     set_tests_properties(sw-core-vfs PROPERTIES TIMEOUT 300)
+    # F1-69: posse da pasta de cache. O lock entre processos e o piso anti-rollback por game_id são
+    # componentes internos (ainda não ligados ao sw_init: F1-67). Os testes usam um executável
+    # auxiliar que roda como PROCESSO FILHO (segura o lock, é morto à força, cai no meio do commit).
+    add_executable(sw-core-posse-tool tests/posse_tool.cpp)
+    target_link_libraries(sw-core-posse-tool PRIVATE sw-core)
+    target_include_directories(sw-core-posse-tool PRIVATE src)
+    add_executable(sw-core-lock-tests tests/test_cache_dir_lock.cpp)
+    target_link_libraries(sw-core-lock-tests PRIVATE sw-core)
+    target_include_directories(sw-core-lock-tests PRIVATE src)
+    if(NOT MSVC)
+        target_link_libraries(sw-core-lock-tests PRIVATE pthread)
+    endif()
+    add_dependencies(sw-core-lock-tests sw-core-posse-tool)
+    add_test(NAME sw-core-lock COMMAND sw-core-lock-tests $<TARGET_FILE:sw-core-posse-tool>)
+    set_tests_properties(sw-core-lock PROPERTIES TIMEOUT 300)
+    if(MSVC)
+        target_compile_options(sw-core-lock-tests PRIVATE /W4 /permissive-)
+        target_compile_options(sw-core-posse-tool PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(sw-core-lock-tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(sw-core-posse-tool PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    # Piso anti-rollback: os testes montam manifestos assinados com o sw-pack (ferramenta de build),
+    # que a raiz do projeto adiciona ANTES do sw-core. Só os TESTES o usam; a biblioteca sw-core
+    # continua dependendo apenas do sw-format. Sem o alvo sw-pack (sw-core configurado sozinho, como
+    # na extensão do Godot) os testes do piso não são registrados, e a configuração diz isso.
+    if(TARGET sw-pack)
+        add_executable(sw-core-floor-tests tests/test_installed_floor.cpp)
+        target_link_libraries(sw-core-floor-tests PRIVATE sw-core sw-pack)
+        target_include_directories(sw-core-floor-tests PRIVATE src)
+        add_dependencies(sw-core-floor-tests sw-core-posse-tool)
+        add_test(NAME sw-core-floor COMMAND sw-core-floor-tests $<TARGET_FILE:sw-core-posse-tool>)
+        set_tests_properties(sw-core-floor PROPERTIES TIMEOUT 300)
+        # Caso (d) do F1-60 §6.2 (Linux, installed/ em 0300). Sai com 77 quando a permissão não
+        # vale (root) ou no Windows: o ctest o mostra como PULADO, não como aprovado.
+        add_executable(sw-core-floor-perm-tests tests/test_installed_floor_perm.cpp)
+        target_link_libraries(sw-core-floor-perm-tests PRIVATE sw-core sw-pack)
+        target_include_directories(sw-core-floor-perm-tests PRIVATE src)
+        add_test(NAME sw-core-floor-perm COMMAND sw-core-floor-perm-tests)
+        set_tests_properties(sw-core-floor-perm PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+        if(MSVC)
+            target_compile_options(sw-core-floor-tests PRIVATE /W4 /permissive-)
+            target_compile_options(sw-core-floor-perm-tests PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(sw-core-floor-tests PRIVATE -Wall -Wextra -Wpedantic)
+            target_compile_options(sw-core-floor-perm-tests PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    else()
+        message(STATUS "sw-pack ausente: testes do piso anti-rollback (sw-core-floor*) nao registrados")
+    endif()
     # Controle do job TSan: uma corrida de propósito tem de ser reportada (prova que o TSan
     # está ligado; sem isso, "nenhuma corrida" não provaria nada).
     if(SANITIZE_THREAD)
