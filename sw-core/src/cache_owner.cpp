@@ -376,6 +376,16 @@ CacheErrorCode CacheOwner::Impl::recover()
         } else if (e.size > layout.slot_size) {
             ++recovery.dropped_conflict;
             drop = true;
+        } else if (const uint32_t want =
+                       expected_block_count_of(config.expected_block_counts, it->first);
+                   want != 0 && want != e.blocks.size()) {
+            // F1-70, 04 §5 passo 3: a peça consta no manifesto em uso com outro número de blocos
+            // (partição diferente). Sai do índice e o slot fica livre; nenhum byte de dado é
+            // apagado e o formato em disco não muda. Peça que não consta (want == 0) é mantida.
+            // A decisão sai só do que está no disco e do vetor, então uma queda antes do
+            // checkpoint abaixo a repete igual.
+            ++recovery.dropped_block_count;
+            drop = true;
         } else {
             std::error_code ec;
             const auto file = StoreFiles::file_path(config.dir, e.slot / layout.slots_per_file);
@@ -395,6 +405,8 @@ CacheErrorCode CacheOwner::Impl::recover()
     }
     pieces.store(static_cast<uint32_t>(index.size()), std::memory_order_relaxed);
     recovery.pieces = static_cast<uint32_t>(index.size());
+    // A visão do chamador só vale durante a recuperação: ele a libera depois de start().
+    config.expected_block_counts = {};
     return checkpoint();
 }
 
@@ -856,6 +868,10 @@ CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* co
     if (evict_on &&
         !(config.evict_low_percent > 0 && config.evict_low_percent < config.evict_high_percent &&
           config.evict_high_percent <= 100)) {
+        return Unexpected(CacheErrorCode::InvalidSize);
+    }
+    // F1-70: o vetor é do chamador e vem de fora; confere antes de tocar no disco.
+    if (!expected_block_counts_valid(config.expected_block_counts)) {
         return Unexpected(CacheErrorCode::InvalidSize);
     }
     auto store = StoreFiles::open(config.dir, config.total_slots, config.layout);
