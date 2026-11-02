@@ -40,9 +40,9 @@ namespace swarmstream::test {
 // Como o filho terminou.
 struct ChildExit
 {
-    bool exited = false;   // false: ainda vivo (ou o tempo esgotou)
-    bool by_kill = false;  // morto à força (sinal SIGKILL no POSIX; no Windows não distingue)
-    int code = -1;         // código de saída (ou o número do sinal no POSIX)
+    bool exited = false;  // false: ainda vivo (ou o tempo esgotou)
+    bool by_kill = false; // morto à força (sinal SIGKILL no POSIX; no Windows não distingue)
+    int code = -1;        // código de saída (ou o número do sinal no POSIX)
 };
 
 // Código de saída com que o filho se mata no Windows (TerminateProcess), para o pai reconhecer.
@@ -96,12 +96,14 @@ public:
         Child c;
 #if defined(_WIN32)
         std::wstring cmd = quote(exe.wstring());
-        for (const std::string& a : args) cmd += L" " + quote(std::filesystem::path(a).wstring());
+        for (const std::string& a : args)
+            cmd += L" " + quote(std::filesystem::path(a).wstring());
         STARTUPINFOW si{};
         si.cb = sizeof si;
         PROCESS_INFORMATION pi{};
-        if (!::CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, inherit_handles ? TRUE : FALSE,
-                              CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        if (!::CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr,
+                              inherit_handles ? TRUE : FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
+                              &si, &pi))
             return std::nullopt;
         ::CloseHandle(pi.hThread);
         c.h_ = pi.hProcess;
@@ -109,9 +111,11 @@ public:
         (void)inherit_handles;
         std::vector<std::string> storage;
         storage.push_back(exe.string());
-        for (const std::string& a : args) storage.push_back(a);
+        for (const std::string& a : args)
+            storage.push_back(a);
         std::vector<char*> argv;
-        for (std::string& s : storage) argv.push_back(s.data());
+        for (std::string& s : storage)
+            argv.push_back(s.data());
         argv.push_back(nullptr);
         pid_t pid = -1;
         if (::posix_spawn(&pid, exe.c_str(), nullptr, nullptr, argv.data(), environ) != 0)
@@ -194,10 +198,7 @@ private:
     }
 
 #if defined(_WIN32)
-    static std::wstring quote(const std::wstring& s)
-    {
-        return L"\"" + s + L"\"";
-    }
+    static std::wstring quote(const std::wstring& s) { return L"\"" + s + L"\""; }
     HANDLE h_ = nullptr;
 #else
     pid_t pid_ = -1;

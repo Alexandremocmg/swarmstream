@@ -5,16 +5,15 @@
 
 #include "platform_file.hpp"
 
-#include <swarmstream/crypto.hpp>
-#include <swarmstream/manifest_view.hpp>
-#include <swarmstream/sha256.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
 #include <limits>
 #include <new>
+#include <swarmstream/crypto.hpp>
+#include <swarmstream/manifest_view.hpp>
+#include <swarmstream/sha256.hpp>
 #include <system_error>
 #include <utility>
 
@@ -67,7 +66,8 @@ FileReadStatus read_whole_file(const fs::path& path, std::size_t max_bytes,
             OVERLAPPED ov{};
             ov.Offset = static_cast<DWORD>(offset & 0xFFFFFFFFu);
             ov.OffsetHigh = static_cast<DWORD>(offset >> 32);
-            const DWORD chunk = left > (DWORD{1} << 30) ? (DWORD{1} << 30) : static_cast<DWORD>(left);
+            const DWORD chunk =
+                left > (DWORD{1} << 30) ? (DWORD{1} << 30) : static_cast<DWORD>(left);
             DWORD done = 0;
             if (!::ReadFile(h, dst, chunk, &done, &ov) || done == 0) {
                 result = FileReadStatus::Io; // fim do arquivo antes do esperado: ele encolheu
@@ -194,7 +194,8 @@ std::string key_id_hex(std::span<const std::byte> bytes)
     // Envelope: key_id em [24, 32) (docs/03 §7.1).
     if (bytes.size() < 32) return "?";
     std::array<std::uint8_t, 8> id{};
-    for (std::size_t i = 0; i < id.size(); ++i) id[i] = static_cast<std::uint8_t>(bytes[24 + i]);
+    for (std::size_t i = 0; i < id.size(); ++i)
+        id[i] = static_cast<std::uint8_t>(bytes[24 + i]);
     return pack::to_hex(id);
 }
 
@@ -205,8 +206,9 @@ bool key_is_trusted(std::span<const std::byte> bytes,
     pack::KeyId wanted{};
     for (std::size_t i = 0; i < wanted.size(); ++i)
         wanted[i] = static_cast<std::uint8_t>(bytes[24 + i]);
-    return std::any_of(trusted_keys.begin(), trusted_keys.end(),
-                       [&](const pack::Ed25519PublicKey& k) { return pack::key_id_of(k) == wanted; });
+    return std::any_of(
+        trusted_keys.begin(), trusted_keys.end(),
+        [&](const pack::Ed25519PublicKey& k) { return pack::key_id_of(k) == wanted; });
 }
 
 std::string describe(FloorCategory category, const fs::path& path, const std::string& extra)
@@ -220,8 +222,8 @@ std::string describe(FloorCategory category, const fs::path& path, const std::st
 // Verifica `bytes` com as trusted_keys atuais (assinatura e §8, SEM piso). `existing` = é a
 // cópia instalada (categorias de estado existente) e não o manifesto novo.
 Verified verify_manifest(std::span<const std::byte> bytes,
-                         std::span<const pack::Ed25519PublicKey> trusted_keys,
-                         const fs::path& path, bool existing)
+                         std::span<const pack::Ed25519PublicKey> trusted_keys, const fs::path& path,
+                         bool existing)
 {
     Verified v;
     pack::ManifestView view;
@@ -250,9 +252,7 @@ Verified verify_manifest(std::span<const std::byte> bytes,
     case pack::ManifestError::Invalid:
     case pack::ManifestError::Rollback: // impossível sem piso; tratado como defeito do arquivo
     case pack::ManifestError::Ok:
-    default:
-        v.category = existing ? FloorCategory::Format : FloorCategory::NewManifest;
-        break;
+    default: v.category = existing ? FloorCategory::Format : FloorCategory::NewManifest; break;
     }
     v.detail = describe(v.category, path, extra);
     return v;
@@ -364,9 +364,8 @@ FloorRead read_installed_floor(const fs::path& cache_dir, std::string_view game_
                 out.detail = describe(out.category, dir, "installed existe e nao e uma pasta");
                 return out;
             }
-            out.existing_cache_without_floor =
-                path_exists_or_unknown(cache_dir / "index.bin") ||
-                path_exists_or_unknown(cache_dir / "journal.bin");
+            out.existing_cache_without_floor = path_exists_or_unknown(cache_dir / "index.bin") ||
+                                               path_exists_or_unknown(cache_dir / "journal.bin");
             return out;
         }
         if (rd != FileReadStatus::Ok) {
@@ -423,7 +422,8 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
 
         // Só se grava um manifesto que passou na verificação completa (agora, de novo).
         const Verified fresh = verify_manifest(manifest_bytes, trusted_keys, cache_dir, false);
-        if (fresh.status != FloorStatus::Ok) return fail(fresh.status, fresh.category, fresh.detail);
+        if (fresh.status != FloorStatus::Ok)
+            return fail(fresh.status, fresh.category, fresh.detail);
 
         const fs::path target = installed_floor_path(cache_dir, fresh.game_id);
         const fs::path tmp = installed_tmp_path(cache_dir, fresh.game_id);
@@ -437,8 +437,8 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
             if (old.game_id != fresh.game_id)
                 return fail(FloorStatus::Io, FloorCategory::GameIdMismatch,
                             describe(FloorCategory::GameIdMismatch, target,
-                                     "o manifesto instalado e de '" + old.game_id + "', esperado '" +
-                                         fresh.game_id + "'"));
+                                     "o manifesto instalado e de '" + old.game_id +
+                                         "', esperado '" + fresh.game_id + "'"));
             if (fresh.build_seq < old.build_seq)
                 return fail(FloorStatus::Rollback, FloorCategory::LowerSeq,
                             describe(FloorCategory::LowerSeq, target,
@@ -460,9 +460,10 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
         // W2 + W3
         const CacheErrorCode wr = ops.write_file_durable(tmp, manifest_bytes);
         if (wr != CacheErrorCode::Success)
-            return fail(FloorStatus::Io, FloorCategory::WriteTmp,
-                        describe(FloorCategory::WriteTmp, tmp,
-                                 wr == CacheErrorCode::DiskFull ? "disco cheio" : "falha de escrita"));
+            return fail(
+                FloorStatus::Io, FloorCategory::WriteTmp,
+                describe(FloorCategory::WriteTmp, tmp,
+                         wr == CacheErrorCode::DiskFull ? "disco cheio" : "falha de escrita"));
         // W4
         std::vector<std::byte> readback;
         const FileReadStatus rb = ops.read_file(tmp, manifest_bytes.size(), readback);

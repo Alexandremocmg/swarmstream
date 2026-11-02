@@ -9,11 +9,6 @@
 #include "check.hpp"
 #include "installed_floor.hpp"
 
-#include <swarmstream/chunker.hpp>
-#include <swarmstream/crypto.hpp>
-#include <swarmstream/ed25519.hpp>
-#include <swarmstream/manifest.hpp>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -24,6 +19,10 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <swarmstream/chunker.hpp>
+#include <swarmstream/crypto.hpp>
+#include <swarmstream/ed25519.hpp>
+#include <swarmstream/manifest.hpp>
 #include <utility>
 #include <vector>
 
@@ -37,15 +36,13 @@ using Bytes = std::vector<std::byte>;
 
 // true se o libsodium é o STUB de revisão local (verifica assinatura "sempre aceita"): os casos
 // que dependem de rejeitar uma assinatura ruim só valem com o libsodium real.
-inline bool is_sodium_stub()
-{
-    return sp::crypto_version().find("STUB") != std::string_view::npos;
-}
+inline bool is_sodium_stub() { return sp::crypto_version().find("STUB") != std::string_view::npos; }
 
 inline sp::Ed25519Seed seed_of(std::uint8_t first)
 {
     sp::Ed25519Seed s{};
-    for (std::size_t i = 0; i < s.size(); ++i) s[i] = static_cast<std::uint8_t>(first + i);
+    for (std::size_t i = 0; i < s.size(); ++i)
+        s[i] = static_cast<std::uint8_t>(first + i);
     return s;
 }
 
@@ -56,10 +53,7 @@ inline sp::Ed25519PublicKey public_key_of(const sp::Ed25519Seed& seed)
     return *k;
 }
 
-inline std::string hex_of(const sp::Ed25519PublicKey& key)
-{
-    return sp::to_hex(key);
-}
+inline std::string hex_of(const sp::Ed25519PublicKey& key) { return sp::to_hex(key); }
 
 inline sp::ManifestModel model_of(const std::string& game_id, std::uint64_t build_seq,
                                   const std::string& build_id = "b")
@@ -101,8 +95,8 @@ inline fs::path fresh_dir(const char* name)
 inline void cleanup(const fs::path& dir)
 {
     std::error_code ec;
-    for (const auto& e : fs::recursive_directory_iterator(
-             dir, fs::directory_options::skip_permission_denied, ec)) {
+    for (const auto& e :
+         fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
         std::error_code pec;
         fs::permissions(e.path(), fs::perms::owner_all, fs::perm_options::add, pec);
     }
@@ -127,7 +121,9 @@ inline void write_all(const fs::path& p, const Bytes& bytes)
 {
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
     SW_CHECK(static_cast<bool>(f));
-    if (!bytes.empty()) f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!bytes.empty())
+        f.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
     f.flush();
     SW_CHECK(static_cast<bool>(f));
 }
@@ -165,10 +161,10 @@ public:
     // injeção
     bool fail_create_dir = false;
     WriteFault write_fault = WriteFault::None;
-    bool fail_readback_io = false;      // a releitura do .tmp falha
-    bool fail_readback_oom = false;     // idem, falta de memória
-    bool corrupt_readback = false;      // a releitura do .tmp volta com um byte trocado
-    bool truncate_readback = false;     // a releitura do .tmp volta curta
+    bool fail_readback_io = false;  // a releitura do .tmp falha
+    bool fail_readback_oom = false; // idem, falta de memória
+    bool corrupt_readback = false;  // a releitura do .tmp volta com um byte trocado
+    bool truncate_readback = false; // a releitura do .tmp volta curta
     det::FileReadStatus read_status_for_target = det::FileReadStatus::Ok; // != Ok: força o status
     ReplaceFault replace_fault = ReplaceFault::None;
 

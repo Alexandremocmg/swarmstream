@@ -72,9 +72,10 @@ int main()
         (void)::close(probe);
         SW_CHECK(::chmod(installed.c_str(), 0700) == 0);
         cleanup(dir);
-        return not_covered(::geteuid() == 0
-                               ? "rodando como root: a permissao 0300 nao impede abrir a pasta"
-                               : "a permissao 0300 nao impediu abrir a pasta (ACL ou sistema de arquivos)");
+        return not_covered(
+            ::geteuid() == 0
+                ? "rodando como root: a permissao 0300 nao impede abrir a pasta"
+                : "a permissao 0300 nao impediu abrir a pasta (ACL ou sistema de arquivos)");
     }
     SW_CHECK(errno == EACCES);
 
@@ -97,7 +98,8 @@ int main()
     SW_CHECK(r.status == det::FloorStatus::Ok && r.floor.has_value() && *r.floor == 2);
 
     cleanup(dir);
-    std::cout << "[Test] (d) coberto: rename deu certo e o fsync da pasta falhou (EACCES) depois dele\n";
+    std::cout
+        << "[Test] (d) coberto: rename deu certo e o fsync da pasta falhou (EACCES) depois dele\n";
     return 0;
 #endif
 }

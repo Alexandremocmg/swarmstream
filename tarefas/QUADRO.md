@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 2 | 8 | 21 | 35 |
+| 3 | 0 | 2 | 6 | 23 | 35 |
 
 ## Espera o dono do produto
 - [F1-04](cartoes/F1-04.md): Geração do manifesto v0, assinado com a chave de teste (ADR-0012)
@@ -21,8 +21,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-60](cartoes/F1-60.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real (`sw_init`, `sw_open`, `sw_read`, `sw_shutdown`) sobre cache, agendador, fonte e VFS
 - [F1-67](cartoes/F1-67.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real, etapa 1: contexto, ciclo de vida, handles, VFS e protocolo de fechamento (`sw_init`, `sw_shutdown`, `sw_open`, `sw_close`, `sw_file_size`, `sw_stat`, `sw_dir_*`)
 - [F1-68](cartoes/F1-68.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da implementadora do F1-67): API C real, etapa 2: leitura, `sw_ensure_async`, `sw_cancel` e `sw_get_stats` sobre cache, agendador e fonte
-- [F1-69](cartoes/F1-69.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Posse e estado da pasta de cache: lock entre processos e piso anti-rollback por `game_id`
-- [F1-70](cartoes/F1-70.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Conferência de `block_count` na recuperação do cache (docs/04 §5, passo 3)
 - [F1-71](cartoes/F1-71.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Fronteira `noexcept` do caminho de parada: `CacheOwner::stop()` e auditoria (alocação e exceções)
 
 ## Abertas na F1a
@@ -41,6 +39,8 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
 | [F1-57](cartoes/F1-57.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Teste instável do agendador: destrutor atrás de callback lento (test_deadline_scheduler.cpp:962) |
 | [F1-62](cartoes/F1-62.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Medir o custo das funções de compressão (LZ4) e de assinatura (libsodium) no binário do cliente e avaliar alternativas |
+| [F1-69](cartoes/F1-69.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Posse e estado da pasta de cache: lock entre processos e piso anti-rollback por `game_id` |
+| [F1-70](cartoes/F1-70.md) | R1 | Opus 5.5, esforço alto | sim | sim | Conferência de `block_count` na recuperação do cache (docs/04 §5, passo 3) |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |

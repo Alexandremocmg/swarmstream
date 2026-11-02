@@ -67,8 +67,8 @@ void cleanup(const fs::path& dir)
 {
     // Devolve a escrita antes de apagar (alguns testes tiram a permissão).
     std::error_code ec;
-    for (const auto& e : fs::recursive_directory_iterator(
-             dir, fs::directory_options::skip_permission_denied, ec)) {
+    for (const auto& e :
+         fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
         std::error_code pec;
         fs::permissions(e.path(), fs::perms::owner_all, fs::perm_options::add, pec);
     }
@@ -162,7 +162,7 @@ void test_same_process_second_lock_collides()
     det::CacheDirLock b;
     const det::LockStatus sb = det::CacheDirLock::acquire(dir, b);
     SW_CHECK(sb.code == det::LockCode::Locked && !b.held());
-    SW_CHECK(!sb.detail.empty() && sb.detail.find("swarmstream.lock") != std::string::npos);
+    SW_CHECK(sb.detail != nullptr && sb.detail->find("swarmstream.lock") != std::string::npos);
     SW_CHECK(a.held()); // o segundo não mexeu no primeiro
 
     SW_CHECK(a.release().ok() && !a.held());
@@ -254,7 +254,8 @@ void test_misuse_and_move()
     SW_CHECK(det::CacheDirLock::acquire(dir, a).ok());
     // Pedir outro lock com o mesmo objeto: erro, e o lock original continua seguro.
     const det::LockStatus again = det::CacheDirLock::acquire(other, a);
-    SW_CHECK(again.code == det::LockCode::Io && a.held() && a.path() == dir / det::kCacheLockFileName);
+    SW_CHECK(again.code == det::LockCode::Io && a.held() &&
+             a.path() == dir / det::kCacheLockFileName);
     SW_CHECK(!fs::exists(other / det::kCacheLockFileName)); // nem tocou na outra pasta
 
     det::CacheDirLock moved(std::move(a));
@@ -282,7 +283,8 @@ void test_io_errors_are_not_locked()
         write_file(base / "arquivo", "x");
         det::CacheDirLock l;
         const det::LockStatus st = det::CacheDirLock::acquire(base / "arquivo", l);
-        SW_CHECK(st.code == det::LockCode::Io && !l.held() && !st.detail.empty());
+        SW_CHECK(st.code == det::LockCode::Io && !l.held() && st.detail != nullptr &&
+                 !st.detail->empty());
         cleanup(base);
     }
     // 2) swarmstream.lock é uma pasta.
@@ -320,7 +322,8 @@ void test_io_errors_are_not_locked()
     {
         const fs::path base = fresh_dir("io4");
         std::error_code ec;
-        fs::permissions(base, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace, ec);
+        fs::permissions(base, fs::perms::owner_read | fs::perms::owner_exec,
+                        fs::perm_options::replace, ec);
         SW_CHECK(!ec);
         if (running_as_root()) {
             std::cout << "  NAO COBERTO (pasta somente leitura): rodando como root, a permissao "
@@ -433,7 +436,8 @@ struct RawInheritableLock
                           FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h == INVALID_HANDLE_VALUE) return false;
         OVERLAPPED ov{};
-        return ::LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov) != 0;
+        return ::LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov) !=
+               0;
 #else
         fd = ::open(file.c_str(), O_RDWR | O_CREAT, 0644); // sem O_CLOEXEC
         if (fd < 0) return false;
@@ -549,17 +553,19 @@ void test_sixteen_threads_one_winner()
             }
         });
     }
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     SW_CHECK(winners.load() == 1 && locked.load() == kThreads - 1 && other.load() == 0);
     cleanup(dir);
 }
-
 
 // swarmstream.lock e installed/ convivem com o resto da pasta (F1-60 §6.1/§6.2, "confirmar no
 // teste"): o StoreFiles só apaga store-NNN.bin e a inspeção ignora os outros nomes.
 void test_other_components_leave_lock_and_installed_alone()
 {
-    std::cout << "[Test] CacheOwner (teto menor apaga store-NNN.bin) e inspeção não mexem em swarmstream.lock nem installed/" << std::endl;
+    std::cout << "[Test] CacheOwner (teto menor apaga store-NNN.bin) e inspeção não mexem em "
+                 "swarmstream.lock nem installed/"
+              << std::endl;
     const fs::path dir = fresh_dir("convive");
     constexpr sw::StoreLayout kLayout{.slots_per_file = 4, .slot_size = 256 * 1024};
     det::CacheDirLock lock;
@@ -595,7 +601,8 @@ void test_other_components_leave_lock_and_installed_alone()
              fs::exists(dir / "installed" / "abc.manifest.tmp"));
     const Snapshot after = snapshot(dir, false);
     SW_CHECK(after.at("installed/abc.manifest") == mine_before.at("installed/abc.manifest"));
-    SW_CHECK(after.at("installed/abc.manifest.tmp") == mine_before.at("installed/abc.manifest.tmp"));
+    SW_CHECK(after.at("installed/abc.manifest.tmp") ==
+             mine_before.at("installed/abc.manifest.tmp"));
     // A inspeção (somente leitura) também ignora os dois nomes e não muda a pasta.
     const Snapshot before_inspect = snapshot(dir, true);
     const auto ins = det::inspect_cache(dir, kLayout);

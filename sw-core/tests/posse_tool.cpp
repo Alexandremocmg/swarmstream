@@ -6,9 +6,9 @@
 //
 //   posse-tool hold <pasta> <pronto>       pega o lock, grava <pronto> ("ACQUIRED"/"LOCKED"/"IO") e
 //                                          segura até ser morto (sai com 3 depois de 60 s)
-//   posse-tool try <pasta>                 tenta o lock uma vez: 0 pegou, 10 bloqueado, 11 E/S, 12 memória
-//   posse-tool sleep <pronto>              grava <pronto> e dorme (para o teste do exec sem herança)
-//   posse-tool floor-commit <pasta> <manifesto> <chave_hex> <modo>
+//   posse-tool try <pasta>                 tenta o lock uma vez: 0 pegou, 10 bloqueado, 11 E/S, 12
+//   memória posse-tool sleep <pronto>              grava <pronto> e dorme (para o teste do exec sem
+//   herança) posse-tool floor-commit <pasta> <manifesto> <chave_hex> <modo>
 //                                          commit_installed_floor com uma queda injetada:
 //                                          ok | die-before-write | die-after-write |
 //                                          die-before-replace | die-after-replace
@@ -17,8 +17,6 @@
 #include "installed_floor.hpp"
 #include "test_process.hpp"
 
-#include <swarmstream/manifest_view.hpp>
-
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -26,6 +24,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <swarmstream/manifest_view.hpp>
 #include <thread>
 #include <vector>
 
@@ -72,7 +71,8 @@ bool write_marker(const fs::path& path, const char* text)
 
 void sleep_until_killed()
 {
-    for (int i = 0; i < 600; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    for (int i = 0; i < 600; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 int cmd_hold(const fs::path& dir, const fs::path& ready)
@@ -80,8 +80,9 @@ int cmd_hold(const fs::path& dir, const fs::path& ready)
     sw::detail::CacheDirLock lock;
     const sw::detail::LockStatus st = sw::detail::CacheDirLock::acquire(dir, lock);
     if (!st.ok()) {
-        std::fprintf(stderr, "hold: %s\n", st.detail.c_str());
-        if (!write_marker(ready, st.code == sw::detail::LockCode::Locked ? "LOCKED" : "IO")) return kExitUsage;
+        std::fprintf(stderr, "hold: %s\n", st.message());
+        if (!write_marker(ready, st.code == sw::detail::LockCode::Locked ? "LOCKED" : "IO"))
+            return kExitUsage;
         return exit_of(st.code);
     }
     if (!write_marker(ready, "ACQUIRED")) return kExitUsage;
@@ -94,12 +95,12 @@ int cmd_try(const fs::path& dir)
     sw::detail::CacheDirLock lock;
     const sw::detail::LockStatus st = sw::detail::CacheDirLock::acquire(dir, lock);
     if (!st.ok()) {
-        std::fprintf(stderr, "try: %s\n", st.detail.c_str());
+        std::fprintf(stderr, "try: %s\n", st.message());
         return exit_of(st.code);
     }
     const sw::detail::LockStatus rel = lock.release();
     if (!rel.ok()) {
-        std::fprintf(stderr, "try: release: %s\n", rel.detail.c_str());
+        std::fprintf(stderr, "try: release: %s\n", rel.message());
         return kExitIo;
     }
     return kExitAcquired;
@@ -192,7 +193,8 @@ int main(int argc, char** argv)
     if (cmd == "hold" && argc == 4) return cmd_hold(argv[2], argv[3]);
     if (cmd == "try" && argc == 3) return cmd_try(argv[2]);
     if (cmd == "sleep" && argc == 3) return cmd_sleep(argv[2]);
-    if (cmd == "floor-commit" && argc == 6) return cmd_floor_commit(argv[2], argv[3], argv[4], argv[5]);
+    if (cmd == "floor-commit" && argc == 6)
+        return cmd_floor_commit(argv[2], argv[3], argv[4], argv[5]);
     std::fprintf(stderr, "uso invalido\n");
     return kExitUsage;
 }

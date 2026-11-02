@@ -25,10 +25,9 @@
 #include "floor_test_support.hpp"
 #include "test_process.hpp"
 
-#include <swarmstream/manifest_view.hpp>
-
 #include <iostream>
 #include <string>
+#include <swarmstream/manifest_view.hpp>
 
 namespace sw = swarmstream;
 namespace det = swarmstream::detail;
@@ -48,10 +47,7 @@ std::span<const sp::Ed25519PublicKey> keys_of(const std::vector<sp::Ed25519Publi
     return std::span<const sp::Ed25519PublicKey>(v.data(), v.size());
 }
 
-std::vector<sp::Ed25519PublicKey> only_a()
-{
-    return {public_key_of(kSeedA)};
-}
+std::vector<sp::Ed25519PublicKey> only_a() { return {public_key_of(kSeedA)}; }
 
 fs::path target_of(const fs::path& dir, const std::string& game)
 {
@@ -102,9 +98,11 @@ void test_file_name_is_sha256_of_game_id()
              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     const fs::path dir = "pasta";
     SW_CHECK(det::installed_floor_path(dir, "abc") ==
-             dir / "installed" / "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.manifest");
+             dir / "installed" /
+                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.manifest");
     SW_CHECK(det::installed_tmp_path(dir, "abc") ==
-             dir / "installed" / "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.manifest.tmp");
+             dir / "installed" /
+                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.manifest.tmp");
     SW_CHECK(det::installed_hash_hex("abc") != det::installed_hash_hex("abd"));
 }
 
@@ -147,7 +145,8 @@ void test_first_install_and_exact_copy()
 
 void test_write_rule_higher_equal_lower()
 {
-    std::cout << "[Test] regra de gravação: maior grava; igual com bytes diferentes grava; igual idêntico não; menor nunca\n";
+    std::cout << "[Test] regra de gravação: maior grava; igual com bytes diferentes grava; igual "
+                 "idêntico não; menor nunca\n";
     const fs::path dir = fresh_dir("regra");
     const auto keys = only_a();
     const Bytes v5 = make_manifest("jogo", 5, kSeedA, "r1");
@@ -167,7 +166,8 @@ void test_write_rule_higher_equal_lower()
     {
         FaultOps ops;
         const det::FloorWrite w = commit(dir, v5b, keys, ops);
-        SW_CHECK(w.status == det::FloorStatus::Ok && w.wrote && ops.replace_calls == 1 && ops.swapped);
+        SW_CHECK(w.status == det::FloorStatus::Ok && w.wrote && ops.replace_calls == 1 &&
+                 ops.swapped);
         SW_CHECK(same_bytes(read_all(target_of(dir, "jogo")), v5b));
         SW_CHECK(*read_floor(dir, "jogo", keys).floor == 5);
     }
@@ -179,13 +179,15 @@ void test_write_rule_higher_equal_lower()
     {
         FaultOps ops;
         const det::FloorWrite w = commit(dir, v5, keys, ops);
-        SW_CHECK(w.status == det::FloorStatus::Rollback && w.category == det::FloorCategory::LowerSeq);
+        SW_CHECK(w.status == det::FloorStatus::Rollback &&
+                 w.category == det::FloorCategory::LowerSeq);
         SW_CHECK(!w.wrote && !w.may_have_changed);
         SW_CHECK(ops.create_dir_calls == 0 && ops.write_calls == 0 && ops.replace_calls == 0);
         SW_CHECK(same_bytes(read_all(target_of(dir, "jogo")), v6));
         SW_CHECK(!fs::exists(tmp_of(dir, "jogo")));
     }
-    // Controle positivo do oráculo: o piso 6 faz o ManifestView recusar o v5 (a integração do F1-67).
+    // Controle positivo do oráculo: o piso 6 faz o ManifestView recusar o v5 (a integração do
+    // F1-67).
     SW_CHECK(open_with_floor(v5, keys, 6).code == sp::ManifestError::Rollback);
     SW_CHECK(open_with_floor(v6, keys, 6).ok());
     cleanup(dir);
@@ -255,8 +257,8 @@ void test_replace_fails_after_swap()
     SW_CHECK(!w.wrote && w.may_have_changed);
     SW_CHECK(w.detail.find("antigo ou novo") != std::string::npos);
     // ...mas a troca OCORREU antes dele (controle positivo, para o teste não passar vazio):
-    SW_CHECK(ops.replace_calls == 1 && ops.swapped);                     // o replace real devolveu sucesso
-    SW_CHECK(!fs::exists(tmp_of(dir, "jogo")));                          // o .tmp virou o alvo
+    SW_CHECK(ops.replace_calls == 1 && ops.swapped); // o replace real devolveu sucesso
+    SW_CHECK(!fs::exists(tmp_of(dir, "jogo")));      // o .tmp virou o alvo
     const Bytes on_disk = read_all(target_of(dir, "jogo"));
     SW_CHECK(!same_bytes(on_disk, old_m) && same_bytes(on_disk, new_m)); // o conteúdo mudou
     // O alvo novo verifica e a reabertura lê o piso NOVO e rejeita um manifesto menor que ele.
@@ -279,7 +281,8 @@ void test_replace_fails_after_swap()
 
 void test_failures_before_swap_leave_floor()
 {
-    std::cout << "[Test] (f) falhas em W1-W4: piso inalterado (tabela do F1-60 §6.2 como oráculo)\n";
+    std::cout
+        << "[Test] (f) falhas em W1-W4: piso inalterado (tabela do F1-60 §6.2 como oráculo)\n";
     const auto keys = only_a();
     const Bytes old_m = make_manifest("jogo", 1, kSeedA);
     const Bytes new_m = make_manifest("jogo", 2, kSeedA);
@@ -295,9 +298,11 @@ void test_failures_before_swap_leave_floor()
     const Case cases[] = {
         {"W1 criar installed/", [](FaultOps& o) { o.fail_create_dir = true; }, det::FloorStatus::Io,
          det::FloorCategory::CreateDir, false},
-        {"W2/W3 erro sem escrever", [](FaultOps& o) { o.write_fault = FaultOps::WriteFault::FailBeforeWriting; },
+        {"W2/W3 erro sem escrever",
+         [](FaultOps& o) { o.write_fault = FaultOps::WriteFault::FailBeforeWriting; },
          det::FloorStatus::Io, det::FloorCategory::WriteTmp, true},
-        {"W2/W3 disco cheio no meio", [](FaultOps& o) { o.write_fault = FaultOps::WriteFault::FailAfterPartialWrite; },
+        {"W2/W3 disco cheio no meio",
+         [](FaultOps& o) { o.write_fault = FaultOps::WriteFault::FailAfterPartialWrite; },
          det::FloorStatus::Io, det::FloorCategory::WriteTmp, true},
         {"W4 releitura falha", [](FaultOps& o) { o.fail_readback_io = true; }, det::FloorStatus::Io,
          det::FloorCategory::VerifyTmp, true},
@@ -305,8 +310,8 @@ void test_failures_before_swap_leave_floor()
          det::FloorStatus::OutOfMemory, det::FloorCategory::VerifyTmp, true},
         {"W4 releitura diverge (byte trocado)", [](FaultOps& o) { o.corrupt_readback = true; },
          det::FloorStatus::Io, det::FloorCategory::VerifyTmp, true},
-        {"W4 releitura curta", [](FaultOps& o) { o.truncate_readback = true; }, det::FloorStatus::Io,
-         det::FloorCategory::VerifyTmp, true},
+        {"W4 releitura curta", [](FaultOps& o) { o.truncate_readback = true; },
+         det::FloorStatus::Io, det::FloorCategory::VerifyTmp, true},
     };
 
     for (const Case& c : cases) {
@@ -325,7 +330,8 @@ void test_failures_before_swap_leave_floor()
             SW_CHECK(same_bytes(read_all(target_of(dir, "jogo")), old_m));
             const auto r = read_floor(dir, "jogo", keys);
             SW_CHECK(r.status == det::FloorStatus::Ok && *r.floor == 1);
-            // O .tmp (se ficou) nunca é lido: o piso lido é o do alvo, e a próxima gravação o substitui.
+            // O .tmp (se ficou) nunca é lido: o piso lido é o do alvo, e a próxima gravação o
+            // substitui.
             SW_CHECK(commit(dir, new_m, keys).wrote);
             SW_CHECK(*read_floor(dir, "jogo", keys).floor == 2);
             SW_CHECK(!fs::exists(tmp_of(dir, "jogo")));
@@ -373,7 +379,8 @@ void test_orphan_tmp()
     cleanup(dir2);
 }
 
-// Estado existente ruim => status Io, categoria certa, arquivo intacto, nunca "primeira instalação".
+// Estado existente ruim => status Io, categoria certa, arquivo intacto, nunca "primeira
+// instalação".
 void expect_policy(const fs::path& dir, const std::string& game,
                    const std::vector<sp::Ed25519PublicKey>& keys, det::FloorCategory category,
                    const Bytes& expected_file)
@@ -397,7 +404,8 @@ void expect_policy(const fs::path& dir, const std::string& game,
 
 void test_policy_bad_state()
 {
-    std::cout << "[Test] (g) política conservadora: estado ruim => SW_E_IO com a categoria, nunca primeira instalação\n";
+    std::cout << "[Test] (g) política conservadora: estado ruim => SW_E_IO com a categoria, nunca "
+                 "primeira instalação\n";
     const auto keys = only_a();
     const Bytes good = make_manifest("jogo", 3, kSeedA);
 
@@ -408,30 +416,30 @@ void test_policy_bad_state()
         return dir;
     };
 
-    {   // vazio
+    { // vazio
         const fs::path dir = fresh_with("p_vazio", Bytes{});
         expect_policy(dir, "jogo", keys, det::FloorCategory::Format, Bytes{});
         cleanup(dir);
     }
-    {   // lixo
+    { // lixo
         const Bytes junk(300, std::byte{0x41});
         const fs::path dir = fresh_with("p_lixo", junk);
         expect_policy(dir, "jogo", keys, det::FloorCategory::Format, junk);
         cleanup(dir);
     }
-    {   // truncado (metade do envelope válido)
+    { // truncado (metade do envelope válido)
         const Bytes half(good.begin(), good.begin() + static_cast<std::ptrdiff_t>(good.size() / 2));
         const fs::path dir = fresh_with("p_trunc", half);
         expect_policy(dir, "jogo", keys, det::FloorCategory::Format, half);
         cleanup(dir);
     }
-    {   // truncado só no envelope (menos de 104 bytes)
+    { // truncado só no envelope (menos de 104 bytes)
         const Bytes tiny(good.begin(), good.begin() + 50);
         const fs::path dir = fresh_with("p_tiny", tiny);
         expect_policy(dir, "jogo", keys, det::FloorCategory::Format, tiny);
         cleanup(dir);
     }
-    {   // assinatura inválida (um bit da assinatura trocado): só com o libsodium real
+    { // assinatura inválida (um bit da assinatura trocado): só com o libsodium real
         if (is_sodium_stub()) {
             std::cout << "  PULADO (stub): assinatura inválida precisa do libsodium real\n";
         } else {
@@ -443,7 +451,7 @@ void test_policy_bad_state()
             std::cout << "  assinatura inválida: coberto (libsodium real)\n";
         }
     }
-    {   // payload alterado com a assinatura antiga: idem
+    { // payload alterado com a assinatura antiga: idem
         if (!is_sodium_stub()) {
             Bytes bad = good;
             bad[good.size() - 1] ^= std::byte{0x80};
@@ -452,7 +460,7 @@ void test_policy_bad_state()
             cleanup(dir);
         }
     }
-    {   // chave que saiu da lista
+    { // chave que saiu da lista
         const fs::path dir = fresh_with("p_chave", make_manifest("jogo", 3, kSeedB));
         expect_policy(dir, "jogo", keys, det::FloorCategory::UnknownKey,
                       make_manifest("jogo", 3, kSeedB));
@@ -462,13 +470,13 @@ void test_policy_bad_state()
         SW_CHECK(r.detail.find(kid) != std::string::npos);
         cleanup(dir);
     }
-    {   // manifesto de OUTRO jogo guardado com o nome deste
+    { // manifesto de OUTRO jogo guardado com o nome deste
         const Bytes other = make_manifest("outro.jogo", 3, kSeedA);
         const fs::path dir = fresh_with("p_gameid", other);
         expect_policy(dir, "jogo", keys, det::FloorCategory::GameIdMismatch, other);
         cleanup(dir);
     }
-    {   // min_reader que este leitor não suporta (assinatura VÁLIDA)
+    { // min_reader que este leitor não suporta (assinatura VÁLIDA)
         sp::ManifestModel m = model_of("jogo", 3);
         m.min_reader = 1;
         const Bytes unsupported = sp::encode_manifest(m, kSeedA);
@@ -476,7 +484,7 @@ void test_policy_bad_state()
         expect_policy(dir, "jogo", keys, det::FloorCategory::Unsupported, unsupported);
         cleanup(dir);
     }
-    {   // o "arquivo" é uma pasta
+    { // o "arquivo" é uma pasta
         const fs::path dir = fresh_dir("p_pasta");
         fs::create_directories(target_of(dir, "jogo"));
         const det::FloorRead r = read_floor(dir, "jogo", keys);
@@ -484,7 +492,7 @@ void test_policy_bad_state()
         SW_CHECK(fs::is_directory(target_of(dir, "jogo")));
         cleanup(dir);
     }
-    {   // `installed` é um arquivo comum (ENOTDIR não é "ausente")
+    { // `installed` é um arquivo comum (ENOTDIR não é "ausente")
         const fs::path dir = fresh_dir("p_installed_arquivo");
         write_all(dir / "installed", Bytes(3, std::byte{1}));
         const det::FloorRead r = read_floor(dir, "jogo", keys);
@@ -493,12 +501,19 @@ void test_policy_bad_state()
         SW_CHECK(fs::is_regular_file(dir / "installed"));
         cleanup(dir);
     }
-    {   // erros de leitura reportados pela operação: grande demais / E/S / memória
+    { // erros de leitura reportados pela operação: grande demais / E/S / memória
         const fs::path dir = fresh_dir("p_ops");
-        struct S { det::FileReadStatus st; det::FloorStatus status; det::FloorCategory cat; };
-        const S sts[] = {{det::FileReadStatus::TooLarge, det::FloorStatus::Io, det::FloorCategory::Format},
-                         {det::FileReadStatus::Io, det::FloorStatus::Io, det::FloorCategory::Read},
-                         {det::FileReadStatus::OutOfMemory, det::FloorStatus::OutOfMemory, det::FloorCategory::Read}};
+        struct S
+        {
+            det::FileReadStatus st;
+            det::FloorStatus status;
+            det::FloorCategory cat;
+        };
+        const S sts[] = {
+            {det::FileReadStatus::TooLarge, det::FloorStatus::Io, det::FloorCategory::Format},
+            {det::FileReadStatus::Io, det::FloorStatus::Io, det::FloorCategory::Read},
+            {det::FileReadStatus::OutOfMemory, det::FloorStatus::OutOfMemory,
+             det::FloorCategory::Read}};
         for (const S& s : sts) {
             FaultOps ops;
             ops.read_status_for_target = s.st;
@@ -533,7 +548,8 @@ void test_policy_new_manifest_must_verify()
         Bytes bad = make_manifest("jogo", 1, kSeedA);
         bad[41] ^= std::byte{0x02};
         const det::FloorWrite w4 = commit(dir, bad, keys);
-        SW_CHECK(w4.status == det::FloorStatus::Io && w4.category == det::FloorCategory::NewManifest);
+        SW_CHECK(w4.status == det::FloorStatus::Io &&
+                 w4.category == det::FloorCategory::NewManifest);
     }
     SW_CHECK(!fs::exists(dir / "installed")); // nenhuma tentativa chegou a tocar na pasta
     cleanup(dir);
@@ -541,7 +557,8 @@ void test_policy_new_manifest_must_verify()
 
 void test_key_rotation()
 {
-    std::cout << "[Test] (g) rotação de chave: com sobreposição funciona; sem ela, SW_E_IO e o piso não cai\n";
+    std::cout << "[Test] (g) rotação de chave: com sobreposição funciona; sem ela, SW_E_IO e o "
+                 "piso não cai\n";
     const fs::path dir = fresh_dir("rotacao");
     const std::vector<sp::Ed25519PublicKey> only_old = {public_key_of(kSeedA)};
     const std::vector<sp::Ed25519PublicKey> only_new = {public_key_of(kSeedB)};
@@ -556,7 +573,8 @@ void test_key_rotation()
         const auto r = read_floor(dir, "jogo", only_new);
         SW_CHECK(r.status == det::FloorStatus::Io && r.category == det::FloorCategory::UnknownKey);
         const auto w = commit(dir, v6_new, only_new);
-        SW_CHECK(w.status == det::FloorStatus::Io && w.category == det::FloorCategory::UnknownKey && !w.wrote);
+        SW_CHECK(w.status == det::FloorStatus::Io && w.category == det::FloorCategory::UnknownKey &&
+                 !w.wrote);
         SW_CHECK(same_bytes(read_all(target_of(dir, "jogo")), v5_old));
     }
     // Com sobreposição (lista nova + chave antiga): lê o piso 5, aceita o v6 e REESCREVE a cópia
@@ -583,7 +601,8 @@ void test_key_rotation()
 // (e) queda DE VERDADE do processo filho num ponto exato do commit.
 void test_crash_points()
 {
-    std::cout << "[Test] (e) queda do processo no meio do commit: antes da troca = piso antigo; depois = novo\n";
+    std::cout << "[Test] (e) queda do processo no meio do commit: antes da troca = piso antigo; "
+                 "depois = novo\n";
     const auto keys = only_a();
     const sp::Ed25519PublicKey key = keys[0];
     const Bytes old_m = make_manifest("jogo", 1, kSeedA);
@@ -596,10 +615,10 @@ void test_crash_points()
         bool tmp_survives;
     };
     const Case cases[] = {
-        {"die-before-write", false, false},   // nada foi gravado
-        {"die-after-write", false, true},     // .tmp completo e sincronizado, alvo intocado
-        {"die-before-replace", false, true},  // idem, depois da releitura W4
-        {"die-after-replace", true, false},   // a troca (rename + fsync da pasta) já ocorreu
+        {"die-before-write", false, false},  // nada foi gravado
+        {"die-after-write", false, true},    // .tmp completo e sincronizado, alvo intocado
+        {"die-before-replace", false, true}, // idem, depois da releitura W4
+        {"die-after-replace", true, false},  // a troca (rename + fsync da pasta) já ocorreu
     };
     for (const Case& c : cases) {
         std::cout << "  - " << c.mode << "\n";
@@ -608,15 +627,17 @@ void test_crash_points()
         SW_CHECK(commit(dir, old_m, keys).wrote);
         write_all(aux / "novo.manifest", new_m);
 
-        auto child = sw::test::Child::spawn(
-            g_tool, {"floor-commit", dir.string(), (aux / "novo.manifest").string(), hex_of(key), c.mode});
+        auto child =
+            sw::test::Child::spawn(g_tool, {"floor-commit", dir.string(),
+                                            (aux / "novo.manifest").string(), hex_of(key), c.mode});
         SW_CHECK(child.has_value());
         const sw::test::ChildExit e = child->wait(std::chrono::seconds(60));
         SW_CHECK(e.exited && e.by_kill); // morreu à força, no ponto combinado (não saiu sozinho)
 
         const Bytes on_disk = read_all(target_of(dir, "jogo"));
         if (c.floor_is_new) {
-            SW_CHECK(same_bytes(on_disk, new_m)); // controle positivo: a troca ocorreu antes da queda
+            SW_CHECK(
+                same_bytes(on_disk, new_m)); // controle positivo: a troca ocorreu antes da queda
         } else {
             SW_CHECK(same_bytes(on_disk, old_m)); // e aqui NÃO ocorreu
         }
@@ -626,7 +647,8 @@ void test_crash_points()
         SW_CHECK(*r.floor == (c.floor_is_new ? 2u : 1u));
         // A cópia que ficou verifica e rejeita um manifesto com build_seq menor que o piso.
         const Bytes lower = make_manifest("jogo", 1, kSeedA, "inferior");
-        if (c.floor_is_new) SW_CHECK(open_with_floor(lower, keys, r.floor).code == sp::ManifestError::Rollback);
+        if (c.floor_is_new)
+            SW_CHECK(open_with_floor(lower, keys, r.floor).code == sp::ManifestError::Rollback);
         // Depois da queda, a próxima gravação funciona (substitui o .tmp órfão).
         SW_CHECK(commit(dir, new_m, keys).wrote == !c.floor_is_new);
         SW_CHECK(*read_floor(dir, "jogo", keys).floor == 2);
@@ -640,8 +662,9 @@ void test_crash_points()
         const fs::path aux = fresh_dir("queda_ok_aux");
         SW_CHECK(commit(dir, old_m, keys).wrote);
         write_all(aux / "novo.manifest", new_m);
-        auto child = sw::test::Child::spawn(
-            g_tool, {"floor-commit", dir.string(), (aux / "novo.manifest").string(), hex_of(key), "ok"});
+        auto child =
+            sw::test::Child::spawn(g_tool, {"floor-commit", dir.string(),
+                                            (aux / "novo.manifest").string(), hex_of(key), "ok"});
         SW_CHECK(child.has_value());
         const sw::test::ChildExit e = child->wait(std::chrono::seconds(60));
         SW_CHECK(e.exited && !e.by_kill && e.code == 0);
@@ -662,7 +685,9 @@ int main(int argc, char** argv)
     g_tool = argv[1];
     SW_CHECK(fs::exists(g_tool));
     SW_CHECK(sp::crypto_ready());
-    std::cout << "libsodium: " << sp::crypto_version() << (is_sodium_stub() ? " (STUB: casos de assinatura ruim PULADOS)" : " (real)") << "\n";
+    std::cout << "libsodium: " << sp::crypto_version()
+              << (is_sodium_stub() ? " (STUB: casos de assinatura ruim PULADOS)" : " (real)")
+              << "\n";
     test_file_name_is_sha256_of_game_id();
     test_absent_floor_has_no_side_effects();
     test_first_install_and_exact_copy();

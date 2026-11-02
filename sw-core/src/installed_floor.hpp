@@ -41,8 +41,6 @@
 
 #include "swarmstream/types.hpp"
 
-#include <swarmstream/ed25519_verify.hpp>
-
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -50,6 +48,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <swarmstream/ed25519_verify.hpp>
 #include <vector>
 
 namespace swarmstream::detail {
@@ -89,9 +88,9 @@ enum class FloorCategory : std::uint8_t {
 
 enum class FileReadStatus : std::uint8_t {
     Ok = 0,
-    NotFound,   // ENOENT / ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND (e só estes)
-    TooLarge,   // passou de `max_bytes`
-    Io,         // qualquer outro erro
+    NotFound, // ENOENT / ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND (e só estes)
+    TooLarge, // passou de `max_bytes`
+    Io,       // qualquer outro erro
     OutOfMemory,
 };
 
@@ -140,16 +139,16 @@ struct FloorRead
     std::string detail;
 };
 
-[[nodiscard]] FloorRead
-read_installed_floor(const std::filesystem::path& cache_dir, std::string_view game_id,
-                     std::span<const pack::Ed25519PublicKey> trusted_keys,
-                     FloorFileOps& ops = real_floor_file_ops()) noexcept;
+[[nodiscard]] FloorRead read_installed_floor(const std::filesystem::path& cache_dir,
+                                             std::string_view game_id,
+                                             std::span<const pack::Ed25519PublicKey> trusted_keys,
+                                             FloorFileOps& ops = real_floor_file_ops()) noexcept;
 
 struct FloorWrite
 {
     FloorStatus status = FloorStatus::Ok;
     FloorCategory category = FloorCategory::None;
-    bool wrote = false;         // true: o alvo foi trocado (replace devolveu sucesso)
+    bool wrote = false; // true: o alvo foi trocado (replace devolveu sucesso)
     // true quando um erro de replace_file deixou o alvo ANTIGO OU NOVO. Falsa em W1-W4.
     bool may_have_changed = false;
     std::string detail;

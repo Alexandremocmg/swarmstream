@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 #if defined(_WIN32)
@@ -42,18 +43,27 @@ inline constexpr const char* kCacheLockFileName = "swarmstream.lock";
 
 enum class LockCode : std::uint8_t {
     Ok = 0,
-    Locked,      // outra abertura (outro processo ou outro lock deste) segura a pasta
-    Io,          // qualquer outro erro do SO (permissão, disco somente leitura, pasta que não pôde ser criada...)
+    Locked, // outra abertura (outro processo ou outro lock deste) segura a pasta
+    Io, // qualquer outro erro do SO (permissão, disco somente leitura, pasta que não pôde ser
+        // criada...)
     OutOfMemory, // falta de memória montando o caminho ou a mensagem
 };
 
+// Resultado de acquire()/release(). NÃO tem std::string inline de propósito: o Ok (e qualquer
+// retorno por valor) não aloca em nenhuma configuração, nem no MSVC em Debug, onde construir ou
+// mover uma std::string aloca o proxy dos iteradores dentro de um construtor `noexcept`. Isso
+// importa porque o Ok é devolvido DEPOIS de o lock estar tomado: nada que possa falhar por falta
+// de memória pode ficar depois da tomada do lock. O texto (só nas falhas) vai num shared_ptr.
 struct LockStatus
 {
     LockCode code = LockCode::Ok;
-    int os_error = 0;   // errno / GetLastError, 0 se não houve
-    std::string detail; // diagnóstico para o log_fn (operação, caminho, causa); vazio em Ok
+    int os_error = 0; // errno / GetLastError, 0 se não houve
+    // Diagnóstico para o log_fn (operação, caminho, causa). Nulo em Ok e em OutOfMemory.
+    std::shared_ptr<const std::string> detail;
 
     [[nodiscard]] bool ok() const noexcept { return code == LockCode::Ok; }
+    // Texto do diagnóstico; "" se não há.
+    [[nodiscard]] const char* message() const noexcept { return detail ? detail->c_str() : ""; }
 };
 
 class CacheDirLock
@@ -78,7 +88,8 @@ public:
     [[nodiscard]] LockStatus release() noexcept;
 
     [[nodiscard]] bool held() const noexcept { return held_; }
-    [[nodiscard]] const std::filesystem::path& path() const noexcept { return lock_path_; }
+    // Caminho de `swarmstream.lock` enquanto segura o lock; vazio sem lock.
+    [[nodiscard]] const std::filesystem::path& path() const noexcept;
 
 private:
 #if defined(_WIN32)
@@ -87,7 +98,10 @@ private:
     int h_ = -1;
 #endif
     bool held_ = false;
-    std::filesystem::path lock_path_;
+    // Em ponteiro para que mover o CacheDirLock seja só mover um ponteiro (noexcept de verdade:
+    // mover um fs::path/std::string no MSVC em Debug aloca) e para que o caminho seja alocado
+    // ANTES de o arquivo ser aberto. Nulo sem lock.
+    std::unique_ptr<std::filesystem::path> lock_path_;
 };
 
 } // namespace swarmstream::detail
