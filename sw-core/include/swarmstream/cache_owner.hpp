@@ -22,7 +22,9 @@
 //   que não confere tira a peça do cache (FREE_SLOT) e devolve CorruptedChecksum: nada
 //   estragado sai do cache (04 §5, passo 5).
 // - start() recupera o estado (04 §5): index.bin do último checkpoint mais os registros do
-//   journal; depois grava um checkpoint novo. O relatório fica em recovery().
+//   journal; depois grava um checkpoint novo. O relatório fica em recovery(). Com
+//   CacheOwnerConfig::expected_block_counts (F1-70), a entrada cuja peça consta no manifesto com
+//   outro block_count é descartada nessa recuperação.
 // - Falha de sync no store ou no journal deixa o cache quebrado (broken()): tudo dá IoError
 //   até stop() e um start() novo, que refaz a recuperação. Nunca se repete um sync que falhou.
 // - Get COPIA a peça para o buffer de quem pede. Como a dona faz a leitura e a escrita, uma
@@ -57,6 +59,7 @@
 
 #pragma once
 
+#include "swarmstream/expected_block_counts.hpp"
 #include "swarmstream/mpsc_queue.hpp"
 #include "swarmstream/result.hpp"
 #include "swarmstream/store_files.hpp"
@@ -233,6 +236,15 @@ struct CacheOwnerConfig
     // Evento `eviction` (F1-30) por lote removido. nullptr = sem telemetria. Tem de viver mais
     // que a CacheOwner; emitir não aloca nem bloqueia.
     TelemetryLog* telemetry = nullptr;
+    // Conferência de block_count na recuperação (F1-70, docs/04 §5 passo 3): os block_count das
+    // peças do manifesto em uso, ORDENADOS e sem repetição por hash (build_expected_block_counts
+    // monta). Vazio = sem conferência (o comportamento de antes). Entrada do índice/journal cuja
+    // peça consta aqui e cujo block_count difere sai do cache (slot livre, nenhum byte de dado é
+    // apagado); peça que não consta é mantida. É uma visão: o chamador é dono dos dados, que
+    // precisam viver até start() voltar (a CacheOwner não guarda o span) e podem ser liberados
+    // depois. Vetor fora de ordem, repetido ou com block_count 0: start() devolve InvalidSize, sem
+    // tocar no disco.
+    std::span<const PieceBlockCount> expected_block_counts = {};
 };
 
 // Marcas do docs/04: a remoção começa em 95% do teto e para em 85%.
@@ -252,6 +264,7 @@ struct CacheRecovery
     uint32_t dropped_ceiling = 0;         // peças além do teto (o teto diminuiu)
     uint32_t dropped_missing_file = 0;    // peças num store-XXX.bin que não existe
     uint32_t dropped_conflict = 0;        // slot reaproveitado ou registro de outro layout
+    uint32_t dropped_block_count = 0;     // block_count diferente do manifesto em uso (F1-70)
     uint32_t pieces = 0;                  // peças no índice depois da recuperação
 };
 
