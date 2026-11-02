@@ -61,7 +61,7 @@ O comentário de `sw_shutdown` em [`swarmstream.h`](../../sw-core/include/swarms
 | disco cheio ao gravar o checkpoint (`DiskFull`) | `SW_E_DISK_FULL` |
 | `std::bad_alloc` em qualquer etapa | `SW_E_OUT_OF_MEMORY` |
 | outra exceção, ou condição interna inesperada | `SW_E_INTERNAL` |
-| falha de escrita da telemetria (diagnóstico, não dado) | **EM ABERTO.** A regra "só registrar no `log_fn`" **não foi aprovada** pelo dono (2026-11-02). Conclusão da auditoria no F1-71 (leitura preliminar): `~TelemetryLog()` não permite recolher o erro; só um `close()` explícito antes da destruição permitiria devolvê-lo. A regra será decidida junto do aceite do ADR |
+| falha ao encerrar a telemetria (resumo, `fflush`, `fclose`, `join`) | **Decisão do dono (2026-11-02): encerramento explícito e idempotente, com o resultado disponível antes da destruição; a falha participa do retorno de `sw_shutdown` pela mesma regra de precedência** (primeira falha na ordem do encerramento; as outras vão ao `log_fn`). Mapeia pelo mesmo critério das linhas acima (erro de disco `SW_E_IO`/`SW_E_DISK_FULL`, `bad_alloc` `SW_E_OUT_OF_MEMORY`, outra exceção `SW_E_INTERNAL`). Isso pede um `close() noexcept` em `TelemetryLog` (o destrutor só o chama), no escopo do [F1-71](../../tarefas/cartoes/F1-71.md). **Não é aceite integral do ADR e não autoriza implementar** |
 
 Encerramento concluído implica contexto inválido e recursos liberados **também** com `SW_E_OUT_OF_MEMORY` e `SW_E_INTERNAL`: esses dois códigos só saem de `sw_shutdown` **depois** da validação; antes dela só saem `BUSY`, `INVALID_ARGUMENT` e `SHUTTING_DOWN`.
 
