@@ -16,6 +16,12 @@
 // test_resolve_does_not_allocate conta as chamadas a `operator new` (substituído neste executável)
 // durante stat/open/resolve/next. O controle positivo prova que o contador enxerga um `new` real.
 //
+// F1-64: reforço (fim do arquivo): byte >= 0x80 depois do prefixo de diretório, bloco de 262144
+// bytes e offsets em torno de 2^32 (arquivos lógicos de mais de 4 GiB descritos só pelo manifesto,
+// vfs_fixture_big.hpp). Os resultados esperados são literais calculados à mão ou saem de um oráculo
+// linear que não usa nada do Vfs; o verificador fora do C++ é
+// sw-pack/testdata/verify_manifest_independent.py (ver o cartão F1-64).
+//
 // F1-63: o mesmo `operator new` ganha injeção de falha (`g_fail_countdown`): enquanto a contagem
 // está ligada, a k-ésima alocação (k = 0, 1, ...) lança std::bad_alloc. Os testes de falha de
 // `Vfs::build` varrem todos os k de cada manifesto (tabela de índices, pilha de prefixos) com `out`
@@ -23,6 +29,7 @@
 #include "check.hpp"
 #include "swarmstream/vfs.hpp"
 #include "vfs_fixture.hpp"
+#include "vfs_fixture_big.hpp"
 #include "vfs_fixture_data.hpp"
 
 #include <algorithm>
@@ -1401,6 +1408,667 @@ void test_concurrent_resolves()
     SW_CHECK(failures.load() == 0);
 }
 
+// ---------------------------------------------------------------- F1-64: reforço dos testes
+
+// Os três testes abaixo cobrem o que o F1-17 deixou de fora (achados 2 e 3 da revisão do F1-17):
+//  - byte >= 0x80 logo depois do nome de um diretório (mata o mutante unsigned char -> signed char
+//    em `before_dir`);
+//  - blocos de exatamente 262144 bytes (limite do §8 item 5);
+//  - arquivos lógicos de mais de 4 GiB, descritos só pelo manifesto (nenhum dado em disco).
+// Os resultados esperados NUNCA vêm do Vfs: ou são literais calculados à mão (com a conta nos
+// comentários e `static_assert`s sobre as constantes), ou saem do oráculo linear abaixo, que soma
+// os tamanhos dos blocos um a um e recorta a interseção de cada bloco com a janela lida (sem busca
+// binária, sem tabela de inícios, sem nada do Vfs).
+
+using Spans = std::vector<BlockSpan>;
+
+// Arquivo descrito por `refs` (índices de bloco) e pela tabela de tamanhos `raw`. `starts[i]` é a
+// soma dos tamanhos das referências anteriores a `i`, calculada aqui, uma vez, por soma simples.
+struct OracleFile
+{
+    const std::vector<std::uint32_t>& refs;
+    const std::uint32_t* raw;
+    std::vector<std::uint64_t> starts;
+
+    OracleFile(const std::vector<std::uint32_t>& r, const std::uint32_t* sizes)
+        : refs(r), raw(sizes)
+    {
+        std::uint64_t sum = 0;
+        for (const std::uint32_t b : refs) {
+            starts.push_back(sum);
+            sum += raw[b];
+        }
+    }
+};
+
+// Trechos esperados de [offset, offset + size): varredura linear das referências, recortando a
+// interseção de cada bloco com a janela. Só para janelas DENTRO do arquivo.
+Spans oracle_spans(const OracleFile& file, std::uint64_t offset, std::uint64_t size)
+{
+    Spans out;
+    const std::uint64_t end = offset + size;
+    // Pula, de 256 em 256 referências e SEM busca binária, as que terminam antes de `offset` (só
+    // para o Debug não varrer 16 mil referências a cada sondagem; o recorte abaixo é o mesmo).
+    std::size_t first = 0;
+    while (first + 256 < file.refs.size() && file.starts[first + 256] <= offset) {
+        first += 256;
+    }
+    for (std::size_t i = first; i < file.refs.size() && file.starts[i] < end; ++i) {
+        const std::uint32_t b = file.refs[i];
+        const std::uint64_t stop = file.starts[i] + file.raw[b];
+        if (stop <= offset) {
+            continue;
+        }
+        const std::uint64_t lo = std::max(offset, file.starts[i]);
+        const std::uint64_t hi = std::min(end, stop);
+        if (lo < hi) {
+            out.push_back(BlockSpan{b, static_cast<std::uint32_t>(lo - file.starts[i]),
+                                    static_cast<std::uint32_t>(hi - lo)});
+        }
+    }
+    return out;
+}
+
+struct Got
+{
+    VfsStatus status = VfsStatus::Ok;
+    std::uint64_t total = 0;
+    Spans spans;
+};
+
+Got collect(const VfsFile& file, std::uint64_t offset, std::uint64_t size)
+{
+    Got g;
+    VfsSpans spans;
+    g.status = file.resolve(offset, size, spans);
+    if (g.status != VfsStatus::Ok) {
+        SW_CHECK(spans.total_bytes() == 0); // destino intocado
+        BlockSpan none;
+        SW_CHECK(!spans.next(none));
+        return g;
+    }
+    g.total = spans.total_bytes();
+    BlockSpan s;
+    while (spans.next(s)) {
+        SW_CHECK(s.length > 0);
+        g.spans.push_back(s);
+    }
+    SW_CHECK(!spans.next(s)); // depois do fim continua sendo o fim
+    return g;
+}
+
+// Leitura que deve dar Ok com exatamente os trechos `want` (literais calculados à mão).
+void expect_read(const VfsFile& file, std::uint64_t offset, std::uint64_t size, const Spans& want)
+{
+    const Got g = collect(file, offset, size);
+    SW_CHECK(g.status == VfsStatus::Ok);
+    std::uint64_t sum = 0;
+    for (const BlockSpan& s : want) {
+        sum += s.length;
+    }
+    SW_CHECK(g.total == sum);
+    SW_CHECK(g.spans == want);
+}
+
+void expect_out_of_range(const VfsFile& file, std::uint64_t offset, std::uint64_t size)
+{
+    SW_CHECK(collect(file, offset, size).status == VfsStatus::OutOfRange);
+}
+
+// offset == tamanho: Ok com 0 bytes e 0 trechos, para qualquer size.
+void expect_empty_read(const VfsFile& file, std::uint64_t offset, std::uint64_t size)
+{
+    const Got g = collect(file, offset, size);
+    SW_CHECK(g.status == VfsStatus::Ok && g.total == 0 && g.spans.empty());
+}
+
+// Compara resolve + next com o oráculo para cada (offset, size) de `offsets` x `sizes` (mais o
+// "até o fim" e o "um byte além do fim" de cada offset).
+void sweep_against_oracle(const VfsFile& file, const std::vector<std::uint32_t>& refs,
+                          const std::uint32_t* raw, const std::vector<std::uint64_t>& offsets,
+                          const std::vector<std::uint64_t>& sizes)
+{
+    const OracleFile oracle(refs, raw);
+    const std::uint64_t n = file.size();
+    std::uint64_t reads = 0;
+    const auto check = [&](std::uint64_t o, std::uint64_t s) {
+        const Got g = collect(file, o, s);
+        SW_CHECK(g.status == expected_status(n, o, s));
+        ++reads;
+        if (g.status != VfsStatus::Ok) {
+            SW_CHECK(g.spans.empty());
+        } else if (o == n) {
+            SW_CHECK(g.total == 0 && g.spans.empty());
+        } else {
+            SW_CHECK(g.total == s);
+            SW_CHECK(g.spans == oracle_spans(oracle, o, s));
+        }
+    };
+    for (const std::uint64_t o : offsets) {
+        for (const std::uint64_t s : sizes) {
+            check(o, s);
+        }
+        // Exatamente até o fim (Ok) e um byte além (OutOfRange). Em arquivos de 16 mil trechos só
+        // a partir de perto do fim (<= 64 blocos; a leitura inteira tem teste próprio): cada
+        // leitura longa devolve todos os trechos e, em Debug, dezenas delas pesariam no tempo do
+        // teste.
+        if (o <= n && n - o <= 64 * 262144) {
+            check(o, n - o);
+            check(o, n - o + 1);
+        }
+    }
+    SW_CHECK(reads > 0);
+}
+
+// Os caminhos de uma fixture, dado o diretório, na ordem de bytes: calculado à parte (std::map
+// ordena std::string por bytes sem sinal) a partir da lista de caminhos, todos de `file_size`.
+std::vector<Expected> expected_listing_of(const std::vector<std::string>& paths,
+                                          std::uint64_t file_size, const std::string& dir)
+{
+    std::map<std::string, Expected> children;
+    const std::string prefix = dir.empty() ? "" : dir + "/";
+    for (const std::string& p : paths) {
+        if (p.compare(0, prefix.size(), prefix) != 0) continue;
+        const std::string rest = p.substr(prefix.size());
+        const std::size_t slash = rest.find('/');
+        if (slash == std::string::npos) {
+            children[rest] = {rest, VfsKind::File, file_size};
+        } else {
+            const std::string name = rest.substr(0, slash);
+            children[name] = {name, VfsKind::Directory, 0};
+        }
+    }
+    std::vector<Expected> out;
+    for (auto& [name, e] : children)
+        out.push_back(e);
+    return out;
+}
+
+const Vfs& high_vfs()
+{
+    static const Vfs vfs = build_vfs(fx::kHighBytesManifest);
+    return vfs;
+}
+
+const Vfs& max_block_vfs()
+{
+    static const Vfs vfs = build_vfs(fx::kMaxBlockManifest);
+    return vfs;
+}
+
+const Vfs& huge_vfs()
+{
+    static const Vfs vfs = build_vfs(fx::kHugeManifest);
+    return vfs;
+}
+
+// ---- (a) byte alto depois do prefixo de diretório
+
+void test_high_byte_after_directory_prefix()
+{
+    std::cout << "[Test] bytes altos: irmãos de diretório com byte >= 0x80 logo após o nome "
+                 "(mata o mutante unsigned char -> signed char em before_dir)\n";
+    const std::vector<std::string> paths = fx::high_byte_paths();
+    const pack::ManifestView view = open_manifest(fx::kHighBytesManifest);
+    SW_CHECK(view.file_count() == paths.size());
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        SW_CHECK(view.file_path(i) == paths[i]);
+        SW_CHECK(view.file_size(i) == fx::kHighByteFileSize && view.file_ref_count(i) == 1);
+    }
+    // Precondições da fixture, conferidas à mão e não supostas: a lista está em ordem de BYTES SEM
+    // SINAL (a do manifesto) e, para cada diretório abaixo, há irmão com byte >= 0x80 logo depois
+    // do nome (que vem DEPOIS de "dir/..." nessa ordem).
+    const auto unsigned_less = [](const std::string& a, const std::string& b) {
+        return std::lexicographical_compare(
+            a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+                return static_cast<unsigned char>(x) < static_cast<unsigned char>(y);
+            });
+    };
+    SW_CHECK(std::is_sorted(paths.begin(), paths.end(), unsigned_less));
+    const std::vector<std::string> dirs = {"a", "maps", "zeta", "\xC3\xB1"};
+    std::size_t high_siblings = 0;
+    for (const std::string& dir : dirs) {
+        for (const std::string& p : paths) {
+            if (p.size() > dir.size() && p.compare(0, dir.size(), dir) == 0 &&
+                static_cast<unsigned char>(p[dir.size()]) >= 0x80) {
+                ++high_siblings;
+            }
+        }
+    }
+    SW_CHECK(high_siblings >= 6); // maps: 3; zeta: 1; ñ: 2; a: 0
+    // Nenhum caminho da fixture tem byte isolado inválido: UTF-8 bem formado (regra do dono).
+    for (const std::string& p : paths) {
+        for (std::size_t i = 0; i < p.size();) {
+            const auto c = static_cast<unsigned char>(p[i]);
+            const std::size_t len = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : 4;
+            SW_CHECK(c < 0x80 || (c >> 5) == 0x6 || (c >> 4) == 0xE || (c >> 3) == 0x1E);
+            SW_CHECK(i + len <= p.size());
+            for (std::size_t k = 1; k < len; ++k) {
+                SW_CHECK((static_cast<unsigned char>(p[i + k]) & 0xC0) == 0x80);
+            }
+            i += len;
+        }
+    }
+
+    const Vfs& vfs = high_vfs();
+    VfsStat info;
+    VfsFile f;
+
+    // Diretórios: existem (por conterem arquivos), apesar do irmão de byte alto depois do nome.
+    for (const std::string& dir : dirs) {
+        SW_CHECK(vfs.stat(dir, info) == VfsStatus::Ok);
+        SW_CHECK(info.kind == VfsKind::Directory && info.size == 0);
+        SW_CHECK(vfs.open(dir, f) == VfsStatus::IsDirectory);
+        SW_CHECK(!f.valid());
+    }
+    // O conteúdo de cada diretório, escrito à mão (só os filhos de verdade, nenhum irmão alto).
+    const std::vector<std::pair<std::string, std::vector<std::string>>> listing = {
+        {"a", {"x.bin"}},
+        {"maps", {"a.bin", "b.bin"}},
+        {"zeta", {"q.bin"}},
+        {"\xC3\xB1", {"x.bin"}}};
+    for (const auto& [dir, names] : listing) {
+        VfsDir d;
+        SW_CHECK(vfs.open_dir(dir, d) == VfsStatus::Ok);
+        SW_CHECK(d.entry_count() == names.size());
+        VfsDirEntry e;
+        for (const std::string& name : names) {
+            SW_CHECK(d.next(e) && e.name == name && e.kind == VfsKind::File &&
+                     e.size == fx::kHighByteFileSize);
+        }
+        SW_CHECK(!d.next(e));
+    }
+    // A raiz, na ordem de bytes: "maps" < "maps-1.bin" < "maps0.bin" < "mapsá.bin" < "mapsあ.bin" <
+    // "maps😀.bin" (0x2D < 0x30 < 0xC3 < 0xE3 < 0xF0 depois de "maps"); os de byte alto vêm depois
+    // do DIRETÓRIO "maps", e "ñ" (C3 B1) vem depois de todo nome que começa em ASCII.
+    const std::vector<std::pair<std::string, VfsKind>> root = {{"a", VfsKind::Directory},
+                                                               {"maps", VfsKind::Directory},
+                                                               {"maps-1.bin", VfsKind::File},
+                                                               {"maps0.bin", VfsKind::File},
+                                                               {"maps\xC3\xA1"
+                                                                ".bin",
+                                                                VfsKind::File},
+                                                               {"maps\xE3\x81\x82"
+                                                                ".bin",
+                                                                VfsKind::File},
+                                                               {"maps\xF0\x9F\x98\x80"
+                                                                ".bin",
+                                                                VfsKind::File},
+                                                               {"zeta", VfsKind::Directory},
+                                                               {"zeta\xC3\xA9"
+                                                                ".bin",
+                                                                VfsKind::File},
+                                                               {"\xC3\xB1", VfsKind::Directory},
+                                                               {"\xC3\xB1\xC3\xA1"
+                                                                ".bin",
+                                                                VfsKind::File},
+                                                               {"\xC3\xB1\xE3\x81\x82"
+                                                                ".bin",
+                                                                VfsKind::File}};
+    {
+        VfsDir d;
+        SW_CHECK(vfs.open_dir("", d) == VfsStatus::Ok);
+        SW_CHECK(d.entry_count() == root.size());
+        VfsDirEntry e;
+        for (const auto& [name, kind] : root) {
+            SW_CHECK(d.next(e) && e.name == name && e.kind == kind);
+        }
+        SW_CHECK(!d.next(e));
+        // E o mesmo, calculado à parte a partir da lista de caminhos (std::map por bytes).
+        const std::vector<Expected> want = expected_listing_of(paths, fx::kHighByteFileSize, "");
+        SW_CHECK(want.size() == root.size());
+        for (std::size_t i = 0; i < want.size(); ++i) {
+            SW_CHECK(want[i].name == root[i].first && want[i].kind == root[i].second);
+        }
+        for (const auto& [dir, names] : listing) {
+            const std::vector<Expected> sub =
+                expected_listing_of(paths, fx::kHighByteFileSize, dir);
+            SW_CHECK(sub.size() == names.size());
+            for (std::size_t i = 0; i < sub.size(); ++i) {
+                SW_CHECK(sub[i].name == names[i]);
+            }
+        }
+    }
+    // Todo arquivo existe, com o tamanho certo, e resolve como um bloco de 10 bytes.
+    for (const std::string& p : paths) {
+        SW_CHECK(vfs.stat(p, info) == VfsStatus::Ok);
+        SW_CHECK(info.kind == VfsKind::File && info.size == fx::kHighByteFileSize);
+        SW_CHECK(vfs.open(p, f) == VfsStatus::Ok && f.path() == p);
+        expect_read(f, 0, 10, {BlockSpan{0, 0, 10}});
+        expect_read(f, 3, 4, {BlockSpan{0, 3, 4}});
+    }
+    // Nomes que NÃO existem: prefixos de nomes de arquivo (sem a extensão) nunca são diretórios.
+    for (const char* p : {"maps\xC3\xA1", "maps\xE3\x81\x82", "maps\xF0\x9F\x98\x80",
+                          "zeta\xC3\xA9", "\xC3\xB1\xC3\xA1", "\xC3\xB1\xE3\x81\x82", "maps/c.bin",
+                          "map", "m", "\xC3\xB1/y.bin", "maps\xC3\xA1/a.bin", "maps/"}) {
+        SW_CHECK(vfs.stat(p, info) == VfsStatus::NotFound);
+        SW_CHECK(vfs.open(p, f) == VfsStatus::NotFound);
+        VfsDir d;
+        SW_CHECK(vfs.open_dir(p, d) == VfsStatus::NotFound);
+    }
+    // Arquivo não é diretório.
+    VfsDir d;
+    SW_CHECK(vfs.open_dir("maps\xC3\xA1"
+                          ".bin",
+                          d) == VfsStatus::NotDirectory);
+    SW_CHECK(vfs.open_dir("\xC3\xB1\xC3\xA1"
+                          ".bin",
+                          d) == VfsStatus::NotDirectory);
+}
+
+// Os bytes que o gerador usa (block_bytes_sized, uma palavra por cálculo) são os mesmos da função
+// por byte block_byte.
+void check_sized_block_bytes(std::uint32_t block, const std::vector<std::uint8_t>& data)
+{
+    SW_CHECK(!data.empty());
+    for (const std::size_t i : {std::size_t{0}, std::size_t{1}, std::size_t{7}, std::size_t{8},
+                                std::size_t{9}, data.size() / 2, data.size() - 1}) {
+        if (i < data.size()) {
+            SW_CHECK(data[i] == fx::block_byte(block, static_cast<std::uint32_t>(i)));
+        }
+    }
+}
+
+// ---- (b) bloco de exatamente 262144 bytes
+
+void test_max_block_262144()
+{
+    std::cout << "[Test] bloco de 262144 bytes (limite do §8 item 5): fim exato de bloco, início, "
+                 "leitura entre blocos e último bloco curto\n";
+    static_assert(fx::kMaxBlockRawSize[0] == 262144 && fx::kMaxBlockRawSize[1] == 262144);
+    const pack::ManifestView view = open_manifest(fx::kMaxBlockManifest);
+    SW_CHECK(view.block_count() == fx::kMaxBlockRawSize.size());
+    for (std::uint32_t b = 0; b < view.block_count(); ++b) {
+        SW_CHECK(view.block_raw_size(b) == fx::kMaxBlockRawSize[b]);
+        const auto data = fx::block_bytes_sized(b, fx::kMaxBlockRawSize[b]);
+        SW_CHECK(data.size() == fx::kMaxBlockRawSize[b]);
+        check_sized_block_bytes(b, data);
+        SW_CHECK(view.block_hash(b) == pack::sha256(std::as_bytes(std::span(data))));
+    }
+    const auto defs = fx::max_block_files();
+    SW_CHECK(view.file_count() == defs.size());
+    for (std::size_t i = 0; i < defs.size(); ++i) {
+        SW_CHECK(view.file_path(i) == defs[i].path);
+        SW_CHECK(view.file_size(i) == fx::file_size_of(defs[i], fx::kMaxBlockRawSize.data()));
+        SW_CHECK(view.file_ref_count(i) == defs[i].refs.size());
+    }
+
+    const Vfs& vfs = max_block_vfs();
+    const VfsFile exact = open_file(vfs, "max/exact.bin"); // [b0]
+    const VfsFile pair = open_file(vfs, "max/pair.bin");   // [b0, b1]
+    const VfsFile mix = open_file(vfs, "max/mix.bin");     // [b3, b0, b2, b1, b5]
+    const VfsFile tail = open_file(vfs, "max/tail.bin");   // [b4, b0, b5]
+    // Tamanhos calculados à mão: 262144 | 2 x 262144 = 524288 | 262143 + 262144 + 1 + 262144 + 100
+    // = 786532 | 131072 + 262144 + 100 = 393316.
+    SW_CHECK(exact.size() == 262144);
+    SW_CHECK(pair.size() == 524288);
+    SW_CHECK(mix.size() == 786532);
+    SW_CHECK(tail.size() == 393316);
+
+    // exact.bin: um único bloco de 262144 bytes.
+    expect_read(exact, 0, 262144, {{0, 0, 262144}}); // o bloco inteiro, num trecho só
+    expect_read(exact, 0, 1, {{0, 0, 1}});
+    expect_read(exact, 262143, 1, {{0, 262143, 1}}); // o último byte do bloco
+    expect_read(exact, 1, 262143, {{0, 1, 262143}}); // termina exatamente no fim do bloco
+    expect_read(exact, 131072, 131072, {{0, 131072, 131072}});
+    expect_empty_read(exact, 262144, 0); // EOF
+    expect_empty_read(exact, 262144, 1);
+    expect_out_of_range(exact, 262143, 2); // passa do fim do bloco e do arquivo
+    expect_out_of_range(exact, 1, 262144);
+    expect_out_of_range(exact, 0, 262145);
+    expect_out_of_range(exact, 262145, 0);
+
+    // pair.bin: b0 em [0, 262144), b1 em [262144, 524288).
+    expect_read(pair, 0, 262144, {{0, 0, 262144}}); // termina no limite: nenhum trecho vazio depois
+    expect_read(pair, 262144, 262144, {{1, 0, 262144}}); // começa no limite: nenhum trecho antes
+    expect_read(pair, 262143, 2,
+                {{0, 262143, 1}, {1, 0, 1}}); // cruza o limite por 1 byte de cada lado
+    expect_read(pair, 262144, 1, {{1, 0, 1}});
+    expect_read(pair, 262143, 1, {{0, 262143, 1}});
+    expect_read(pair, 262142, 4, {{0, 262142, 2}, {1, 0, 2}});
+    expect_read(pair, 1, 524287, {{0, 1, 262143}, {1, 0, 262144}});
+    expect_read(pair, 0, 524288, {{0, 0, 262144}, {1, 0, 262144}});
+    expect_read(pair, 524287, 1, {{1, 262143, 1}});
+    expect_empty_read(pair, 524288, 0);
+    expect_empty_read(pair, 524288, 7);
+    expect_out_of_range(pair, 524287, 2);
+    expect_out_of_range(pair, 0, 524289);
+    expect_out_of_range(pair, 524289, 0);
+
+    // mix.bin: b3 em [0, 262143), b0 em [262143, 524287), b2 (1 byte) em [524287, 524288),
+    // b1 em [524288, 786432), b5 (100 bytes, o bloco curto da cauda) em [786432, 786532).
+    expect_read(mix, 262142, 3, {{3, 262142, 1}, {0, 0, 2}});
+    expect_read(mix, 262143, 262144, {{0, 0, 262144}}); // exatamente o bloco máximo b0
+    expect_read(mix, 262143, 262145, {{0, 0, 262144}, {2, 0, 1}});
+    expect_read(mix, 524286, 3,
+                {{0, 262143, 1}, {2, 0, 1}, {1, 0, 1}}); // atravessa o bloco de 1 byte
+    expect_read(mix, 524287, 1, {{2, 0, 1}});
+    expect_read(mix, 524288, 1, {{1, 0, 1}});
+    expect_read(mix, 786431, 2, {{1, 262143, 1}, {5, 0, 1}});
+    expect_read(mix, 786432, 100, {{5, 0, 100}}); // o último bloco, inteiro
+    expect_read(mix, 786531, 1, {{5, 99, 1}});
+    expect_read(mix, 0, 786532,
+                {{3, 0, 262143}, {0, 0, 262144}, {2, 0, 1}, {1, 0, 262144}, {5, 0, 100}});
+    expect_empty_read(mix, 786532, 0);
+    expect_out_of_range(mix, 786432, 101);
+    expect_out_of_range(mix, 786531, 2);
+
+    // tail.bin: b4 (131072) em [0, 131072), b0 em [131072, 393216), b5 (100) em [393216, 393316).
+    expect_read(tail, 131070, 4, {{4, 131070, 2}, {0, 0, 2}});
+    expect_read(tail, 131072, 262144,
+                {{0, 0, 262144}}); // leitura de 262144 bytes alinhada ao bloco
+    expect_read(tail, 131073, 262144, {{0, 1, 262143}, {5, 0, 1}}); // 262144 bytes não alinhados
+    expect_read(tail, 393214, 4, {{0, 262142, 2}, {5, 0, 2}});
+    expect_read(tail, 393216, 100, {{5, 0, 100}});
+    expect_read(tail, 0, 131072, {{4, 0, 131072}});
+    expect_out_of_range(tail, 393216, 101);
+
+    // Varredura contra o oráculo: cada limite de bloco e os vizinhos, com tamanhos em torno de 1,
+    // 262143, 262144 e 262145.
+    for (const fx::FileDef& def : defs) {
+        const VfsFile file = open_file(vfs, def.path);
+        const std::uint64_t n = file.size();
+        std::vector<std::uint64_t> offsets = {0, 1, 2, n, n + 1};
+        if (n >= 2) {
+            offsets.push_back(n - 1);
+            offsets.push_back(n - 2);
+        }
+        std::uint64_t edge = 0;
+        for (const std::uint32_t b : def.refs) {
+            edge += fx::kMaxBlockRawSize[b];
+            for (const std::int64_t d : {-2, -1, 0, 1, 2}) {
+                const std::int64_t v = static_cast<std::int64_t>(edge) + d;
+                if (v >= 0 && static_cast<std::uint64_t>(v) <= n) {
+                    offsets.push_back(static_cast<std::uint64_t>(v));
+                }
+            }
+        }
+        sweep_against_oracle(file, def.refs, fx::kMaxBlockRawSize.data(), offsets,
+                             {0, 1, 2, 3, 99, 100, 101, 131071, 131072, 131073, 262142, 262143,
+                              262144, 262145, 262146, 524287, 524288, 524289, kMax});
+    }
+}
+
+// ---- (c) offsets em torno de 2^32 (arquivos lógicos de mais de 4 GiB, só no manifesto)
+
+constexpr std::uint64_t k2p32 = std::uint64_t{1} << 32;
+constexpr std::uint64_t kBlk = 262144;
+// 16384 blocos de 262144 bytes somam exatamente 2^32; 16383 deles, 2^32 - 262144.
+static_assert(16384 * kBlk == k2p32);
+static_assert(16383 * kBlk + 262143 == k2p32 - 1);
+// huge/boundary.bin = B0 x 16383, B1 (262143), B2 (1), B2, B2, B0: os B2 começam em 2^32 - 1, 2^32
+// e 2^32 + 1; o último B0, em 2^32 + 2. Tamanho = 2^32 + 2 + 262144 = 4295229442.
+constexpr std::uint64_t kBoundarySize = 4295229442ULL;
+static_assert(kBoundarySize == k2p32 + 2 + kBlk);
+// huge/mid.bin = B3 (1000), B0 x 16384, B1 (262143). O 16384º B0 começa em 1000 + 16383 * 262144 =
+// 4294706152 e o byte 2^32 cai no deslocamento 261144 dele. Tamanho = 1000 + 2^32 + 262143.
+constexpr std::uint64_t kMidSize = 4295230439ULL;
+static_assert(kMidSize == 1000 + k2p32 + 262143);
+constexpr std::uint64_t kMidLastB0Start = 4294706152ULL;
+static_assert(kMidLastB0Start == 1000 + 16383 * kBlk);
+static_assert(k2p32 - kMidLastB0Start == 261144);
+
+void test_offsets_around_4gib()
+{
+    std::cout
+        << "[Test] offsets acima de 4 GiB: abaixo, em e acima de 2^32, leitura que atravessa "
+           "a fronteira e ref_start_ em 2^32 - 1, 2^32 e 2^32 + 1 (arquivos só no manifesto)\n";
+    const auto defs = fx::huge_files();
+    const std::uint32_t* raw = fx::kHugeBlockRawSize.data();
+    const pack::ManifestView view = open_manifest(fx::kHugeManifest);
+    SW_CHECK(view.block_count() == fx::kHugeBlockRawSize.size());
+    for (std::uint32_t b = 0; b < view.block_count(); ++b) {
+        SW_CHECK(view.block_raw_size(b) == raw[b]);
+        const auto data = fx::block_bytes_sized(b, raw[b]);
+        check_sized_block_bytes(b, data);
+        SW_CHECK(view.block_hash(b) == pack::sha256(std::as_bytes(std::span(data))));
+    }
+    SW_CHECK(view.file_count() == 2 && defs.size() == 2);
+    SW_CHECK(view.file_path(0) == "huge/boundary.bin" && view.file_path(1) == "huge/mid.bin");
+    SW_CHECK(view.file_size(0) == kBoundarySize && view.file_size(1) == kMidSize);
+    SW_CHECK(view.file_ref_count(0) == 16388 && view.file_ref_count(1) == 16386);
+    SW_CHECK(view.block_ref_count() == 16388 + 16386);
+    for (std::size_t f = 0; f < defs.size(); ++f) {
+        SW_CHECK(defs[f].refs.size() == view.file_ref_count(f));
+        for (std::size_t k = 0; k < defs[f].refs.size(); ++k) {
+            SW_CHECK(view.block_ref(view.file_first_ref(f) + k) == defs[f].refs[k]);
+        }
+    }
+
+    const Vfs& vfs = huge_vfs();
+    VfsStat info;
+    SW_CHECK(vfs.stat("huge/boundary.bin", info) == VfsStatus::Ok && info.size == kBoundarySize);
+    SW_CHECK(vfs.stat("huge", info) == VfsStatus::Ok && info.kind == VfsKind::Directory);
+    const VfsFile boundary = open_file(vfs, "huge/boundary.bin");
+    const VfsFile mid = open_file(vfs, "huge/mid.bin");
+    SW_CHECK(boundary.size() == kBoundarySize && mid.size() == kMidSize);
+
+    // --- boundary.bin. B0 = bloco 0 (262144), B1 = bloco 1 (262143), B2 = bloco 2 (1 byte).
+    //     B1 ocupa [2^32 - 262143 - 1, 2^32 - 1) = [4294705152, 4294967295).
+    expect_read(boundary, k2p32 - 2, 1, {{1, 262142, 1}}); // último byte de B1, 2 abaixo de 2^32
+    expect_read(boundary, k2p32 - 1, 1, {{2, 0, 1}});      // imediatamente ABAIXO: 1º B2
+    expect_read(boundary, k2p32, 1, {{2, 0, 1}});          // EXATAMENTE EM 2^32: 2º B2
+    expect_read(boundary, k2p32 + 1, 1, {{2, 0, 1}});      // imediatamente ACIMA: 3º B2
+    expect_read(boundary, k2p32 + 2, 1, {{0, 0, 1}});      // primeiro byte do último B0
+    // Leituras que ATRAVESSAM a fronteira.
+    expect_read(boundary, k2p32 - 2, 4, {{1, 262142, 1}, {2, 0, 1}, {2, 0, 1}, {2, 0, 1}});
+    expect_read(boundary, k2p32 - 1, 2, {{2, 0, 1}, {2, 0, 1}});
+    expect_read(boundary, k2p32 - 1, 3, {{2, 0, 1}, {2, 0, 1}, {2, 0, 1}});
+    expect_read(boundary, k2p32, 2, {{2, 0, 1}, {2, 0, 1}});
+    expect_read(boundary, k2p32 + 1, 3, {{2, 0, 1}, {0, 0, 2}});
+    // 999 bytes finais de B1 (a partir do deslocamento 261144), os três B2 e mais 5 bytes de B0.
+    expect_read(boundary, k2p32 - 1000, 1002, {{1, 261144, 999}, {2, 0, 1}, {2, 0, 1}, {2, 0, 1}});
+    expect_read(boundary, k2p32 - 1000, 1007,
+                {{1, 261144, 999}, {2, 0, 1}, {2, 0, 1}, {2, 0, 1}, {0, 0, 5}});
+    // Cauda: o último B0 inteiro, o último byte, EOF e o que passa dele.
+    expect_read(boundary, kBoundarySize - 1, 1, {{0, 262143, 1}});
+    expect_read(boundary, kBoundarySize - 262144, 262144, {{0, 0, 262144}});
+    expect_read(boundary, k2p32, kBoundarySize - k2p32, {{2, 0, 1}, {2, 0, 1}, {0, 0, 262144}});
+    expect_empty_read(boundary, kBoundarySize, 0);
+    expect_empty_read(boundary, kBoundarySize, 99);
+    expect_empty_read(boundary, kBoundarySize, kMax);
+    expect_out_of_range(boundary, kBoundarySize - 1, 2);
+    expect_out_of_range(boundary, kBoundarySize + 1, 0);
+    expect_out_of_range(boundary, 2 * k2p32, 1);
+    expect_out_of_range(boundary, kMax, 0);
+    expect_out_of_range(boundary, 0, kBoundarySize + 1); // size > 2^32, ainda tudo-ou-nada
+    expect_out_of_range(boundary, 1, kBoundarySize);
+    // Começo do arquivo, e leitura LONGA (> 2^32 bytes) de ponta a ponta e do 2º byte ao fim.
+    expect_read(boundary, 0, 1, {{0, 0, 1}});
+    expect_read(boundary, 262143, 2, {{0, 262143, 1}, {0, 0, 1}});
+    {
+        const Got whole = collect(boundary, 0, kBoundarySize);
+        SW_CHECK(whole.status == VfsStatus::Ok && whole.total == kBoundarySize);
+        SW_CHECK(whole.spans.size() == 16388);
+        for (std::size_t i = 0; i < 16383; ++i) {
+            SW_CHECK(whole.spans[i] == (BlockSpan{0, 0, 262144}));
+        }
+        SW_CHECK(whole.spans[16383] == (BlockSpan{1, 0, 262143}));
+        SW_CHECK(whole.spans[16384] == (BlockSpan{2, 0, 1}));
+        SW_CHECK(whole.spans[16385] == (BlockSpan{2, 0, 1}));
+        SW_CHECK(whole.spans[16386] == (BlockSpan{2, 0, 1}));
+        SW_CHECK(whole.spans[16387] == (BlockSpan{0, 0, 262144}));
+        std::uint64_t sum = 0;
+        for (const BlockSpan& s : whole.spans) {
+            sum += s.length;
+        }
+        SW_CHECK(sum == kBoundarySize);
+
+        const Got from_second = collect(boundary, 1, kBoundarySize - 1);
+        SW_CHECK(from_second.status == VfsStatus::Ok && from_second.total == kBoundarySize - 1);
+        SW_CHECK(from_second.spans.size() == 16388);
+        SW_CHECK(from_second.spans.front() == (BlockSpan{0, 1, 262143}));
+        SW_CHECK(from_second.spans.back() == (BlockSpan{0, 0, 262144}));
+    }
+
+    // --- mid.bin. B3 = bloco 3 (1000), B0 = bloco 0 (262144), B1 = bloco 1 (262143).
+    //     O 16384º B0 ocupa [4294706152, 4294968296); 2^32 está no deslocamento 261144.
+    expect_read(mid, 0, 1001, {{3, 0, 1000}, {0, 0, 1}});
+    expect_read(mid, 999, 2, {{3, 999, 1}, {0, 0, 1}});
+    expect_read(mid, 1000, 1, {{0, 0, 1}});
+    expect_read(mid, k2p32 - 1, 1, {{0, 261143, 1}}); // imediatamente ABAIXO
+    expect_read(mid, k2p32, 1, {{0, 261144, 1}});     // EXATAMENTE EM 2^32 (meio do bloco)
+    expect_read(mid, k2p32 + 1, 1, {{0, 261145, 1}}); // imediatamente ACIMA
+    expect_read(mid, k2p32 - 1, 3, {{0, 261143, 3}}); // atravessa 2^32 DENTRO de um bloco: 1 trecho
+    // Do byte 2^32 - 1 até o fim do bloco (1001 bytes) e 1 byte do bloco seguinte (B1).
+    expect_read(mid, k2p32 - 1, 1002, {{0, 261143, 1001}, {1, 0, 1}});
+    expect_read(mid, k2p32 + 999, 2,
+                {{0, 262143, 1}, {1, 0, 1}}); // o limite de bloco em 2^32 + 1000
+    // Atravessa 2^32 passando por 3 blocos: resto do penúltimo B0 (a partir do deslocamento 10),
+    // o último B0 inteiro e 5 bytes de B1. 262134 + 262144 + 5 = 524283.
+    expect_read(mid, kMidLastB0Start - 262144 + 10, 524283,
+                {{0, 10, 262134}, {0, 0, 262144}, {1, 0, 5}});
+    expect_read(mid, kMidSize - 1, 1, {{1, 262142, 1}});
+    expect_read(mid, kMidSize - 262143, 262143, {{1, 0, 262143}});
+    expect_empty_read(mid, kMidSize, 0);
+    expect_empty_read(mid, kMidSize, 5);
+    expect_out_of_range(mid, kMidSize - 1, 2);
+    expect_out_of_range(mid, kMidSize + 1, 0);
+    expect_out_of_range(mid, 0, kMidSize + 1);
+    expect_out_of_range(mid, k2p32, kMidSize - k2p32 + 1);
+    expect_out_of_range(mid, 2 * k2p32, 0);
+    {
+        const Got whole = collect(mid, 0, kMidSize);
+        SW_CHECK(whole.status == VfsStatus::Ok && whole.total == kMidSize);
+        SW_CHECK(whole.spans.size() == 16386);
+        SW_CHECK(whole.spans.front() == (BlockSpan{3, 0, 1000}));
+        for (std::size_t i = 1; i <= 16384; ++i) {
+            SW_CHECK(whole.spans[i] == (BlockSpan{0, 0, 262144}));
+        }
+        SW_CHECK(whole.spans.back() == (BlockSpan{1, 0, 262143}));
+        std::uint64_t sum = 0;
+        for (const BlockSpan& s : whole.spans) {
+            sum += s.length;
+        }
+        SW_CHECK(sum == kMidSize);
+    }
+
+    // --- Varredura contra o oráculo linear: cada início de referência perto de 2^32 (e vizinhos),
+    //     2^32 +- 2, o começo e o fim do arquivo, com tamanhos em torno de 1 byte, de um bloco e
+    //     de vários blocos (inclusive maiores que 2^32 - 1, via "até o fim").
+    for (std::size_t f = 0; f < defs.size(); ++f) {
+        const VfsFile file = open_file(vfs, defs[f].path);
+        const std::uint64_t n = file.size();
+        std::vector<std::uint64_t> offsets = {0,         1,         2,     999,       1000,
+                                              1001,      n - 2,     n - 1, n,         n + 1,
+                                              k2p32 - 2, k2p32 - 1, k2p32, k2p32 + 1, k2p32 + 2};
+        std::uint64_t start = 0;
+        for (const std::uint32_t b : defs[f].refs) {
+            // Inícios de referência a menos de 3 blocos de 2^32 (e os vizinhos de cada um).
+            if (start + 3 * kBlk >= k2p32 && start <= k2p32 + 3 * kBlk) {
+                for (const std::int64_t d : {-1, 0, 1}) {
+                    offsets.push_back(
+                        static_cast<std::uint64_t>(static_cast<std::int64_t>(start) + d));
+                }
+            }
+            start += raw[b];
+        }
+        SW_CHECK(start == n);
+        sweep_against_oracle(file, defs[f].refs, raw, offsets,
+                             {0, 1, 3, 1001, 262143, 262144, 262145, 1000000, 8 * kBlk + 7, kMax});
+    }
+}
+
 } // namespace
 
 int main()
@@ -1443,6 +2111,9 @@ int main()
     test_moved_from_vfs_allowed_operations();
     test_resolve_does_not_allocate();
     test_concurrent_resolves();
+    test_high_byte_after_directory_prefix();
+    test_max_block_262144();
+    test_offsets_around_4gib();
     std::cout << "VFS: todos os testes passaram\n";
     return 0;
 }

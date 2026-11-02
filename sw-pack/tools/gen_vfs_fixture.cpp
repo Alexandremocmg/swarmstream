@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
-// F1-17: gera as fixtures do VFS (sw-core/tests/vfs_fixture.hpp): cinco manifestos v0 ASSINADOS com
-// a chave de TESTE do ADR-0012 (semente 00..1f), a partir dos dados de
+// F1-17: gera as fixtures do VFS (sw-core/tests/vfs_fixture.hpp): manifestos v0 ASSINADOS com a
+// chave de TESTE do ADR-0012 (semente 00..1f), a partir dos dados de
 // sw-core/tests/vfs_fixture_data.hpp:
 //   principal  12 arquivos, 9 blocos, 2 grupos (`core` e `extra`), 2 peças;
 //   conflito   "a" é arquivo e também diretório ("a/b"): o §8 aceita; o Vfs::build recusa
@@ -10,10 +10,22 @@
 //   aninhado   o mesmo conflito um nível abaixo ("x/a" e "x/a/b");
 //   prefixos   "a", "a-1", "a.x", "a0", "ab", "d/e", "d/e-1", "d/ef": SEM conflito;
 //   vazio      nenhum arquivo, nenhum bloco (a raiz existe e está vazia).
+// F1-64 (reforço dos testes):
+//   altos      13 arquivos de 10 bytes com caminhos UTF-8 válidos e canônicos cujo byte logo depois
+//              do prefixo de um diretório é >= 0x80 ("maps/..." e "mapsá.bin", "ñ/..." e "ñá.bin");
+//   bloco-max  blocos de exatamente 262144 bytes (limite do §8 item 5) e vizinhos de 1, 100,
+//              131072 e 262143 bytes;
+//   grande     (cabeçalho à parte, vfs_fixture_big.hpp) dois arquivos LÓGICOS de mais de 4 GiB,
+//              descritos só pelo manifesto (4 blocos distintos referenciados 16 mil vezes), com
+//              o byte 2^32 na fronteira de um bloco e dentro de um bloco.
 //
-// Uso:  gen-vfs-fixture <saida.hpp>      (escreve o cabeçalho de fixtures)
-//       gen-vfs-fixture --bin <dir>      (grava os cinco .bin: principal, conflito, vazio,
-//                                         aninhado, prefixos)
+// Uso:  gen-vfs-fixture <saida.hpp> [<saida_grande.hpp>]
+//                                        (escreve o cabeçalho de fixtures e, se dado, o dos
+//                                         manifestos grandes: sw-core/tests/vfs_fixture.hpp e
+//                                         sw-core/tests/vfs_fixture_big.hpp)
+//       gen-vfs-fixture --bin <dir>      (grava os .bin: principal, conflito, vazio, aninhado,
+//                                         prefixos, altos, bloco-max, grande; são os que o
+//                                         sw-pack/testdata/verify_manifest_independent.py confere)
 // Ed25519 é determinístico: o mesmo libsodium gera os mesmos bytes.
 #include "swarmstream/chunker.hpp"
 #include "swarmstream/manifest.hpp"
@@ -141,6 +153,70 @@ sp::ManifestModel prefix_model()
                        {"a", "a-1", "a.x", "a0", "ab", "d/e", "d/e-1", "d/ef"});
 }
 
+// F1-64: caminhos com bytes altos (UTF-8 válido e canônico) logo depois do prefixo de diretório.
+sp::ManifestModel high_bytes_model()
+{
+    return paths_model("swarmstream.vfshigh", fx::high_byte_paths());
+}
+
+// Modelo com blocos de `raw_sizes` (codec None, packed == raw), peças consecutivas de
+// `piece_blocks[i]` blocos (todas no grupo core) e os arquivos de `defs`.
+sp::ManifestModel sized_blocks_model(const char* game_id,
+                                     const std::vector<std::uint32_t>& raw_sizes,
+                                     const std::vector<std::uint32_t>& piece_blocks,
+                                     const std::vector<fx::FileDef>& defs)
+{
+    sp::ManifestModel m = base_model(game_id);
+    for (std::uint32_t b = 0; b < raw_sizes.size(); ++b) {
+        const auto bytes = fx::block_bytes_sized(b, raw_sizes[b]);
+        m.block_hash.push_back(sp::sha256(std::as_bytes(std::span(bytes))));
+        m.block_raw_size.push_back(raw_sizes[b]);
+        m.block_packed_size.push_back(raw_sizes[b]);
+        m.block_codec.push_back(sp::Codec::None);
+    }
+    std::uint32_t first = 0;
+    std::uint8_t seed = 0xA0;
+    for (const std::uint32_t count : piece_blocks) {
+        std::uint32_t size = 0;
+        for (std::uint32_t b = first; b < first + count; ++b) {
+            size += raw_sizes[b];
+        }
+        m.piece_hash.push_back(filled(seed));
+        m.piece_size.push_back(size);
+        m.piece_first_block.push_back(first);
+        m.piece_block_count.push_back(count);
+        m.piece_group.push_back(0);
+        first += count;
+        seed = static_cast<std::uint8_t>(seed + 0x20);
+    }
+    for (const fx::FileDef& f : defs) {
+        add_file(m, f.path, static_cast<sp::FileClass>(f.file_class), f.group, f.refs,
+                 fx::file_size_of(f, raw_sizes.data()));
+    }
+    m.groups = {group("core", 0, 0, static_cast<std::uint32_t>(piece_blocks.size()))};
+    return m;
+}
+
+// F1-64: blocos de exatamente 262144 bytes e vizinhos (ver vfs_fixture_data.hpp).
+sp::ManifestModel max_block_model()
+{
+    return sized_blocks_model(
+        "swarmstream.vfsmaxblock",
+        std::vector<std::uint32_t>(fx::kMaxBlockRawSize.begin(), fx::kMaxBlockRawSize.end()),
+        {static_cast<std::uint32_t>(fx::kMaxBlockFirstPieceBlocks),
+         static_cast<std::uint32_t>(fx::kMaxBlockRawSize.size() - fx::kMaxBlockFirstPieceBlocks)},
+        fx::max_block_files());
+}
+
+// F1-64: dois arquivos lógicos de mais de 4 GiB (uma peça de 4 blocos; ver vfs_fixture_data.hpp).
+sp::ManifestModel huge_model()
+{
+    return sized_blocks_model(
+        "swarmstream.vfshuge",
+        std::vector<std::uint32_t>(fx::kHugeBlockRawSize.begin(), fx::kHugeBlockRawSize.end()),
+        {static_cast<std::uint32_t>(fx::kHugeBlockRawSize.size())}, fx::huge_files());
+}
+
 sp::ManifestModel empty_model()
 {
     sp::ManifestModel m = base_model("swarmstream.vfsempty");
@@ -166,7 +242,7 @@ std::string array_text(const char* name, const std::vector<std::byte>& bytes)
 int main(int argc, char** argv)
 {
     if (argc < 2) {
-        std::fputs("uso: gen-vfs-fixture <saida.hpp> | --bin <dir>\n", stderr);
+        std::fputs("uso: gen-vfs-fixture <saida.hpp> [<saida_grande.hpp>] | --bin <dir>\n", stderr);
         return 2;
     }
     sp::Ed25519Seed seed{};
@@ -183,8 +259,11 @@ int main(int argc, char** argv)
     const auto empty_built = sp::build_manifest(empty_model(), seed);
     const auto nested_built = sp::build_manifest(nested_conflict_model(), seed);
     const auto prefix_built = sp::build_manifest(prefix_model(), seed);
-    for (const auto* b :
-         {&main_built, &conflict_built, &empty_built, &nested_built, &prefix_built}) {
+    const auto high_built = sp::build_manifest(high_bytes_model(), seed);
+    const auto maxblock_built = sp::build_manifest(max_block_model(), seed);
+    const auto huge_built = sp::build_manifest(huge_model(), seed);
+    for (const auto* b : {&main_built, &conflict_built, &empty_built, &nested_built, &prefix_built,
+                          &high_built, &maxblock_built, &huge_built}) {
         if (!b->status.ok()) {
             std::fprintf(stderr, "build_manifest falhou: %s\n", b->status.detail);
             return 1;
@@ -197,11 +276,10 @@ int main(int argc, char** argv)
         }
         const std::string dir = argv[2];
         const std::pair<const char*, const std::vector<std::byte>*> outs[] = {
-            {"principal.bin", &main_built.bytes},
-            {"conflito.bin", &conflict_built.bytes},
-            {"vazio.bin", &empty_built.bytes},
-            {"aninhado.bin", &nested_built.bytes},
-            {"prefixos.bin", &prefix_built.bytes}};
+            {"principal.bin", &main_built.bytes},     {"conflito.bin", &conflict_built.bytes},
+            {"vazio.bin", &empty_built.bytes},        {"aninhado.bin", &nested_built.bytes},
+            {"prefixos.bin", &prefix_built.bytes},    {"altos.bin", &high_built.bytes},
+            {"bloco-max.bin", &maxblock_built.bytes}, {"grande.bin", &huge_built.bytes}};
         for (const auto& [name, bytes] : outs) {
             std::ofstream out(dir + "/" + name, std::ios::binary);
             out.write(reinterpret_cast<const char*>(bytes->data()),
@@ -217,13 +295,18 @@ int main(int argc, char** argv)
     std::string text =
         "// SPDX-License-Identifier: Apache-2.0\n"
         "// Copyright 2026 Alexandre Aparecido Rodrigues Peres\n\n"
-        "// GERADO por sw-pack/tools/gen_vfs_fixture.cpp (F1-17); não edite à mão. Manifestos v0\n"
-        "// assinados com a chave de TESTE do ADR-0012 (semente 00..1f), a partir de\n"
+        "// GERADO por sw-pack/tools/gen_vfs_fixture.cpp (F1-17, F1-64); não edite à mão. "
+        "Manifestos\n"
+        "// v0 assinados com a chave de TESTE do ADR-0012 (semente 00..1f), a partir de\n"
         "// vfs_fixture_data.hpp: principal (12 arquivos, 9 blocos, 2 grupos), conflito (\"a\" é\n"
         "// arquivo e diretório), conflito aninhado (\"x/a\"), prefixo sem conflito (\"a\" / "
-        "\"ab\") e\n"
-        "// vazio (sem arquivos). Para regenerar: construir o alvo\n"
-        "// `gen-vfs-fixture` e rodar `gen-vfs-fixture sw-core/tests/vfs_fixture.hpp`.\n"
+        "\"ab\"),\n"
+        "// vazio (sem arquivos), bytes altos depois do prefixo de diretório e blocos de 262144 "
+        "bytes\n"
+        "// (F1-64). Os manifestos de arquivos de mais de 4 GiB (F1-64) ficam em "
+        "vfs_fixture_big.hpp.\n"
+        "// Para regenerar: construir o alvo `gen-vfs-fixture` e rodar\n"
+        "// `gen-vfs-fixture sw-core/tests/vfs_fixture.hpp sw-core/tests/vfs_fixture_big.hpp`.\n"
         "#pragma once\n\n#include <array>\n#include <cstdint>\n\n"
         "namespace swarmstream::test::vfs_fixture {\n\n";
     text += "inline constexpr std::array<std::uint8_t, 32> kPublicKey = {";
@@ -239,6 +322,8 @@ int main(int argc, char** argv)
     text += array_text("kEmptyManifest", empty_built.bytes);
     text += array_text("kNestedConflictManifest", nested_built.bytes);
     text += array_text("kPrefixManifest", prefix_built.bytes);
+    text += array_text("kHighBytesManifest", high_built.bytes);
+    text += array_text("kMaxBlockManifest", maxblock_built.bytes);
     text += "} // namespace swarmstream::test::vfs_fixture\n";
 
     std::ofstream out(argv[1], std::ios::binary);
@@ -246,6 +331,31 @@ int main(int argc, char** argv)
     if (!out) {
         std::fprintf(stderr, "falha ao gravar %s\n", argv[1]);
         return 1;
+    }
+    if (argc >= 3) {
+        // A chave pública fica em vfs_fixture.hpp (o teste inclui os dois cabeçalhos).
+        const std::string big =
+            "// SPDX-License-Identifier: Apache-2.0\n"
+            "// Copyright 2026 Alexandre Aparecido Rodrigues Peres\n\n"
+            "// GERADO por sw-pack/tools/gen_vfs_fixture.cpp (F1-64); não edite à mão. Manifesto "
+            "v0\n"
+            "// assinado (chave de TESTE do ADR-0012, a de vfs_fixture.hpp) com dois arquivos "
+            "lógicos\n"
+            "// de mais de 4 GiB descritos só pelo manifesto: 4 blocos distintos referenciados "
+            "mais de\n"
+            "// 16 mil vezes por arquivo. Nenhum dado de bloco existe em disco. Para regenerar:\n"
+            "// `gen-vfs-fixture sw-core/tests/vfs_fixture.hpp "
+            "sw-core/tests/vfs_fixture_big.hpp`.\n"
+            "#pragma once\n\n#include <array>\n#include <cstdint>\n\n"
+            "namespace swarmstream::test::vfs_fixture {\n\n" +
+            array_text("kHugeManifest", huge_built.bytes) +
+            "} // namespace swarmstream::test::vfs_fixture\n";
+        std::ofstream big_out(argv[2], std::ios::binary);
+        big_out << big;
+        if (!big_out) {
+            std::fprintf(stderr, "falha ao gravar %s\n", argv[2]);
+            return 1;
+        }
     }
     return 0;
 }

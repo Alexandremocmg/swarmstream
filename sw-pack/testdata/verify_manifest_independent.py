@@ -9,14 +9,17 @@ Nada daqui usa código do sw-pack:
   * o payload é lido com o runtime OFICIAL do FlatBuffers para Python (sem código gerado),
     pelos ids de campo do esquema de docs/03 §7.2, e as validações principais do §8 são refeitas.
 
-Uso:  python -I verify_manifest_independent.py manifest.bin
-      (gere um com: sw-manifest-bench generate --blocks 3000 --out manifest.bin)
+Uso:  python -I verify_manifest_independent.py manifest.bin [--detalhe]
+      (gere um com: sw-manifest-bench generate --blocks 3000 --out manifest.bin;
+       os das fixtures do VFS saem de: gen-vfs-fixture --bin <dir>)
+      --detalhe: imprime o tamanho de cada arquivo e o entorno do byte 2^32 (F1-64).
 Precisa de:  pip install flatbuffers cryptography
 """
 
 import hashlib
 import struct
 import sys
+import unicodedata
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -75,6 +78,39 @@ def strings(tab: Table, field_id: int) -> list[str]:
     return out
 
 
+EDGE = 1 << 32  # fronteira de 4 GiB (F1-64)
+
+
+def print_details(
+    paths: list[str],
+    fsize: list[int],
+    ffirst: list[int],
+    fcount: list[int],
+    refs: list[int],
+    raw: list[int],
+) -> None:
+    """F1-64: tamanho de cada arquivo e, para os maiores que 2^32, o entorno do byte 2^32.
+
+    Conta feita aqui, em Python, só com as tabelas lidas do manifesto: serve para conferir os
+    literais dos testes do VFS (sw-core/tests/test_vfs.cpp) contra uma conta que não passa por
+    nenhum código do projeto. Para cada referência cujo início cai em [2^32 - 2, 2^32 + 2] ou que
+    contém o byte 2^32, imprime (índice no arquivo, início, tamanho do bloco, bloco).
+    """
+    for i, path in enumerate(paths):
+        sizes = [raw[b] for b in refs[ffirst[i] : ffirst[i] + fcount[i]]]
+        print(f"arquivo {ascii(path)} tamanho={fsize[i]} referencias={fcount[i]}")
+        if fsize[i] <= EDGE:
+            continue
+        start = 0
+        for k, n in enumerate(sizes):
+            contains = start <= EDGE < start + n
+            if abs(start - EDGE) <= 2 or contains:
+                note = f" contem o byte 2^32 no deslocamento {EDGE - start}" if contains else ""
+                block = refs[ffirst[i] + k]
+                print(f"  ref {k}: inicio={start} bloco={block} raw_size={n}{note}")
+            start += n
+
+
 def main() -> int:
     with open(sys.argv[1], "rb") as handle:
         data = handle.read()
@@ -127,6 +163,12 @@ def main() -> int:
     refs = u32s(root, 8)
     check(paths == sorted(paths, key=lambda p: p.encode()), "ordem bytewise")
     check(len({p.lower() for p in paths}) == len(paths))
+    # §6: UTF-8 válido (o decode acima já recusa byte isolado inválido), NFC, sem segmentos vazios,
+    # "." ou "..", sem NUL nem "\". O leitor C++ não confere a NFC (precisaria das tabelas Unicode).
+    for p in paths:
+        check(unicodedata.normalize("NFC", p) == p, f"caminho fora da NFC: {ascii(p)}")
+        check(all(s not in ("", ".", "..") for s in p.split("/")), f"segmento invalido: {ascii(p)}")
+        check("\0" not in p and "\\" not in p, f"NUL ou barra invertida: {ascii(p)}")
     expected_ref = 0
     for i, p in enumerate(paths):
         check(ffirst[i] == expected_ref)
@@ -135,6 +177,9 @@ def main() -> int:
         check((fcls[i] == 0) == (fgroup[i] == 0))
         expected_ref += fcount[i]
     check(expected_ref == len(refs))
+
+    if "--detalhe" in sys.argv:
+        print_details(paths, fsize, ffirst, fcount, refs, raw)
 
     gstart, gn = vector(root, 10)
     names = []
