@@ -23,6 +23,8 @@ add_library(sw-core STATIC
     src/cache_journal.cpp
     src/cache_owner.cpp
     src/deadline_scheduler.cpp
+    src/expected_block_counts.cpp
+    src/expected_block_counts_manifest.cpp
     src/installed_floor.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
@@ -103,6 +105,14 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     target_include_directories(sw-core-recovery-tests PRIVATE src)
     add_test(NAME sw-core-recovery COMMAND sw-core-recovery-tests)
     set_tests_properties(sw-core-recovery PROPERTIES TIMEOUT 300)
+
+    # F1-70: conferência de block_count na recuperação (vetor esperado, start(), queda no checkpoint
+    # e falta de memória). Usa o manifesto assinado da fixture do VFS (precisa do libsodium real).
+    add_executable(sw-core-blockcount-tests tests/test_cache_blockcount.cpp)
+    target_link_libraries(sw-core-blockcount-tests PRIVATE sw-core)
+    target_include_directories(sw-core-blockcount-tests PRIVATE src)
+    add_test(NAME sw-core-blockcount COMMAND sw-core-blockcount-tests)
+    set_tests_properties(sw-core-blockcount PROPERTIES TIMEOUT 300)
 
     # F1-12: thread dona do cache e fila MPSC (16 leitoras; o job TSan do CI roda este teste).
     add_executable(sw-core-owner-tests tests/test_cache_owner.cpp)
