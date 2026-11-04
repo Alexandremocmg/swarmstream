@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <initializer_list>
 #include <new>
 
 #if defined(_WIN32)

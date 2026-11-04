@@ -14,6 +14,7 @@
 #include "oom_support.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <iostream>
@@ -21,6 +22,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#if SW_SURVEY_SYMBOLS // a macro vem de oom_support.hpp
+#include <windows.h>
+// clang-format off
+#include <dbghelp.h>
+// clang-format on
+#endif
 
 namespace oom::survey {
 

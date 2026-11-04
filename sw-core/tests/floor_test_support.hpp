@@ -17,12 +17,16 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
+#include <span>
 #include <string>
+#include <string_view>
 #include <swarmstream/chunker.hpp>
 #include <swarmstream/crypto.hpp>
 #include <swarmstream/ed25519.hpp>
 #include <swarmstream/manifest.hpp>
+#include <system_error>
 #include <utility>
 #include <vector>
 

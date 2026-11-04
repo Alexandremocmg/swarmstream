@@ -20,7 +20,10 @@
 //              antigo ou o novo, nunca menor); se a troca aconteceu o resultado diz
 //              `may_have_changed`; o .tmp, se existir, tem exatamente os bytes do manifesto novo;
 //              nenhum outro arquivo aparece ou muda; nenhum handle fica aberto; e uma nova
-//              gravação sem falha chega ao estado final esperado (o .tmp que sobrou é consumido).
+//              gravação SEM falha (operações reais) tem o resultado calculado do estado do alvo já
+//              validado: alvo com os bytes do manifesto novo => Ok, wrote=false, bytes preservados;
+//              senão Ok/wrote=true e bytes novos (o .tmp que sobrou é consumido) ou a recusa do
+//              cenário.
 // Não há pontos excluídos: se uma alocação existe no cenário, ela é varrida. A instrumentação de
 // diagnóstico (set_terminate, DbgHelp, levantamento) não é evidência de ausência de alocação.
 //
@@ -159,6 +162,78 @@ std::string audit_after_failure(const Disk& pre, const Disk& post, const AuditIn
     return "";
 }
 
+// ------------------------------------------------------ auditoria da REPETIÇÃO (sem falha)
+// A expectativa da repetição sai do estado VALIDADO do alvo depois da 1a chamada e ANTES da
+// repetição, não de may_have_changed (que só diz "antigo OU novo", sem dizer qual ficou):
+//  - o alvo já tem EXATAMENTE os bytes do manifesto novo (a troca aconteceu antes da falha, ou a
+//    cópia já era idêntica): nada a gravar => Ok, wrote=false, bytes preservados, pasta intacta;
+//  - senão o alvo ainda precisa do que o cenário grava sem falha (`from_scratch`): Ok/wrote=true e
+//    bytes novos, ou a recusa do cenário (downgrade: Rollback, nada muda).
+struct AgainExpect
+{
+    det::FloorStatus status;
+    bool wrote;
+};
+
+AgainExpect expected_again(bool target_is_new, const AgainExpect& from_scratch)
+{
+    if (target_is_new) return {det::FloorStatus::Ok, false};
+    return from_scratch;
+}
+
+const char* status_name(det::FloorStatus s)
+{
+    switch (s) {
+    case det::FloorStatus::Ok: return "Ok";
+    case det::FloorStatus::Io: return "Io";
+    case det::FloorStatus::Rollback: return "Rollback";
+    case det::FloorStatus::OutOfMemory: return "OutOfMemory";
+    }
+    return "?";
+}
+
+// Estado ENCONTRADO do alvo, em texto, para a mensagem de falha (cenário e K vêm de quem chama).
+std::string describe_target(const Disk& d, const Disk& pre, const Bytes& new_bytes)
+{
+    if (!d.target_exists) return "ausente";
+    std::string s = std::to_string(d.target.size()) + " bytes, ";
+    if (same_bytes(d.target, new_bytes))
+        s += "IGUAIS aos do manifesto novo";
+    else if (pre.target_exists && same_bytes(d.target, pre.target))
+        s += "IGUAIS aos do manifesto antigo";
+    else
+        s += "diferentes do antigo e do novo";
+    s += d.tmp_exists ? "; .tmp presente" : "; .tmp ausente";
+    return s;
+}
+
+// "" se a repetição está de acordo com `e`; senão, o motivo. `before` é o estado logo antes da
+// repetição, `fin` o logo depois.
+std::string audit_again(const det::FloorWrite& again, const AgainExpect& e, bool target_is_new,
+                        const Disk& pre, const Disk& before, const Disk& fin,
+                        const Bytes& new_bytes)
+{
+    if (again.status != e.status)
+        return std::string("status da repeticao ") + status_name(again.status) + ", esperado " +
+               status_name(e.status);
+    if (again.wrote != e.wrote)
+        return std::string("wrote da repeticao ") + (again.wrote ? "true" : "false") +
+               ", esperado " + (e.wrote ? "true" : "false");
+    if (e.wrote || target_is_new) {
+        if (!fin.target_exists || !same_bytes(fin.target, new_bytes))
+            return "o alvo final nao tem os bytes do manifesto novo";
+    }
+    if (e.wrote && fin.tmp_exists) return "o .tmp que sobrou nao foi consumido";
+    if (target_is_new && !e.wrote && fin.files != before.files)
+        return "a repeticao sem o que gravar alterou a pasta";
+    if (!target_is_new && !e.wrote) { // recusa (downgrade): o alvo do cenário não muda
+        if (fin.target_exists != pre.target_exists ||
+            (pre.target_exists && !same_bytes(fin.target, pre.target)))
+            return "o alvo mudou numa repeticao que nao grava";
+    }
+    return "";
+}
+
 // Controles positivos do próprio auditor: estados bons passam e cada defeito reprova.
 void test_audit_self_check()
 {
@@ -227,6 +302,74 @@ void test_audit_self_check()
     pre9.files = {{"installed", 0}, {alvo, 10}};
     menor.post_floor = 5; // o novo (5) é menor que o antigo (9)
     SW_CHECK(!audit_after_failure(pre9, bom, menor).empty());
+
+    // --- expectativa e auditoria da repetição sem falha
+    const AgainExpect update_ok{det::FloorStatus::Ok, true};
+    const AgainExpect refused{det::FloorStatus::Rollback, false};
+    SW_CHECK(expected_again(true, update_ok).status == det::FloorStatus::Ok);
+    SW_CHECK(!expected_again(true, update_ok).wrote); // alvo ja novo: nada a gravar
+    SW_CHECK(expected_again(false, update_ok).wrote); // ainda precisa atualizar
+    SW_CHECK(expected_again(false, refused).status == det::FloorStatus::Rollback);
+    SW_CHECK(!expected_again(false, refused).wrote);
+
+    auto write_result = [](det::FloorStatus st, bool wrote) {
+        det::FloorWrite w;
+        w.status = st;
+        w.wrote = wrote;
+        return w;
+    };
+    // alvo ja tem os bytes novos: repetir => Ok, wrote=false, bytes e pasta preservados
+    SW_CHECK(audit_again(write_result(det::FloorStatus::Ok, false), expected_again(true, update_ok),
+                         true, pre, bom, bom, novo)
+                 .empty());
+    // MUTANTE: a repeticao diz que gravou quando o alvo ja era o novo (o defeito antigo do teste)
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Ok, true), expected_again(true, update_ok),
+                          true, pre, bom, bom, novo)
+                  .empty());
+    // MUTANTE: repeticao que nao grava mas altera a pasta
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Ok, false),
+                          expected_again(true, update_ok), true, pre, bom, com_tmp, novo)
+                  .empty());
+    // MUTANTE: repeticao que nao grava e deixa o alvo com bytes que nao sao os novos
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Ok, false),
+                          expected_again(true, update_ok), true, pre, bom, corrompido, novo)
+                  .empty());
+    // alvo ainda antigo: repetir => Ok, wrote=true, bytes novos, sem .tmp sobrando
+    SW_CHECK(audit_again(write_result(det::FloorStatus::Ok, true), expected_again(false, update_ok),
+                         false, pre9, pre9, bom, novo)
+                 .empty());
+    // MUTANTE: devolve wrote=false quando ainda precisava atualizar
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Ok, false),
+                          expected_again(false, update_ok), false, pre9, pre9, bom, novo)
+                  .empty());
+    // MUTANTE: wrote=true mas o alvo final nao tem os bytes novos
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Ok, true),
+                          expected_again(false, update_ok), false, pre9, pre9, pre9, novo)
+                  .empty());
+    // MUTANTE: wrote=true e o .tmp sobrou
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Ok, true),
+                          expected_again(false, update_ok), false, pre9, pre9, com_tmp, novo)
+                  .empty());
+    // MUTANTE: status errado
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Io, false),
+                          expected_again(true, update_ok), true, pre, bom, bom, novo)
+                  .empty());
+    // recusa (downgrade): Rollback, wrote=false, alvo antigo intacto
+    SW_CHECK(audit_again(write_result(det::FloorStatus::Rollback, false),
+                         expected_again(false, refused), false, pre9, pre9, pre9, novo)
+                 .empty());
+    // MUTANTE: a recusa mexeu no alvo
+    SW_CHECK(!audit_again(write_result(det::FloorStatus::Rollback, false),
+                          expected_again(false, refused), false, pre9, pre9, bom, novo)
+                  .empty());
+    // o texto do estado encontrado distingue ausente / novo / antigo / outro
+    SW_CHECK(describe_target(pre, pre, novo) == "ausente");
+    SW_CHECK(describe_target(bom, pre, novo).find("IGUAIS aos do manifesto novo") !=
+             std::string::npos);
+    SW_CHECK(describe_target(pre9, pre9, novo).find("IGUAIS aos do manifesto antigo") !=
+             std::string::npos);
+    SW_CHECK(describe_target(corrompido, pre9, novo).find("diferentes do antigo e do novo") !=
+             std::string::npos);
 }
 
 // ------------------------------------------------------------------------- ops com etapas
@@ -400,6 +543,7 @@ void sweep_commit(const CommitCase& c)
 
     int failed_points = 0;
     int ok_at = 0;
+    int again_target_new = 0; // repeticoes em que o alvo ja tinha os bytes do manifesto novo
     for (std::int64_t k = 1; k <= 2000; ++k) {
         // Estado inicial limpo a cada ponto.
         cleanup(dir);
@@ -458,34 +602,48 @@ void sweep_commit(const CommitCase& c)
         in.tmp_rel = tmp_rel;
         const std::string why = audit_after_failure(pre, post, in);
         if (!why.empty())
-            std::cerr << "ESTADO INVALIDO apos falha em K=" << k << " (" << c.name << "): " << why
-                      << " (may_have_changed=" << w.may_have_changed << ")" << std::endl;
+            std::cerr << "ESTADO INVALIDO apos falha em K=" << k << " (cenario '" << c.name
+                      << "'): " << why << " (may_have_changed=" << w.may_have_changed
+                      << "; alvo: " << describe_target(post, pre, c.new_manifest) << ")"
+                      << std::endl;
         SW_CHECK(why.empty());
 
-        // Uma NOVA gravação sem falha chega ao estado final esperado.
+        // Uma NOVA gravação, SEM falha nenhuma (operações reais), chega ao estado final esperado.
+        // A expectativa sai do estado do alvo JÁ VALIDADO acima (nome, bytes e piso) e lido de novo
+        // aqui, imediatamente antes da repetição: se o alvo já tem exatamente os bytes do manifesto
+        // novo, não há o que gravar (Ok, wrote=false); senão, o que o cenário grava sem falha.
+        const Disk before_again = snapshot(dir);
+        const bool target_is_new =
+            before_again.target_exists && same_bytes(before_again.target, c.new_manifest);
+        if (target_is_new) ++again_target_new;
+        const AgainExpect from_scratch = c.inject_replace_error_after_swap
+                                             ? AgainExpect{det::FloorStatus::Ok, true}
+                                             : AgainExpect{c.expect_status, c.expect_wrote};
+        const AgainExpect want = expected_again(target_is_new, from_scratch);
         FaultOps again_ops;
-        if (c.inject_replace_error_after_swap)
-            again_ops.replace_fault = FaultOps::ReplaceFault::FailAfterSwap;
         const det::FloorWrite again = run_commit(c, dir, keys, again_ops);
-        // Com o erro de replace injetado, o resultado depende de a troca já ter ocorrido (cópia
-        // idêntica => Ok); o que vale é o estado final.
-        if (!c.inject_replace_error_after_swap) {
-            SW_CHECK(again.status == c.expect_status);
-            SW_CHECK(again.wrote == c.expect_wrote);
-        }
         const Disk fin = snapshot(dir);
-        if (c.expect_wrote || c.inject_replace_error_after_swap) {
-            SW_CHECK(fin.target_exists && same_bytes(fin.target, c.new_manifest));
-            SW_CHECK(!fs::exists(tmp)); // o .tmp que sobrou foi consumido
-        } else {
-            SW_CHECK(fin.target_exists == pre.target_exists);
-            if (pre.target_exists) SW_CHECK(same_bytes(fin.target, pre.target));
-        }
+        const std::string again_why =
+            audit_again(again, want, target_is_new, pre, before_again, fin, c.new_manifest);
+        if (!again_why.empty())
+            std::cerr << "REPETICAO invalida apos falha em K=" << k << " (cenario '" << c.name
+                      << "'): " << again_why << "; 1a chamada: status=" << status_name(w.status)
+                      << " wrote=" << w.wrote << " may_have_changed=" << w.may_have_changed
+                      << "; alvo antes da repeticao: "
+                      << describe_target(before_again, pre, c.new_manifest)
+                      << "; repeticao: status=" << status_name(again.status)
+                      << " wrote=" << again.wrote
+                      << " (esperado status=" << status_name(want.status) << " wrote=" << want.wrote
+                      << "); alvo depois: " << describe_target(fin, pre, c.new_manifest)
+                      << std::endl;
+        SW_CHECK(again_why.empty());
     }
     SW_CHECK(ok_at > 0);
     SW_CHECK(failed_points > 0);
     std::cout << "  pontos de falha cobertos: " << failed_points << " (gravacao completa na "
-              << ok_at << "a alocacao)" << std::endl;
+              << ok_at << "a alocacao); repeticoes com o alvo ja novo: " << again_target_new
+              << ", repeticoes que ainda atualizam ou recusam: " << failed_points - again_target_new
+              << std::endl;
     cleanup(dir);
 }
 
