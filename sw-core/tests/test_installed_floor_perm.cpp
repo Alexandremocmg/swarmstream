@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Alexandre Aparecido Rodrigues Peres
 
-// F1-69, caso (d) do F1-60 §6.2: Linux, helper REAL (replace_file de platform_file.hpp), com
+// F1-69, caso (d) do F1-60 §6.2: Linux, operação REAL do piso (no POSIX, RealFloorFileOps::replace,
+// equivalente a replace_file de platform_file.hpp; ver a análise de equivalência no código), com
 // installed/ em modo 0300 (escrita e travessia, sem leitura). Assim o rename(2) dá certo e o
 // open(O_RDONLY | O_DIRECTORY) do sync_directory falha com EACCES: o erro vem DEPOIS da troca.
 //

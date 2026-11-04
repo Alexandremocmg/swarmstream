@@ -34,6 +34,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include <cwchar>
+#endif
+
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <sys/file.h>
@@ -157,7 +161,7 @@ void test_same_process_second_lock_collides()
     det::CacheDirLock a;
     const det::LockStatus sa = det::CacheDirLock::acquire(dir, a);
     SW_CHECK(sa.ok() && a.held());
-    SW_CHECK(a.path() == dir / det::kCacheLockFileName);
+    SW_CHECK(fs::path(a.native_path()) == dir / det::kCacheLockFileName);
 
     det::CacheDirLock b;
     const det::LockStatus sb = det::CacheDirLock::acquire(dir, b);
@@ -198,6 +202,118 @@ void test_creates_folder()
     SW_CHECK(lock.release().ok());
     cleanup(base);
 }
+
+// Nome com acentos e CJK (UTF-8 escrito por escape: o fonte não depende da codificação).
+fs::path unicode_leaf() { return fs::path(u8"a\u00e7\u00e3o-\u65e5\u672c-\u00fc"); }
+
+void test_unicode_nested_and_native_path_lifetime()
+{
+    std::cout << "[Test] caminho Unicode com pastas intermediarias; vida util de native_path()\n";
+    const fs::path base = fresh_dir("uni");
+    const fs::path dir = base / unicode_leaf() / "n1" / "n2" / unicode_leaf();
+    SW_CHECK(!fs::exists(dir));
+
+    det::CacheDirLock lock;
+    SW_CHECK(lock.native_path() != nullptr && lock.native_path()[0] == 0); // sem lock: ""
+    SW_CHECK(det::CacheDirLock::acquire(dir, lock).ok() && lock.held());
+    SW_CHECK(fs::is_directory(dir) && fs::is_regular_file(dir / det::kCacheLockFileName));
+    SW_CHECK(fs::path(lock.native_path()) == dir / det::kCacheLockFileName);
+
+    // Mover leva o buffer junto: o ponteiro lido antes continua valendo, agora do destino.
+    const det::NativeChar* before_move = lock.native_path();
+    det::CacheDirLock moved(std::move(lock));
+    SW_CHECK(moved.native_path() == before_move);
+    SW_CHECK(lock.native_path()[0] == 0); // o de origem voltou a ""
+
+    // Colide no mesmo processo (a posse é do lock sobre a abertura, não do texto do caminho).
+    det::CacheDirLock other;
+    SW_CHECK(det::CacheDirLock::acquire(dir, other).code == det::LockCode::Locked);
+
+    SW_CHECK(moved.release().ok());
+    SW_CHECK(moved.native_path()[0] == 0); // solto: "" (o ponteiro antigo deixou de valer)
+    SW_CHECK(fs::is_regular_file(dir / det::kCacheLockFileName)); // o arquivo fica
+    cleanup(base);
+}
+
+void test_unicode_path_in_error_text()
+{
+    std::cout << "[Test] o texto do erro carrega o caminho Unicode em UTF-8\n";
+    const fs::path base = fresh_dir("unierr");
+    const fs::path file = base / unicode_leaf();
+    write_file(file, "x");
+    det::CacheDirLock l;
+    const det::LockStatus st = det::CacheDirLock::acquire(file, l);
+    SW_CHECK(st.code == det::LockCode::Io && !l.held());
+    const std::string leaf_utf8(reinterpret_cast<const char*>(unicode_leaf().u8string().c_str()));
+    SW_CHECK(std::string(st.message()).find(leaf_utf8) != std::string::npos);
+    cleanup(base);
+}
+
+#if defined(_WIN32)
+// Composição do caminho (SEM E/S): só texto. Cobre UNC, prefixo estendido, barras e "C:".
+std::wstring composed(const wchar_t* dir, std::size_t expect_dir_len)
+{
+    std::size_t dir_len = 0;
+    const auto buf = det::compose_lock_path(fs::path(dir), dir_len);
+    SW_CHECK(dir_len == expect_dir_len);
+    SW_CHECK(dir_len == std::wcslen(dir));
+    return std::wstring(buf.get());
+}
+
+void test_windows_path_composition_without_io()
+{
+    std::cout << "[Test] Windows: composicao do caminho do lock (UNC, prefixo estendido, barras; "
+                 "sem E/S)\n";
+    const std::wstring leaf = L"swarmstream.lock";
+    SW_CHECK(composed(L"C:\\x\\y", 6) == L"C:\\x\\y\\" + leaf);
+    SW_CHECK(composed(L"C:\\x\\y\\", 7) == L"C:\\x\\y\\" + leaf); // sem separador duplicado
+    SW_CHECK(composed(L"C:/x/y", 6) == L"C:/x/y\\" + leaf);       // barra do usuario preservada
+    SW_CHECK(composed(L"C:/x/y/", 7) == L"C:/x/y/" + leaf);
+    SW_CHECK(composed(L"C:\\", 3) == L"C:\\" + leaf);
+    SW_CHECK(composed(L"C:", 2) ==
+             L"C:" + leaf); // "pasta atual do disco C": cola direto (fs::path)
+    SW_CHECK(composed(L"cache", 5) == L"cache\\" + leaf);
+    SW_CHECK(composed(L"\\\\server\\share\\dir", 18) == L"\\\\server\\share\\dir\\" + leaf);
+    SW_CHECK(composed(L"\\\\server\\share", 14) == L"\\\\server\\share\\" + leaf);
+    SW_CHECK(composed(L"\\\\server\\share\\", 15) == L"\\\\server\\share\\" + leaf);
+    SW_CHECK(composed(L"\\\\?\\C:\\x", 8) == L"\\\\?\\C:\\x\\" + leaf);
+    SW_CHECK(composed(L"\\\\?\\C:\\", 7) == L"\\\\?\\C:\\" + leaf);
+    SW_CHECK(composed(L"\\\\?\\UNC\\server\\share\\x", 22) ==
+             L"\\\\?\\UNC\\server\\share\\x\\" + leaf);
+    SW_CHECK(composed(L"C:\\a\u00e7\u00e3o\\\u65e5\u672c", 10) ==
+             L"C:\\a\u00e7\u00e3o\\\u65e5\u672c\\" + leaf);
+    // O nome nativo é o mesmo que os testes e a documentação usam.
+    SW_CHECK(fs::path(composed(L"C:\\x", 4)).filename() == fs::path(det::kCacheLockFileName));
+}
+
+void test_windows_extended_prefix_real_io()
+{
+    std::cout << "[Test] Windows: prefixo estendido com E/S real (cria, trava, solta)\n";
+    const fs::path base = fresh_dir("ext");
+    fs::path abs = fs::absolute(base);
+    abs.make_preferred();
+    const fs::path dir = fs::path(L"\\\\?\\" + abs.native()) / L"n1" / L"n2" / unicode_leaf();
+    SW_CHECK(dir.native().rfind(L"\\\\?\\", 0) == 0);
+
+    det::CacheDirLock lock;
+    const det::LockStatus st = det::CacheDirLock::acquire(dir, lock);
+    if (!st.ok()) std::cerr << "acquire com prefixo estendido: " << st.message() << std::endl;
+    SW_CHECK(st.ok() && lock.held());
+    SW_CHECK(fs::is_directory(abs / L"n1" / L"n2" / unicode_leaf())); // pelas duas formas
+    SW_CHECK(fs::is_regular_file(dir / det::kCacheLockFileName));
+    SW_CHECK(fs::path(lock.native_path()) == dir / det::kCacheLockFileName);
+
+    det::CacheDirLock second;
+    SW_CHECK(det::CacheDirLock::acquire(dir, second).code == det::LockCode::Locked);
+    // O mesmo arquivo pelo caminho SEM prefixo também colide (o lock é do SO sobre o arquivo).
+    det::CacheDirLock third;
+    SW_CHECK(det::CacheDirLock::acquire(abs / L"n1" / L"n2" / unicode_leaf(), third).code ==
+             det::LockCode::Locked);
+    SW_CHECK(lock.release().ok());
+    SW_CHECK(fs::is_regular_file(dir / det::kCacheLockFileName)); // o arquivo fica
+    cleanup(base);
+}
+#endif
 
 void test_preexisting_lock_file_without_owner()
 {
@@ -255,7 +371,7 @@ void test_misuse_and_move()
     // Pedir outro lock com o mesmo objeto: erro, e o lock original continua seguro.
     const det::LockStatus again = det::CacheDirLock::acquire(other, a);
     SW_CHECK(again.code == det::LockCode::Io && a.held() &&
-             a.path() == dir / det::kCacheLockFileName);
+             fs::path(a.native_path()) == dir / det::kCacheLockFileName);
     SW_CHECK(!fs::exists(other / det::kCacheLockFileName)); // nem tocou na outra pasta
 
     det::CacheDirLock moved(std::move(a));
@@ -625,6 +741,12 @@ int main(int argc, char** argv)
     test_same_process_second_lock_collides();
     test_two_folders_independent();
     test_creates_folder();
+    test_unicode_nested_and_native_path_lifetime();
+    test_unicode_path_in_error_text();
+#if defined(_WIN32)
+    test_windows_path_composition_without_io();
+    test_windows_extended_prefix_real_io();
+#endif
     test_preexisting_lock_file_without_owner();
     test_lock_file_survives_unlock_and_failure();
     test_misuse_and_move();

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -172,9 +173,36 @@ public:
 
     CacheErrorCode replace(const fs::path& from, const fs::path& to) noexcept override
     {
-        return replace_file(from, to);
+#if defined(_WIN32)
+        return replace_file(from, to); // MoveFileExW: nada aqui aloca
+#else
+        // Equivalente a replace_file (platform_file.hpp:297-309: rename e depois fsync da pasta),
+        // salvo o `parent_path()` (que ALOCA) dentro de try. Caso a caso:
+        //  (a) rename falha            -> IoError, troca NÃO ocorreu: igual ao helper.
+        //  (b) rename e sync_directory ok -> Success: igual.
+        //  (c) rename ok, sync_directory falha -> IoError com a troca JÁ feita: igual; o chamador
+        //      trata como may_have_changed (piso antigo OU novo).
+        //  (d) NOVO: `parent_path()` sem memória depois do rename -> IoError (no helper: o
+        //      bad_alloc sai de uma função noexcept e é std::terminate, com a troca já feita).
+        //  (e) Diferença de superfície: esta lógica DUPLICA a do helper e pode divergir se ele
+        //      mudar (por isso o helper compartilhado não foi alterado: ele também serve ao
+        //      índice e ao journal). Testes: (a) test_real_replace_missing_source; (b) toda
+        //      gravação com as operações reais no POSIX; (c) test_installed_floor_perm.cpp
+        //      (installed/ em 0300, só Linux como não-root); (d) a varredura do POSIX em
+        //      test_installed_floor_oom.cpp (só POSIX; não rodou localmente).
+        if (::rename(from.c_str(), to.c_str()) != 0) return CacheErrorCode::IoError;
+        try {
+            return sync_directory(to.parent_path());
+        } catch (...) {
+            return CacheErrorCode::IoError;
+        }
+#endif
     }
 };
+
+// Inicialização CONSTANTE (nada é construído nem alocado na carga do programa nem na primeira
+// chamada): a classe não tem dados e o construtor é constexpr.
+constinit RealFloorFileOps g_real_ops;
 
 // ---------------------------------------------------------------------------------------------
 // Verificação de um manifesto (o novo ou o instalado)
@@ -309,11 +337,7 @@ const char* to_string(FloorCategory category) noexcept
     return "?";
 }
 
-FloorFileOps& real_floor_file_ops() noexcept
-{
-    static RealFloorFileOps ops;
-    return ops;
-}
+FloorFileOps& real_floor_file_ops() noexcept { return g_real_ops; }
 
 std::string installed_hash_hex(std::string_view game_id)
 {

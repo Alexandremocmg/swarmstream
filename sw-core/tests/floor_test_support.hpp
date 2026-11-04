@@ -147,6 +147,19 @@ inline std::vector<std::pair<std::string, std::uintmax_t>> listing(const fs::pat
     return out;
 }
 
+// ".tmp" no fim do nome, SEM construir fs::path/std::string (as operações abaixo são noexcept: uma
+// alocação aqui, sob falta de memória, derrubaria o processo e esconderia o que a varredura mede).
+inline bool has_tmp_suffix(const fs::path& p) noexcept
+{
+    const auto& n = p.native();
+    constexpr char kSuffix[] = ".tmp";
+    constexpr std::size_t kLen = sizeof(kSuffix) - 1;
+    if (n.size() < kLen) return false;
+    for (std::size_t i = 0; i < kLen; ++i)
+        if (static_cast<char>(n[n.size() - kLen + i]) != kSuffix[i]) return false;
+    return true;
+}
+
 // Operações de plataforma com injeção. Sem nada ligado, repassa às reais. Conta chamadas.
 class FaultOps final : public det::FloorFileOps
 {
@@ -204,7 +217,7 @@ public:
                                   Bytes& out) noexcept override
     {
         ++read_calls;
-        const bool is_tmp = file.extension() == ".tmp";
+        const bool is_tmp = has_tmp_suffix(file);
         if (is_tmp && fail_readback_io) return det::FileReadStatus::Io;
         if (is_tmp && fail_readback_oom) return det::FileReadStatus::OutOfMemory;
         if (!is_tmp && read_status_for_target != det::FileReadStatus::Ok)

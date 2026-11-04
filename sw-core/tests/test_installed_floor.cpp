@@ -238,6 +238,21 @@ void test_replace_fails_before_swap()
     cleanup(dir);
 }
 
+// (a) do replace real: a origem não existe => IoError, e o alvo continua como estava (a troca não
+// ocorreu). Vale no Windows (MoveFileExW) e no POSIX (rename).
+void test_real_replace_missing_source()
+{
+    std::cout << "[Test] replace real com origem inexistente: IoError e alvo intacto\n";
+    const fs::path dir = fresh_dir("realrepl");
+    const fs::path target = dir / "alvo.bin";
+    write_all(target, Bytes(5, std::byte{7}));
+    const sw::CacheErrorCode rc =
+        det::real_floor_file_ops().replace(dir / "nao-existe.tmp", target);
+    SW_CHECK(rc == sw::CacheErrorCode::IoError);
+    SW_CHECK(same_bytes(read_all(target), Bytes(5, std::byte{7})));
+    cleanup(dir);
+}
+
 void test_replace_fails_after_swap()
 {
     std::cout << "[Test] (c) replace falha DEPOIS da troca: alvo NOVO em disco, SW_E_IO\n";
@@ -694,6 +709,7 @@ int main(int argc, char** argv)
     test_write_rule_higher_equal_lower();
     test_two_games_keep_independent_floors();
     test_replace_fails_before_swap();
+    test_real_replace_missing_source();
     test_replace_fails_after_swap();
     test_failures_before_swap_leave_floor();
     test_orphan_tmp();

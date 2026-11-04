@@ -39,6 +39,13 @@
 
 namespace swarmstream::detail {
 
+// Caractere nativo dos caminhos do SO (wchar_t no Windows, char no POSIX).
+#if defined(_WIN32)
+using NativeChar = wchar_t;
+#else
+using NativeChar = char;
+#endif
+
 inline constexpr const char* kCacheLockFileName = "swarmstream.lock";
 
 enum class LockCode : std::uint8_t {
@@ -66,6 +73,15 @@ struct LockStatus
     [[nodiscard]] const char* message() const noexcept { return detail ? detail->c_str() : ""; }
 };
 
+#if defined(_WIN32)
+// Monta "<cache_dir><separador><swarmstream.lock>" num buffer NUL-terminado (um único `new[]`) e
+// devolve em `dir_len` o tamanho de <cache_dir>. Só COMPÕE o texto: nenhuma chamada ao SO. Existe
+// em separado para os testes cobrirem a composição (UNC, prefixo estendido, barras, "C:") sem E/S.
+// `cache_dir` não pode ser vazio. Lança std::bad_alloc se faltar memória.
+[[nodiscard]] std::unique_ptr<NativeChar[]>
+compose_lock_path(const std::filesystem::path& cache_dir, std::size_t& dir_len);
+#endif
+
 class CacheDirLock
 {
 public:
@@ -88,8 +104,15 @@ public:
     [[nodiscard]] LockStatus release() noexcept;
 
     [[nodiscard]] bool held() const noexcept { return held_; }
-    // Caminho de `swarmstream.lock` enquanto segura o lock; vazio sem lock.
-    [[nodiscard]] const std::filesystem::path& path() const noexcept;
+    // Caminho de `swarmstream.lock`, NUL-terminado, no formato nativo do SO (wchar_t no Windows,
+    // char no POSIX); "" sem lock. VIDA ÚTIL: o ponteiro pertence ao CacheDirLock e vale enquanto
+    // ele segurar o lock (held()): release(), uma nova aquisição, mover DE este objeto e a
+    // destruição o invalidam; mover PARA um objeto o leva junto com o buffer (o ponteiro lido do
+    // objeto de origem continua valendo, agora do destino). Não é uma cópia: quem precisa dele
+    // depois copia o texto. É ponteiro, e não `const fs::path&`, para que nada global (com
+    // construtor que aloca na inicialização estática) seja necessário para devolver o caminho
+    // vazio.
+    [[nodiscard]] const NativeChar* native_path() const noexcept;
 
 private:
 #if defined(_WIN32)
@@ -101,7 +124,14 @@ private:
     // Em ponteiro para que mover o CacheDirLock seja só mover um ponteiro (noexcept de verdade:
     // mover um fs::path/std::string no MSVC em Debug aloca) e para que o caminho seja alocado
     // ANTES de o arquivo ser aberto. Nulo sem lock.
+#if defined(_WIN32)
+    // Buffer de wchar_t montado com um único `new[]` (cache_dir + separador + nome): no MSVC em
+    // Debug os construtores de std::wstring/fs::path são noexcept e alocam o proxy dos iteradores,
+    // então uma falta de memória ali é std::terminate (medido no CI, K=4 e K=5).
+    std::unique_ptr<NativeChar[]> lock_path_;
+#else
     std::unique_ptr<std::filesystem::path> lock_path_;
+#endif
 };
 
 } // namespace swarmstream::detail
