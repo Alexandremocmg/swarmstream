@@ -231,7 +231,7 @@ void test_replace_fails_before_swap()
     const det::FloorWrite w = commit(dir, new_m, keys, ops);
     SW_CHECK(w.status == det::FloorStatus::Io && w.category == det::FloorCategory::Replace);
     SW_CHECK(!w.wrote && w.may_have_changed); // o chamador NÃO sabe: antigo ou novo
-    SW_CHECK(w.detail.find("antigo ou novo") != std::string::npos);
+    SW_CHECK(w.text().find("antigo ou novo") != std::string_view::npos);
     SW_CHECK(ops.replace_calls == 1 && !ops.swapped);
     SW_CHECK(same_bytes(read_all(target_of(dir, "jogo")), old_m)); // de fato antigo
     SW_CHECK(*read_floor(dir, "jogo", keys).floor == 1);
@@ -270,7 +270,7 @@ void test_replace_fails_after_swap()
     // O erro foi devolvido...
     SW_CHECK(w.status == det::FloorStatus::Io && w.category == det::FloorCategory::Replace);
     SW_CHECK(!w.wrote && w.may_have_changed);
-    SW_CHECK(w.detail.find("antigo ou novo") != std::string::npos);
+    SW_CHECK(w.text().find("antigo ou novo") != std::string_view::npos);
     // ...mas a troca OCORREU antes dele (controle positivo, para o teste não passar vazio):
     SW_CHECK(ops.replace_calls == 1 && ops.swapped); // o replace real devolveu sucesso
     SW_CHECK(!fs::exists(tmp_of(dir, "jogo")));      // o .tmp virou o alvo
@@ -405,8 +405,9 @@ void expect_policy(const fs::path& dir, const std::string& game,
     SW_CHECK(r.status == det::FloorStatus::Io);
     SW_CHECK(r.category == category);
     SW_CHECK(!r.floor.has_value());
-    SW_CHECK(!r.detail.empty() && r.detail.find(det::to_string(category)) != std::string::npos);
-    SW_CHECK(r.detail.find(".manifest") != std::string::npos); // o diagnóstico traz o caminho
+    SW_CHECK(!r.text().empty() &&
+             r.text().find(det::to_string(category)) != std::string_view::npos);
+    SW_CHECK(r.text().find(".manifest") != std::string_view::npos); // o diagnóstico traz o caminho
     SW_CHECK(same_bytes(read_all(target_of(dir, game)), expected_file)); // não foi tocado
     SW_CHECK(listing(dir) == before);                                    // nem apagado nem criado
     // O commit também recusa e NÃO reescreve (política conservadora).
@@ -482,7 +483,7 @@ void test_policy_bad_state()
         const det::FloorRead r = read_floor(dir, "jogo", keys);
         // O diagnóstico traz o key_id (16 hex) de quem assinou.
         const std::string kid = sp::to_hex(sp::key_id_of(public_key_of(kSeedB)));
-        SW_CHECK(r.detail.find(kid) != std::string::npos);
+        SW_CHECK(r.text().find(kid) != std::string_view::npos);
         cleanup(dir);
     }
     { // manifesto de OUTRO jogo guardado com o nome deste

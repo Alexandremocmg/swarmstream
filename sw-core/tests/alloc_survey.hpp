@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -200,6 +201,7 @@ inline void report(const char* scenario)
         std::size_t count;
         bool stl_noexcept;
         bool sw_format;
+        std::string stl_ctor; // 1o construtor da STL da pilha (arquivo:linha), p/ separar noexcept
         std::string caller;
         std::string caller_caller;
         std::vector<std::string> shown;
@@ -218,6 +220,8 @@ inline void report(const char* scenario)
             if (is_noise(f)) continue;
             kept.push_back(&f);
             if (is_stl_noexcept_signal(f)) s.stl_noexcept = true;
+            if (s.stl_ctor.empty() && contains(f.name, "std::") && is_constructor(f.name))
+                s.stl_ctor = show(f);
             if (is_sw_format(f)) s.sw_format = true;
         }
         // Mostra do frame mais interno até o 1o frame do projeto que chama (e mais um).
@@ -251,6 +255,19 @@ inline void report(const char* scenario)
     for (const auto& [caller, e] : by_caller)
         std::cout << "    " << e.second << " aloc em " << e.first << " pilha(s) <- " << caller
                   << std::endl;
+    // 1b) T6: TODAS as pilhas sinalizadas (não só as top-N), com o construtor da STL
+    // (arquivo:linha)
+    //     e o 1o frame do projeto. O sinal é por nome de frame: serve para separar construtor
+    //     noexcept de construtor comum, mas só a varredura (por K) mostra se há terminate.
+    std::cout
+        << "  [STL-NOEXCEPT?] detalhe de cada pilha sinalizada (construtor da STL <- projeto):"
+        << std::endl;
+    for (const Summary& s : sums)
+        if (s.stl_noexcept)
+            std::cout << "    x" << s.count << " etapa=[" << groups[s.index].stage << "] ctor="
+                      << (s.stl_ctor.empty() ? "(sem construtor std:: na pilha)" : s.stl_ctor)
+                      << " <- " << (s.caller.empty() ? "(sem frame do projeto)" : s.caller)
+                      << std::endl;
     // 2) Pilhas que passam pelo sw-format.
     std::map<std::string, std::pair<std::size_t, std::size_t>> by_format;
     for (const Summary& s : sums)
@@ -284,12 +301,70 @@ inline void report(const char* scenario)
     ::SymCleanup(process); // o handler de std::terminate chama SymInitialize de novo
     std::cout << std::flush;
 }
+
+// Resolve, NO PROCESSO PAI, as pilhas que o filho imprimiu em RVAs (endereço - base do executável):
+// o executável é o MESMO arquivo, então base_do_pai + RVA é o mesmo código. Um DbgHelp por sessão.
+class SymbolSession
+{
+public:
+    SymbolSession()
+    {
+        process_ = ::GetCurrentProcess();
+        ::SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        ok_ = ::SymInitialize(process_, nullptr, TRUE) != FALSE;
+        base_ = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base_);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base_ + dos->e_lfanew);
+        size_ = nt->OptionalHeader.SizeOfImage;
+    }
+    SymbolSession(const SymbolSession&) = delete;
+    SymbolSession& operator=(const SymbolSession&) = delete;
+    ~SymbolSession()
+    {
+        if (ok_) ::SymCleanup(process_);
+    }
+    [[nodiscard]] bool ok() const { return ok_; }
+
+    // Do frame mais interno até o 1o frame do projeto (inclusive), sem o ruído do alocador, no
+    // máximo 10 frames. Vazio se nada resolveu.
+    [[nodiscard]] std::string describe(const std::vector<std::uint64_t>& rvas)
+    {
+        if (!ok_) return "(DbgHelp indisponivel)";
+        std::string out;
+        int shown = 0;
+        for (const std::uint64_t rva : rvas) {
+            if (rva >= size_) continue; // frame fora do executável (ntdll, ucrt, ...)
+            const Frame f = resolve(process_, reinterpret_cast<void*>(base_ + rva));
+            if (is_noise(f)) continue;
+            if (!out.empty()) out += " <- ";
+            out += show(f);
+            if (is_project(f) || ++shown >= 10) break;
+        }
+        return out.empty() ? std::string("(sem simbolos)") : out;
+    }
+
+private:
+    HANDLE process_ = nullptr;
+    bool ok_ = false;
+    std::uintptr_t base_ = 0;
+    std::uint64_t size_ = 0;
+};
 #else
 inline void report(const char* scenario)
 {
     print_header(scenario);
     std::cout << "  (sem simbolos neste compilador: so contagens por cenario e etapa)" << std::endl;
 }
+
+class SymbolSession
+{
+public:
+    [[nodiscard]] bool ok() const { return false; }
+    [[nodiscard]] std::string describe(const std::vector<std::uint64_t>&) const
+    {
+        return "(sem simbolos neste compilador)";
+    }
+};
 #endif
 
 } // namespace oom::survey

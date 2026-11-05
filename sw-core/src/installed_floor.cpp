@@ -11,12 +11,16 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
+#include <string>
+#include <string_view>
 #include <swarmstream/crypto.hpp>
 #include <swarmstream/manifest_view.hpp>
 #include <swarmstream/sha256.hpp>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace swarmstream::detail {
 
@@ -205,6 +209,301 @@ public:
 constinit RealFloorFileOps g_real_ops;
 
 // ---------------------------------------------------------------------------------------------
+// Regra R (F1-69): nada do caminho de falta de memória executa um construtor PADRÃO nem de
+// MOVIMENTO de std::string/std::wstring/std::vector/fs::path (nem de struct que os contenha)
+// ---------------------------------------------------------------------------------------------
+// No MSVC em Debug (_ITERATOR_DEBUG_LEVEL != 0) esses construtores são `noexcept` e ainda assim
+// alocam o proxy dos iteradores: um bad_alloc ali é std::terminate NA FRONTEIRA do construtor,
+// antes de qualquer catch, e por isso pôr o objeto dentro do `try` não resolve (medido no run
+// 41869620737: `FloorRead out;`; o mesmo achado do F1-63, commit bc55e1d). Aqui só se usam
+// construtores que NÃO são noexcept (cópia, (ponteiro, tamanho), (n), make_shared) ou tipos que
+// não alocam ao construir, copiar e mover (shared_ptr, span, string_view, optional<inteiro>,
+// buffers de pilha). Uma alocação que falha vira bad_alloc comum, capturado no `try` de quem chama.
+// O que NÃO se sabe e não foi medido está no cartão F1-69 (lista "A medir").
+
+using FloorChar = fs::path::value_type; // wchar_t no Windows, char no POSIX
+
+#if defined(_WIN32)
+constexpr FloorChar kDirNative[] = L"installed";
+constexpr FloorChar kFileSuffixNative[] = L".manifest";
+constexpr FloorChar kTmpSuffixNative[] = L".manifest.tmp";
+constexpr FloorChar kIndexNative[] = L"index.bin";
+constexpr FloorChar kJournalNative[] = L"journal.bin";
+#else
+constexpr FloorChar kDirNative[] = "installed";
+constexpr FloorChar kFileSuffixNative[] = ".manifest";
+constexpr FloorChar kTmpSuffixNative[] = ".manifest.tmp";
+constexpr FloorChar kIndexNative[] = "index.bin";
+constexpr FloorChar kJournalNative[] = "journal.bin";
+#endif
+
+constexpr bool same_text(const char* a, const FloorChar* b) noexcept
+{
+    while (*a != 0 && *b != 0) {
+        if (static_cast<FloorChar>(*a) != *b) return false;
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+constexpr std::size_t text_length(const FloorChar* s) noexcept
+{
+    std::size_t n = 0;
+    while (s[n] != 0)
+        ++n;
+    return n;
+}
+// Os nomes nativos acima são os mesmos do cabeçalho (os testes usam os do cabeçalho).
+static_assert(same_text(kInstalledDirName, kDirNative));
+static_assert(same_text(kInstalledFileSuffix, kFileSuffixNative));
+static_assert(same_text(kInstalledTmpSuffix, kTmpSuffixNative));
+
+constexpr std::size_t kHashHexLen = 64; // SHA-256 em hex minúsculo
+constexpr std::size_t kLeafCapacity = 80;
+static_assert(kHashHexLen + text_length(kFileSuffixNative) + 1 <= kLeafCapacity);
+static_assert(kHashHexLen + text_length(kTmpSuffixNative) + 1 <= kLeafCapacity);
+
+// SHA-256(game_id) em hex minúsculo, `kHashHexLen` caracteres em `out` (sem NUL). Não aloca.
+// (O mesmo texto de pack::to_hex(pack::sha256(...)); um teste compara os dois.)
+template <class Char>
+void put_hash_hex(Char* out, std::string_view game_id) noexcept
+{
+    const auto* p = reinterpret_cast<const std::byte*>(game_id.data());
+    const pack::Sha256Digest d = pack::sha256(std::span<const std::byte>(p, game_id.size()));
+    constexpr char kDigits[] = "0123456789abcdef";
+    for (std::size_t i = 0; i < d.size(); ++i) {
+        out[2 * i] = static_cast<Char>(kDigits[d[i] >> 4]);
+        out[2 * i + 1] = static_cast<Char>(kDigits[d[i] & 0x0F]);
+    }
+}
+
+// "<hex><sufixo>" NUL-terminado, num buffer de pilha.
+struct Leaf
+{
+    FloorChar text[kLeafCapacity];
+};
+
+void make_leaf(Leaf& leaf, std::string_view game_id, const FloorChar* suffix) noexcept
+{
+    put_hash_hex(leaf.text, game_id);
+    std::size_t n = kHashHexLen;
+    for (; *suffix != 0; ++suffix)
+        leaf.text[n++] = *suffix;
+    leaf.text[n] = 0;
+}
+
+inline bool is_separator(FloorChar c) noexcept
+{
+#if defined(_WIN32)
+    return c == L'\\' || c == L'/';
+#else
+    return c == '/';
+#endif
+}
+
+// Equivale ao separador que `operator/=` acrescenta nos caminhos comuns: nenhum se o caminho está
+// vazio ou já termina em separador (e, no Windows, se é só "C:", a pasta atual do disco C).
+void add_separator_if_needed(fs::path& p)
+{
+    const auto& n = p.native();
+    if (n.empty() || is_separator(n.back())) return;
+#if defined(_WIN32)
+    if (n.size() == 2 && n[1] == L':') return;
+#endif
+    const FloorChar sep = fs::path::preferred_separator;
+    p += sep;
+}
+
+// `p` já é uma CÓPIA de cache_dir (construtor de cópia: não é noexcept). Acrescenta "/<leaf>".
+void append_component(fs::path& p, const FloorChar* leaf)
+{
+    add_separator_if_needed(p);
+    p += leaf;
+}
+
+// "installed/<hex><sufixo>" em `p` (cópia de cache_dir). Mesmo caminho de
+// `cache_dir / "installed" / (hex + sufixo)`, sem construir fs::path nem std::string temporários.
+void append_floor_file(fs::path& p, std::string_view game_id, const FloorChar* suffix)
+{
+    Leaf leaf;
+    make_leaf(leaf, game_id, suffix);
+    append_component(p, kDirNative);
+    append_component(p, leaf.text);
+}
+
+// cache_dir/<leaf> existe? Em dúvida (erro ao examinar), avisa (true).
+bool cache_file_exists_or_unknown(const fs::path& cache_dir, const FloorChar* leaf)
+{
+    fs::path p(cache_dir);
+    append_component(p, leaf);
+    std::error_code ec;
+    const bool e = fs::exists(p, ec);
+    return ec ? true : e;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Texto de diagnóstico (só em falha). Cada operação pode lançar bad_alloc: quem chama está num
+// `try`. Só usa construtores e operações que NÃO são noexcept (string(const char*), append,
+// resize, make_shared).
+// ---------------------------------------------------------------------------------------------
+
+#if defined(_WIN32)
+// Acrescenta texto largo como UTF-8 (WideCharToMultiByte em dois passos, como o lock).
+void append_wide_utf8(std::string& out, const wchar_t* p, std::size_t len)
+{
+    if (len == 0) return;
+    const int need =
+        ::WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(len), nullptr, 0, nullptr, nullptr);
+    if (need <= 0) return;
+    const std::size_t old = out.size();
+    out.resize(old + static_cast<std::size_t>(need));
+    (void)::WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(len), &out[old], need, nullptr,
+                                nullptr);
+}
+#endif
+
+// O caminho como UTF-8 (Windows) ou os bytes nativos (POSIX). Sem `path::string()`, que no Windows
+// converte pela STL (e pela página de código ANSI).
+void append_path_text(std::string& out, const fs::path& p)
+{
+    const auto& n = p.native();
+#if defined(_WIN32)
+    append_wide_utf8(out, n.data(), n.size());
+#else
+    out.append(n);
+#endif
+}
+
+void append_unsigned(std::string& out, unsigned long long v)
+{
+    char buf[24];
+    std::size_t i = sizeof(buf);
+    do {
+        buf[--i] = static_cast<char>('0' + v % 10U);
+        v /= 10U;
+    } while (v != 0);
+    out.append(buf + i, sizeof(buf) - i);
+}
+
+void append_signed(std::string& out, long long v)
+{
+    if (v < 0) {
+        out.push_back('-');
+        append_unsigned(out, 0ULL - static_cast<unsigned long long>(v));
+    } else {
+        append_unsigned(out, static_cast<unsigned long long>(v));
+    }
+}
+
+// Causa de um std::error_code: Windows (categoria do sistema) FormatMessageW num buffer de pilha,
+// sem `ec.message()`; POSIX `ec.message()`. Sempre com o código.
+void append_error_code(std::string& out, const std::error_code& ec)
+{
+#if defined(_WIN32)
+    if (ec.category() == std::system_category()) {
+        wchar_t buf[512];
+        DWORD n = ::FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS |
+                                       FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                                   nullptr, static_cast<DWORD>(ec.value()), 0, buf, 512, nullptr);
+        while (n > 0 && (buf[n - 1] == L' ' || buf[n - 1] == L'.' || buf[n - 1] == L'\r' ||
+                         buf[n - 1] == L'\n'))
+            --n;
+        if (n > 0)
+            append_wide_utf8(out, buf, n);
+        else
+            out.append("erro desconhecido");
+    } else {
+        out.append(ec.category().name());
+    }
+#else
+    out.append(ec.message());
+#endif
+    out.append(" (codigo ");
+    append_signed(out, ec.value());
+    out.append(")");
+}
+
+class DetailBuilder
+{
+public:
+    explicit DetailBuilder(const char* first) : s_(std::make_shared<std::string>(first)) {}
+
+    DetailBuilder& text(const char* t)
+    {
+        s_->append(t);
+        return *this;
+    }
+    DetailBuilder& view(std::string_view t)
+    {
+        s_->append(t.data(), t.size());
+        return *this;
+    }
+    DetailBuilder& path(const fs::path& p)
+    {
+        append_path_text(*s_, p);
+        return *this;
+    }
+    DetailBuilder& number(unsigned long long v)
+    {
+        append_unsigned(*s_, v);
+        return *this;
+    }
+    DetailBuilder& error(const std::error_code& ec)
+    {
+        append_error_code(*s_, ec);
+        return *this;
+    }
+    // key_id do envelope em [24, 32) (docs/03 §7.1), em hex minúsculo; "?" se os bytes não bastam.
+    DetailBuilder& key_id(std::span<const std::byte> bytes)
+    {
+        if (bytes.size() < 32) {
+            s_->append("?");
+            return *this;
+        }
+        constexpr char kDigits[] = "0123456789abcdef";
+        for (std::size_t i = 0; i < 8; ++i) {
+            const auto b = static_cast<std::uint8_t>(bytes[24 + i]);
+            s_->push_back(kDigits[b >> 4]);
+            s_->push_back(kDigits[b & 0x0F]);
+        }
+        return *this;
+    }
+    [[nodiscard]] FloorDetail done() noexcept { return FloorDetail(std::move(s_)); }
+
+private:
+    std::shared_ptr<std::string> s_;
+};
+
+// "<categoria>: '<caminho>'" (o resto o chamador acrescenta).
+DetailBuilder described(FloorCategory category, const fs::path& p)
+{
+    DetailBuilder b(to_string(category));
+    b.text(": '").path(p).text("'");
+    return b;
+}
+
+// "<categoria>: '<caminho>'" e, se houver, ": <extra>".
+FloorDetail describe(FloorCategory category, const fs::path& p, const char* extra)
+{
+    DetailBuilder b = described(category, p);
+    if (extra != nullptr && *extra != 0) b.text(": ").text(extra);
+    return b.done();
+}
+
+// Texto sem categoria nem caminho.
+FloorDetail make_text(const char* what) { return std::make_shared<const std::string>(what); }
+
+// "<categoria>: '<caminho>': o manifesto instalado e de '<instalado>', esperado '<esperado>'"
+FloorDetail describe_mismatch(const fs::path& p, std::string_view installed,
+                              std::string_view expected)
+{
+    DetailBuilder b = described(FloorCategory::GameIdMismatch, p);
+    b.text(": o manifesto instalado e de '").view(installed).text("', esperado '");
+    b.view(expected).text("'");
+    return b.done();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Verificação de um manifesto (o novo ou o instalado)
 // ---------------------------------------------------------------------------------------------
 
@@ -212,20 +511,15 @@ struct Verified
 {
     FloorStatus status = FloorStatus::Ok;
     FloorCategory category = FloorCategory::None;
-    std::string detail;
-    std::string game_id;
+    FloorDetail detail;
+    FloorDetail game_id; // só com status Ok
     std::uint64_t build_seq = 0;
-};
 
-std::string key_id_hex(std::span<const std::byte> bytes)
-{
-    // Envelope: key_id em [24, 32) (docs/03 §7.1).
-    if (bytes.size() < 32) return "?";
-    std::array<std::uint8_t, 8> id{};
-    for (std::size_t i = 0; i < id.size(); ++i)
-        id[i] = static_cast<std::uint8_t>(bytes[24 + i]);
-    return pack::to_hex(id);
-}
+    [[nodiscard]] std::string_view id() const noexcept
+    {
+        return game_id ? std::string_view(*game_id) : std::string_view();
+    }
+};
 
 bool key_is_trusted(std::span<const std::byte> bytes,
                     std::span<const pack::Ed25519PublicKey> trusted_keys)
@@ -239,16 +533,14 @@ bool key_is_trusted(std::span<const std::byte> bytes,
         [&](const pack::Ed25519PublicKey& k) { return pack::key_id_of(k) == wanted; });
 }
 
-std::string describe(FloorCategory category, const fs::path& path, const std::string& extra)
-{
-    std::string text = to_string(category);
-    text += ": '" + path.string() + "'";
-    if (!extra.empty()) text += ": " + extra;
-    return text;
-}
-
 // Verifica `bytes` com as trusted_keys atuais (assinatura e §8, SEM piso). `existing` = é a
 // cópia instalada (categorias de estado existente) e não o manifesto novo.
+//
+// `pack::ManifestView view;` é o construtor PADRÃO implícito do sw-format (membro `chunker_` com um
+// std::string): a API pública `ManifestView::open(bytes, options, ManifestView& out)` exige um
+// objeto já construído, e o sw-format está fora do escopo deste cartão. Se esse construtor é uma
+// fronteira de terminate no MSVC Debug é uma SUSPEITA por leitura do código (manifest_view.hpp:71 e
+// :220), A MEDIR pelo mapa da varredura; não é afirmação.
 Verified verify_manifest(std::span<const std::byte> bytes,
                          std::span<const pack::Ed25519PublicKey> trusted_keys, const fs::path& path,
                          bool existing)
@@ -259,12 +551,13 @@ Verified verify_manifest(std::span<const std::byte> bytes,
     options.trusted_keys = trusted_keys;
     const pack::ManifestStatus st = pack::ManifestView::open(bytes, options, view);
     if (st.ok()) {
-        v.game_id.assign(view.game_id());
+        const std::string_view id = view.game_id();
+        v.game_id = std::make_shared<const std::string>(id.data(), id.size());
         v.build_seq = view.build_seq();
         return v;
     }
     v.status = FloorStatus::Io;
-    std::string extra = std::string(pack::to_string(st.code)) + " (" + st.detail + ")";
+    bool with_key_id = false;
     switch (st.code) {
     case pack::ManifestError::Unsupported:
         v.category = existing ? FloorCategory::Unsupported : FloorCategory::NewManifest;
@@ -272,7 +565,7 @@ Verified verify_manifest(std::span<const std::byte> bytes,
     case pack::ManifestError::SignatureInvalid:
         if (!key_is_trusted(bytes, trusted_keys)) {
             v.category = existing ? FloorCategory::UnknownKey : FloorCategory::NewManifest;
-            extra += "; key_id=" + key_id_hex(bytes);
+            with_key_id = true;
         } else {
             v.category = existing ? FloorCategory::Signature : FloorCategory::NewManifest;
         }
@@ -282,15 +575,11 @@ Verified verify_manifest(std::span<const std::byte> bytes,
     case pack::ManifestError::Ok:
     default: v.category = existing ? FloorCategory::Format : FloorCategory::NewManifest; break;
     }
-    v.detail = describe(v.category, path, extra);
+    DetailBuilder b = described(v.category, path);
+    b.text(": ").text(pack::to_string(st.code)).text(" (").text(st.detail).text(")");
+    if (with_key_id) b.text("; key_id=").key_id(bytes);
+    v.detail = b.done();
     return v;
-}
-
-bool path_exists_or_unknown(const fs::path& p)
-{
-    std::error_code ec;
-    const bool e = fs::exists(p, ec);
-    return ec ? true : e; // em dúvida, avisa
 }
 
 FloorStatus status_of_read(FileReadStatus st) noexcept
@@ -341,45 +630,56 @@ FloorFileOps& real_floor_file_ops() noexcept { return g_real_ops; }
 
 std::string installed_hash_hex(std::string_view game_id)
 {
-    const auto* p = reinterpret_cast<const std::byte*>(game_id.data());
-    return pack::to_hex(pack::sha256(std::span<const std::byte>(p, game_id.size())));
+    char buf[kHashHexLen];
+    put_hash_hex(buf, game_id);
+    return std::string(buf, kHashHexLen);
 }
 
 fs::path installed_floor_path(const fs::path& cache_dir, std::string_view game_id)
 {
-    return cache_dir / kInstalledDirName / (installed_hash_hex(game_id) + kInstalledFileSuffix);
+    fs::path p(cache_dir);
+    append_floor_file(p, game_id, kFileSuffixNative);
+    return p;
 }
 
 fs::path installed_tmp_path(const fs::path& cache_dir, std::string_view game_id)
 {
-    return cache_dir / kInstalledDirName / (installed_hash_hex(game_id) + kInstalledTmpSuffix);
+    fs::path p(cache_dir);
+    append_floor_file(p, game_id, kTmpSuffixNative);
+    return p;
 }
 
 FloorRead read_installed_floor(const fs::path& cache_dir, std::string_view game_id,
                                std::span<const pack::Ed25519PublicKey> trusted_keys,
                                FloorFileOps& ops) noexcept
 {
+    // Regra R: `out` só tem enums, optional<inteiro>, bool e shared_ptr: construir, copiar e mover
+    // não alocam (nem no MSVC Debug), então nenhum retorno daqui, nem o dos handlers, aloca.
     FloorRead out;
     try {
         if (!pack::crypto_ready()) {
             out.status = FloorStatus::Io;
             out.category = FloorCategory::Format;
-            out.detail = "libsodium nao iniciou; o piso nao pode ser verificado";
+            out.detail = make_text("libsodium nao iniciou; o piso nao pode ser verificado");
             return out;
         }
-        const fs::path path = installed_floor_path(cache_dir, game_id);
-        std::vector<std::byte> bytes;
+        fs::path path(cache_dir); // cópia: construtor que não é noexcept
+        append_floor_file(path, game_id, kFileSuffixNative);
+        std::vector<std::byte> bytes(std::size_t{0}); // vector(n): não é noexcept (padrão do F1-63)
         const FileReadStatus rd = ops.read_file(path, kMaxManifestFile, bytes);
         if (rd == FileReadStatus::NotFound) {
             // Primeira instalação deste game_id (única leitura tratada assim: ENOENT). Mas no
             // Windows "installed" ser um arquivo comum também dá PATH_NOT_FOUND: não é ausência.
-            const fs::path dir = cache_dir / kInstalledDirName;
+            fs::path dir(cache_dir);
+            append_component(dir, kDirNative);
             std::error_code ec;
             const fs::file_status ds = fs::status(dir, ec);
             if (ec && ec != std::errc::no_such_file_or_directory) {
                 out.status = FloorStatus::Io;
                 out.category = FloorCategory::Read;
-                out.detail = describe(out.category, dir, ec.message());
+                DetailBuilder b = described(out.category, dir);
+                b.text(": ").error(ec);
+                out.detail = b.done();
                 return out;
             }
             if (!ec && fs::exists(ds) && !fs::is_directory(ds)) {
@@ -388,8 +688,9 @@ FloorRead read_installed_floor(const fs::path& cache_dir, std::string_view game_
                 out.detail = describe(out.category, dir, "installed existe e nao e uma pasta");
                 return out;
             }
-            out.existing_cache_without_floor = path_exists_or_unknown(cache_dir / "index.bin") ||
-                                               path_exists_or_unknown(cache_dir / "journal.bin");
+            out.existing_cache_without_floor =
+                cache_file_exists_or_unknown(cache_dir, kIndexNative) ||
+                cache_file_exists_or_unknown(cache_dir, kJournalNative);
             return out;
         }
         if (rd != FileReadStatus::Ok) {
@@ -405,25 +706,29 @@ FloorRead read_installed_floor(const fs::path& cache_dir, std::string_view game_
             out.detail = v.detail;
             return out;
         }
-        if (v.game_id != game_id) {
+        if (v.id() != game_id) {
             out.status = FloorStatus::Io;
             out.category = FloorCategory::GameIdMismatch;
-            out.detail = describe(out.category, path,
-                                  "o manifesto instalado e de '" + v.game_id + "', esperado '" +
-                                      std::string(game_id) + "'");
+            out.detail = describe_mismatch(path, v.id(), game_id);
             return out;
         }
         out.floor = v.build_seq;
         return out;
     } catch (const std::bad_alloc&) {
-        FloorRead oom;
-        oom.status = FloorStatus::OutOfMemory;
-        return oom; // sem texto: montá-lo alocaria
+        // Sem texto: montá-lo alocaria. Só atribuições que não alocam.
+        out.status = FloorStatus::OutOfMemory;
+        out.category = FloorCategory::None;
+        out.floor.reset();
+        out.existing_cache_without_floor = false;
+        out.detail.reset();
+        return out;
     } catch (...) {
-        FloorRead bad;
-        bad.status = FloorStatus::Io;
-        bad.category = FloorCategory::Read;
-        return bad;
+        out.status = FloorStatus::Io;
+        out.category = FloorCategory::Read;
+        out.floor.reset();
+        out.existing_cache_without_floor = false;
+        out.detail.reset();
+        return out;
     }
 }
 
@@ -432,42 +737,47 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
                                   std::span<const pack::Ed25519PublicKey> trusted_keys,
                                   FloorFileOps& ops) noexcept
 {
+    // Regra R: ver read_installed_floor. O retorno de sucesso (`out.wrote = true; return out;`),
+    // que acontece DEPOIS da troca do arquivo, não aloca em nenhuma configuração: não há
+    // std::terminate possível entre a troca e o retorno por construção do tipo (a medir no MSVC
+    // Debug; o mapa da varredura é a evidência).
     FloorWrite out;
     try {
-        auto fail = [&out](FloorStatus st, FloorCategory cat, std::string detail) -> FloorWrite {
+        auto fail = [&out](FloorStatus st, FloorCategory cat, FloorDetail detail) -> FloorWrite {
             out.status = st;
             out.category = cat;
             out.detail = std::move(detail);
-            return out;
+            return out; // cópia de um shared_ptr: não aloca
         };
         if (!pack::crypto_ready())
             return fail(FloorStatus::Io, FloorCategory::NewManifest,
-                        "libsodium nao iniciou; o piso nao pode ser gravado");
+                        make_text("libsodium nao iniciou; o piso nao pode ser gravado"));
 
         // Só se grava um manifesto que passou na verificação completa (agora, de novo).
         const Verified fresh = verify_manifest(manifest_bytes, trusted_keys, cache_dir, false);
         if (fresh.status != FloorStatus::Ok)
             return fail(fresh.status, fresh.category, fresh.detail);
 
-        const fs::path target = installed_floor_path(cache_dir, fresh.game_id);
-        const fs::path tmp = installed_tmp_path(cache_dir, fresh.game_id);
+        fs::path target(cache_dir);
+        append_floor_file(target, fresh.id(), kFileSuffixNative);
+        fs::path tmp(cache_dir);
+        append_floor_file(tmp, fresh.id(), kTmpSuffixNative);
 
         // Regra de gravação: ausente, MAIOR, ou IGUAL com bytes diferentes; nunca menor.
-        std::vector<std::byte> existing;
+        std::vector<std::byte> existing(std::size_t{0});
         const FileReadStatus rd = ops.read_file(target, kMaxManifestFile, existing);
         if (rd == FileReadStatus::Ok) {
             const Verified old = verify_manifest(existing, trusted_keys, target, /*existing=*/true);
             if (old.status != FloorStatus::Ok) return fail(old.status, old.category, old.detail);
-            if (old.game_id != fresh.game_id)
+            if (old.id() != fresh.id())
                 return fail(FloorStatus::Io, FloorCategory::GameIdMismatch,
-                            describe(FloorCategory::GameIdMismatch, target,
-                                     "o manifesto instalado e de '" + old.game_id +
-                                         "', esperado '" + fresh.game_id + "'"));
-            if (fresh.build_seq < old.build_seq)
-                return fail(FloorStatus::Rollback, FloorCategory::LowerSeq,
-                            describe(FloorCategory::LowerSeq, target,
-                                     "novo " + std::to_string(fresh.build_seq) + " < instalado " +
-                                         std::to_string(old.build_seq)));
+                            describe_mismatch(target, old.id(), fresh.id()));
+            if (fresh.build_seq < old.build_seq) {
+                DetailBuilder b = described(FloorCategory::LowerSeq, target);
+                b.text(": novo ").number(fresh.build_seq);
+                b.text(" < instalado ").number(old.build_seq);
+                return fail(FloorStatus::Rollback, FloorCategory::LowerSeq, b.done());
+            }
             if (fresh.build_seq == old.build_seq && existing.size() == manifest_bytes.size() &&
                 std::memcmp(existing.data(), manifest_bytes.data(), existing.size()) == 0)
                 return out; // já é esta cópia: nada a gravar
@@ -477,7 +787,8 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
         }
 
         // W1
-        const fs::path dir = cache_dir / kInstalledDirName;
+        fs::path dir(cache_dir);
+        append_component(dir, kDirNative);
         if (ops.create_directory(dir) != CacheErrorCode::Success)
             return fail(FloorStatus::Io, FloorCategory::CreateDir,
                         describe(FloorCategory::CreateDir, dir, "nao foi possivel criar a pasta"));
@@ -489,7 +800,7 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
                 describe(FloorCategory::WriteTmp, tmp,
                          wr == CacheErrorCode::DiskFull ? "disco cheio" : "falha de escrita"));
         // W4
-        std::vector<std::byte> readback;
+        std::vector<std::byte> readback(std::size_t{0});
         const FileReadStatus rb = ops.read_file(tmp, manifest_bytes.size(), readback);
         if (rb != FileReadStatus::Ok)
             return fail(status_of_read(rb), FloorCategory::VerifyTmp,
@@ -500,7 +811,7 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
                         describe(FloorCategory::VerifyTmp, tmp, "a releitura diverge da memoria"));
         // W5
         if (ops.replace(tmp, target) != CacheErrorCode::Success) {
-            out.may_have_changed = true;
+            out.may_have_changed = true; // ANTES de montar o texto: se faltar memória ali, vale
             return fail(FloorStatus::Io, FloorCategory::Replace,
                         describe(FloorCategory::Replace, target,
                                  "replace_file falhou; o piso pode ter sido atualizado "
@@ -509,16 +820,18 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
         out.wrote = true;
         return out;
     } catch (const std::bad_alloc&) {
-        FloorWrite oom;
-        oom.status = FloorStatus::OutOfMemory;
-        oom.may_have_changed = out.may_have_changed;
-        return oom; // sem texto: montá-lo alocaria
+        // Sem texto: montá-lo alocaria. `may_have_changed` fica como está (já pode ser true).
+        out.status = FloorStatus::OutOfMemory;
+        out.category = FloorCategory::None;
+        out.wrote = false;
+        out.detail.reset();
+        return out;
     } catch (...) {
-        FloorWrite bad;
-        bad.status = FloorStatus::Io;
-        bad.category = FloorCategory::Read;
-        bad.may_have_changed = out.may_have_changed;
-        return bad;
+        out.status = FloorStatus::Io;
+        out.category = FloorCategory::Read;
+        out.wrote = false;
+        out.detail.reset();
+        return out;
     }
 }
 

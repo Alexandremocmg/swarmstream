@@ -44,6 +44,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -118,13 +119,24 @@ public:
 // Implementação real (platform_file.hpp). Vive durante o processo.
 [[nodiscard]] FloorFileOps& real_floor_file_ops() noexcept;
 
-// installed/<hex>.manifest e o .tmp irmão. Podem lançar bad_alloc (os de produção chamam
-// dentro de try).
+// installed/<hex>.manifest e o .tmp irmão, para os TESTES e para quem não está no caminho de falta
+// de memória: devolvem o fs::path por valor e podem lançar bad_alloc. Os caminhos do próprio piso
+// (read_installed_floor e commit_installed_floor) NÃO passam por aqui: são montados no lugar, por
+// cópia de `cache_dir` e `+=` de buffers nativos (regra R do cartão F1-69), sem o construtor padrão
+// nem o de movimento de fs::path/std::string. Mesmos nomes de arquivo, byte a byte.
 [[nodiscard]] std::string installed_hash_hex(std::string_view game_id);
 [[nodiscard]] std::filesystem::path installed_floor_path(const std::filesystem::path& cache_dir,
                                                          std::string_view game_id);
 [[nodiscard]] std::filesystem::path installed_tmp_path(const std::filesystem::path& cache_dir,
                                                        std::string_view game_id);
+
+// Texto de diagnóstico imutável e COMPARTILHADO; nulo = sem texto (Ok e OutOfMemory). Não é
+// `std::string` de propósito: no MSVC em Debug (_ITERATOR_DEBUG_LEVEL != 0) os construtores PADRÃO
+// e de movimento de std::string/vector/fs::path são `noexcept` e ainda assim alocam o proxy dos
+// iteradores, então uma falta de memória ali é std::terminate antes de qualquer catch (medido: run
+// 41869620737, `FloorRead out;`, cenário 'piso presente', K=1). Construir, copiar e mover um
+// shared_ptr não aloca em nenhuma configuração; só make_detail (internamente, em `try`) aloca.
+using FloorDetail = std::shared_ptr<const std::string>;
 
 struct FloorRead
 {
@@ -135,8 +147,15 @@ struct FloorRead
     // Só com floor == nullopt: a pasta já tem index.bin/journal.bin ("piso ausente em cache
     // existente": o chamador registra um WARN). Em dúvida (erro ao examinar) vale true.
     bool existing_cache_without_floor = false;
-    // Diagnóstico para o log_fn: categoria, caminho, key_id, causa. Vazio com Ok.
-    std::string detail;
+    // Diagnóstico para o log_fn: categoria, caminho, key_id, causa. Nulo com Ok; nulo também quando
+    // o OutOfMemory nasceu de não conseguir montar o texto.
+    FloorDetail detail;
+
+    // O texto do diagnóstico; vazio se não há.
+    [[nodiscard]] std::string_view text() const noexcept
+    {
+        return detail ? std::string_view(*detail) : std::string_view();
+    }
 };
 
 [[nodiscard]] FloorRead read_installed_floor(const std::filesystem::path& cache_dir,
@@ -151,7 +170,13 @@ struct FloorWrite
     bool wrote = false; // true: o alvo foi trocado (replace devolveu sucesso)
     // true quando um erro de replace_file deixou o alvo ANTIGO OU NOVO. Falsa em W1-W4.
     bool may_have_changed = false;
-    std::string detail;
+    // Nulo com Ok; nulo também quando o OutOfMemory nasceu de não conseguir montar o texto.
+    FloorDetail detail;
+
+    [[nodiscard]] std::string_view text() const noexcept
+    {
+        return detail ? std::string_view(*detail) : std::string_view();
+    }
 };
 
 // `manifest_bytes` = os bytes exatos que o sw_init aceitou. São verificados de novo aqui (com

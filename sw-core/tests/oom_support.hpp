@@ -63,6 +63,22 @@ inline std::atomic<std::uint64_t> g_total{0}; // todas as alocações (para prov
 inline std::atomic<std::int64_t> g_progress_k{0};
 inline std::atomic<const char*> g_progress_scenario{"(fora da varredura)"};
 
+// Códigos de saída do processo-filho da varredura (modo por K, Windows/MSVC Debug). O abort() do
+// MSVC sai com 3 e o SW_CHECK com 1: por isso o terminate usa um código só dele.
+inline constexpr int kExitFiredOk = 0; // a falha disparou em K e todas as conferências passaram
+inline constexpr int kExitNotFiredOk = 10; // a operação terminou ANTES de K: fim do cenário
+inline constexpr int kExitTerminate = 20; // std::terminate (exceção escapou de função noexcept)
+inline constexpr int kExitUsage = 2;      // argumentos inválidos do filho
+
+// Pilha da alocação em que a falha injetada DISPAROU (só Windows): capturada dentro do alocador,
+// sem alocar, uma vez por armamento. O filho a imprime em RVAs (endereço - base do executável) e o
+// PAI resolve os símbolos: o filho nunca carrega DbgHelp.
+inline constexpr std::size_t kFireFrames = 32;
+inline void* g_fire_frames[kFireFrames];
+inline std::atomic<unsigned short> g_fire_depth{0};
+// true no processo-filho: o terminate imprime RVAs (sem DbgHelp) e sai com kExitTerminate.
+inline std::atomic<bool> g_child_mode{false};
+
 // ------------------------------------------------------- levantamento dos caminhos executados
 // Captura DENTRO do alocador, sem alocar e sem recursão: registros em armazenamento estático de
 // capacidade finita (o que passar da capacidade é CONTADO em `dropped`, nunca perdido em silêncio).
@@ -211,20 +227,43 @@ inline void print_stack_msvc()
 }
 #endif
 
+// Linha "FRAMES|<rva hex>,<rva hex>..." da pilha em que a falha disparou (Windows): endereço menos
+// a base do executável. O processo PAI resolve os símbolos do MESMO executável.
+inline void print_fire_frames_rva()
+{
+#if defined(_WIN32)
+    const auto base = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
+    const unsigned short n = g_fire_depth.load();
+    std::fprintf(stdout, "FRAMES|");
+    for (unsigned short i = 0; i < n; ++i)
+        std::fprintf(stdout, "%s%llx", i == 0 ? "" : ",",
+                     static_cast<unsigned long long>(
+                         reinterpret_cast<std::uintptr_t>(g_fire_frames[i]) - base));
+    std::fprintf(stdout, "\n");
+#endif
+}
+
 // Uma exceção que escape de uma função noexcept vira std::terminate. No MSVC Debug o abort()
 // abriria uma caixa de diálogo e travaria o CI até o timeout: aqui o teste termina na hora, diz
-// em que ponto da varredura foi e (MSVC) imprime a pilha.
+// em que ponto da varredura foi e (MSVC) imprime a pilha. No processo-filho da varredura por K
+// (g_child_mode) imprime só as RVAs da pilha da injeção e sai com kExitTerminate.
 inline void on_terminate()
 {
     g_fail_at.store(0); // não falhar de novo enquanto diagnostica
     std::fprintf(stderr,
                  "std::terminate: excecao escapou de uma funcao noexcept (cenario '%s', K=%lld)\n",
                  g_progress_scenario.load(), static_cast<long long>(g_progress_k.load()));
+    if (g_child_mode.load()) {
+        // Filho: sem DbgHelp (o pai resolve). O terminate acontece no ponto da injeção.
+        print_fire_frames_rva();
+        std::fflush(nullptr);
+        std::_Exit(kExitTerminate);
+    }
 #if defined(_MSC_VER)
     print_stack_msvc();
 #endif
     std::fflush(nullptr);
-    std::_Exit(1);
+    std::_Exit(kExitTerminate);
 }
 
 inline void make_abort_fail_instead_of_hang()
@@ -253,6 +292,11 @@ inline bool should_fail() noexcept
     survey::on_alloc();
     const std::int64_t at = g_fail_at.load(std::memory_order_relaxed);
     if (at > 0 && g_seen.fetch_add(1, std::memory_order_relaxed) + 1 == at) {
+#if defined(_WIN32)
+        g_fire_depth.store(
+            ::RtlCaptureStackBackTrace(0, static_cast<DWORD>(kFireFrames), g_fire_frames, nullptr),
+            std::memory_order_relaxed);
+#endif
         g_fired.store(true, std::memory_order_relaxed);
         return true;
     }

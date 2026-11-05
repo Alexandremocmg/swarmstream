@@ -24,6 +24,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <swarmstream/manifest_view.hpp>
 #include <thread>
 #include <vector>
@@ -178,7 +179,8 @@ int cmd_floor_commit(const fs::path& dir, const fs::path& manifest_file, const s
     const sw::pack::Ed25519PublicKey keys[] = {key};
     const sw::detail::FloorWrite w = sw::detail::commit_installed_floor(dir, bytes, keys, ops);
     if (w.status != sw::detail::FloorStatus::Ok) {
-        std::fprintf(stderr, "floor-commit: %s\n", w.detail.c_str());
+        const std::string_view why = w.text();
+        std::fprintf(stderr, "floor-commit: %.*s\n", static_cast<int>(why.size()), why.data());
         return kExitIo;
     }
     return w.wrote ? 0 : 1; // 0 gravou; 1 nada a gravar
