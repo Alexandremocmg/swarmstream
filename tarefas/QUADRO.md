@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 2 | 8 | 22 | 36 |
+| 3 | 0 | 2 | 9 | 22 | 36 |
 
 ## Espera o dono do produto
 - [F1-04](cartoes/F1-04.md): Geração do manifesto v0, assinado com a chave de teste (ADR-0012)
@@ -23,6 +23,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-68](cartoes/F1-68.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da implementadora do F1-67): API C real, etapa 2: leitura, `sw_ensure_async`, `sw_cancel` e `sw_get_stats` sobre cache, agendador e fonte
 - [F1-71](cartoes/F1-71.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Fronteira `noexcept` do caminho de parada: `CacheOwner::stop()` e auditoria (alocação e exceções)
 - [F1-72](cartoes/F1-72.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da do F1-71): Falta de memória e exceções na inicialização do cache: `CacheOwner::start()` e `recover()`
+- [F1-73](cartoes/F1-73.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-69, F1-74, F1-71 e F1-72): `sw-format` sem terminar o processo por falta de memória (leitura do manifesto no MSVC Debug)
 - [F1-74](cartoes/F1-74.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-71 e F1-72): `replace_file` sem terminar o processo por falta de memória (helper compartilhado `platform_file.hpp`)
 
 ## Abertas na F1a
