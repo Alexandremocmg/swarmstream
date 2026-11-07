@@ -1,23 +1,24 @@
 # Estudo documental limitado: risco R12 (caso Blizzard) e premissas comerciais
 
-**Status: ESTUDO do Planejador (2026-11-06), autorizado pelo dono em 2026-11-06 como estudo documental limitado.** Sem contato externo, sem contratação, sem infraestrutura. Não é prova de demanda e não altera nenhum critério ou decisão.
+**Status: ESTUDO do Planejador (2026-11-06), autorizado pelo dono em 2026-11-06 como estudo documental limitado; busca em arquivos públicos autorizada na mesma data (leitura de páginas públicas apenas).** Sem contato externo, sem contratação, sem infraestrutura. Não é prova de demanda e não altera nenhum critério ou decisão.
 
-**Limite honesto:** a pesquisa foi feita em um dia, com busca na web e leitura de páginas públicas. **Não consegui nenhuma fonte primária da Blizzard sobre P2P**: os artigos de suporte pedem login (redirecionam para a tela de entrada do Battle.net). Por isso a parte do caso Blizzard é, hoje, **majoritariamente hipótese e relato secundário**. Cada item abaixo diz de onde veio e quem leu.
+**Limite honesto:** a pesquisa foi feita em um dia, com busca na web e leitura de páginas públicas. **Os artigos de suporte da Blizzard pedem login** e não puderam ser lidos. Achei **uma** declaração de funcionário da Blizzard (F8), lida numa cópia de terceiros; sobre os **motivos** do abandono não há fonte oficial. Por isso a parte do caso Blizzard continua **majoritariamente hipótese e relato secundário**. Cada item abaixo diz de onde veio e quem leu.
 
 Legenda de leitura: **[lido]** página aberta e lida nesta pesquisa (pelo subagente de leitura, em 2026-11-06; o Planejador não reabriu as páginas); **[resultado de busca]** só vi o trecho que o buscador devolveu, a página não foi aberta; **[doc do projeto]** afirmação já escrita nos documentos do projeto, sem fonte anexada.
 
 ## 1. Fatos (com a fonte e o nível de confiança)
 | # | Afirmação | Fonte | Nível |
 | --- | --- | --- | --- |
-| F1 | O projeto afirma que o P2P do Blizzard Downloader/Battle.net foi "abandonado ~2016" | [docs/01](../01-visao-e-escopo.md) linha 51 | **[doc do projeto], sem fonte; não verificado** |
+| F1 | O projeto afirma que o P2P do Blizzard Downloader/Battle.net foi "abandonado ~2016" | [docs/01](../01-visao-e-escopo.md) linha 51 | **[doc do projeto], sem fonte.** O F8 mostra a remoção já registrada em **fev/2015** (ao menos para o launcher do Heroes): a data do docs/01 provavelmente está errada, a confirmar |
 | F2 | O cliente de download da Blizzard na era World of Warcraft usava BitTorrent e tinha opção de desligar o P2P, caindo para HTTP | Comentários em lista de operadoras de rede (NANOG, 2010) e fóruns | **[resultado de busca]**, fonte secundária (relato de usuário) |
 | F3 | Usuários relataram que o downloader saturava o upload e prejudicava a própria conexão; houve objeção a upload forçado em conexões com franquia | Fóruns e comentários de 2008–2012 | **[resultado de busca]**, anedótico |
 | F4 | Em 2011 a operadora canadense Rogers limitou tráfego de World of Warcraft por causa do P2P do cliente e recomendou desligar a opção | Techdirt e Slashdot, 2011 | **[resultado de busca]**, imprensa; a página não foi aberta |
 | F5 | Em 2021 a Blizzard removeu LAN/P2P **de partida** no Diablo II Resurrected, citando riscos de segurança | win.gg | **[resultado de busca]**; trata de **jogo em rede, não de distribuição**. Não serve de evidência para o R12 |
 | F6 | Preços de entrega de dados nas páginas oficiais dos provedores em 2026-11-06 (tabela abaixo) | Páginas dos provedores | **[lido]** |
+| F8 | Um "Product Developer" da Blizzard (Vexis) escreveu em 14/02/2015, num tópico do Heroes of the Storm, que a opção de P2P foi removida "because we no longer utilize peer-to-peer to download patches" e que o Heroes nunca usou P2P para downloads. O tópico trazia pedidos de usuários sobre universidades que bloqueiam P2P | Cópia no Blue Tracker (bluetracker.gg), apontando para `us.battle.net/heroes/en/forum/topic/16201810785#13`; o original **não foi aberto** | **[lido]** só a cópia de terceiros; a identificação como funcionário vem do cargo e do avatar exibidos, não de verificação própria. Vale para o Heroes em 2015; **não** diz que vale para todos os jogos nem depois de 2015 |
 | F7 | Wikipedia (Battle.net) não menciona P2P de download; as referências não trazem fonte primária sobre isso | en.wikipedia.org/wiki/Battle.net | **[lido]**, secundária |
 
-**Não encontrado:** qualquer texto oficial da Blizzard com data ou motivo do abandono do P2P de download (se houve); declaração de funcionário (blue post); a taxa da loja Steam e se a Steam cobra banda de download (as páginas de Steamworks lidas não trazem; o contrato de distribuição não foi lido).
+**Não encontrado:** texto oficial com o **motivo** do abandono do P2P de download (o F8 só diz que a Blizzard deixou de usá-lo); data para os demais jogos; a taxa da loja Steam e se a Steam cobra banda de download (as páginas de Steamworks lidas não trazem; o contrato de distribuição não foi lido).
 
 ### Preços de entrega, lidos em páginas oficiais (2026-11-06)
 | Provedor | Preço por GB (entrega para a internet) | Observação |
@@ -33,7 +34,7 @@ Os **termos de uso** de cada provedor (por exemplo, se aceitam distribuição de
 ## 2. Hipóteses (o que parece plausível, mas não está comprovado)
 | # | Hipótese | Como se verificaria |
 | --- | --- | --- |
-| H1 | O P2P da Blizzard saiu por uma combinação de: custo de CDN em queda, reclamação sobre upload, problema com operadoras e custo de suporte | Fonte oficial ou relato de ex-funcionário com data; hoje **não há** |
+| H1 | O P2P da Blizzard saiu por uma combinação de: custo de CDN em queda, reclamação sobre upload, problema com operadoras (universidades, provedores) e custo de suporte. O F8 é **compatível** com isso (usuários pediam para desligar por bloqueio de rede) mas **não prova a causa** | Fonte oficial ou relato de ex-funcionário com data; hoje **não há** |
 | H2 | O custo da entrega por GB já é baixo o bastante para que a economia de banda seja pequena para clientes indie e AA (o próprio [docs/01](../01-visao-e-escopo.md) linha 17 já levanta isto) | Cálculo da seção 4, com os preços lidos, e dados do cliente |
 | H3 | O argumento comercial mais forte é **tempo até jogar** e **retenção** (jogo cabe no SSD), não a economia de banda | Dados de abandono por tempo de instalação (não temos) |
 | H4 | O primeiro cliente é um estúdio indie com jogo grande em Godot ([docs/01](../01-visao-e-escopo.md) linha 61) que **distribui fora de uma loja que já oferece entrega** (loja própria, itch.io, launcher próprio) | Entrevistas (fora do escopo autorizado); hoje é suposição |
@@ -70,9 +71,7 @@ Conta ilustrativa com preços lidos, **sem** dados de cliente:
 | "Jogadores não aceitam upload" | **Não** | Só com dado real de adoção; simulação não prova demanda |
 | "Operadoras limitam P2P" | **Parcialmente** (caso Rogers 2011) | Verificar se há casos recentes |
 
-## 6. Pedido ao dono (sem custo e sem contato externo)
-O que impede este estudo de ir além é o acesso. Duas opções, escolha do dono:
-1. **Leitura pelo dono** dos artigos de suporte da Blizzard que exigem login (`us.support.blizzard.com/en/article/28110` e `…/26021`), colando aqui o trecho sobre P2P, se houver.
-2. **Autorizar buscas adicionais** em arquivos públicos (Internet Archive, apresentações em eventos de desenvolvedores) para achar o motivo oficial. Só leitura de páginas públicas.
+## 6. Próximo passo
+O dono autorizou buscas em arquivos públicos (2026-11-06). Feito até aqui: duas buscas e a leitura de duas páginas do Blue Tracker (F8). **Falta:** o post original no fórum antigo do Battle.net (provavelmente indisponível), cópias no Internet Archive, e uma fonte com o **motivo**. Se o dono quiser, ele pode ainda colar o trecho sobre P2P dos artigos de suporte que exigem login (`us.support.blizzard.com/en/article/28110` e `…/26021`).
 
 O estudo **não** concluiu que o risco R12 está resolvido nem que se confirma. Até haver fonte, ele continua com probabilidade "desconhecida" no [doc 12](../12-riscos.md).

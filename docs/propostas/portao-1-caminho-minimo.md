@@ -80,3 +80,15 @@ Nada disso exige autorização nova de cartão crítico; **mas cada item acima �
 4. D: permite ou não, mesmo como medição preliminar?
 
 Nada nesta proposta reduz critério, amplia implementação ou autoriza início.
+
+## 7. Respostas do dono recebidas em 2026-11-06 (registro)
+| Ponto | Resposta (texto do dono) | Como tratei |
+| --- | --- | --- |
+| 1. Análise do R1 (opção B) | "Autorizo pedir ao R1 a análise só de leitura (opção B)…" | **Claro.** Pedido pronto em [pedido-r1-analise-caminho-minimo.md](pedido-r1-analise-caminho-minimo.md); o dono abre a sessão. |
+| 2. F1-04 | "o F1-04 (aceite do que falta)" | **Ambíguo; aguardo confirmação** (ver abaixo). Não alterei o F1-04 nem os limites. |
+| 3. Opção D (adaptador fora da API C) | "Permite o adaptador de medição fora da API C (opção D)" | **Ambíguo; aguardo confirmação.** Não inicio nada: não existe cartão, e a opção D é implementação nova. |
+| 4. R12 | "autorizar buscas em arquivos públicos" | **Claro.** Feito e registrado no [estudo](../estudos/r12-blizzard-e-premissas-comerciais.md) (F8). |
+
+**O que preciso confirmar:**
+- **F1-04:** você aceita que o parcial já mesclado (`a4bd5580`) **fique como está**, com tempo, tamanho e memória pendentes no F1-58, sem aprovar esses três critérios? Ou "aceite do que falta" é aprovar os critérios pendentes (isso exigiria a remedição do F1-58 e a sua decisão sobre 705 ms e 61,6 MiB)? São decisões diferentes.
+- **Opção D:** você autoriza **criar um cartão** para o adaptador de medição preliminar (que continua **sem início autorizado** e com o resultado rotulado "preliminar", sem valer como aprovação do Portão 1), ou autoriza **iniciar** a implementação já?
