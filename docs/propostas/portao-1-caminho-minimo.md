@@ -1,5 +1,7 @@
 # Proposta: caminho mínimo até a evidência do Portão 1
 
+**Atualização (2026-11-09): o dono escolheu C2 e depois C1 e o ADR-0018 está Aceita; ver [decisoes.md](../../tarefas/decisoes.md). O texto abaixo é o histórico de 2026-11-06 ("ADR-0018 segue Proposta" valia àquela data).**
+
 **Status: PROPOSTA do Planejador (2026-11-06). Não aceita pelo dono. Não altera a ordem registrada, as autorizações, os critérios nem nenhum cartão.** Até a decisão do dono vale a ordem F1-73 → conclusão do F1-69/#37 → F1-74 → F1-71 → F1-72. O início de F1-71 a F1-74, F1-67 e F1-68 continua sem autorização; ADR-0018 segue Proposta.
 
 **Base da análise:** texto dos cartões e do [docs/16](../16-briefing-fase-1a.md) na `main` `bd20afa` (2026-11-06). Li cartões, não o código; onde a necessidade técnica de uma dependência não está demonstrada, digo isso.
