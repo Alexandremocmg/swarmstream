@@ -21,7 +21,7 @@ Cada decisão técnica importante vira um arquivo curto: contexto, decisão, con
 | [0015](0015-politica-de-contribuicao-dco.md) | Contribuições com DCO, sem CLA | Aceita |
 | [0016](0016-ponto-de-intercepcao-godot.md) | Ponto de intercepção de leitura no Godot: loader na frente + dicas; `.pck` como reserva | Aceita |
 | [0017](0017-semantica-do-vfs.md) | Semântica do VFS (F1-17): conflito arquivo/diretório e leitura além do fim | Aceita |
-| [0018](0018-validade-do-contexto-apos-sw-shutdown.md) | Validade do contexto e liberação de recursos depois de `sw_shutdown` | Proposta |
+| [0018](0018-validade-do-contexto-apos-sw-shutdown.md) | Validade do contexto e liberação de recursos depois de `sw_shutdown` | Aceita |
 
 Status possíveis: **Proposta** → **Aceita** → (**Substituída por ADR-XXXX** | **Descartada**).
 
