@@ -34,7 +34,7 @@ Esta pasta é o **canal de comunicação por documentos** entre as sessões. O d
 5. **Não edite** `QUADRO.md`, `decisoes.md` nem cartões de outras tarefas.
 6. Travou ou descobriu que uma premissa está errada? Pare, ponha `Estado: BLOQUEADA` e escreva a **Pergunta ao dono** no cartão, com a evidência. Isso é resultado, não atraso.
 7. **Revisor independente:** comente o veredito (aprovo / aprovo com ajustes / recuso) **no PR** e registre no campo Revisão do cartão.
-8. **Ao concluir cada tarefa (ou abrir o PR dela), envie uma mensagem ao coordenador** (Planejador (sessão `local_2e2d3843-77d4-4cf1-8782-427f70498d9c`)) com: resumo, link e commit atual do PR, testes executados (comando e resultado) e pendências. Use a ferramenta de mensagem entre sessões; **resposta só no seu próprio chat não chega ao coordenador**. O quadro é atualizado com base nessa evidência, conferida no GitHub.
+8. **Ao concluir cada tarefa (ou abrir o PR dela), envie uma mensagem ao coordenador** (Planejador (sessão `local_39716e51-ecfc-4e78-9383-22b567fe3a07`)) com: resumo, link e commit atual do PR, testes executados (comando e resultado) e pendências. Use a ferramenta de mensagem entre sessões; **resposta só no seu próprio chat não chega ao coordenador**. O quadro é atualizado com base nessa evidência, conferida no GitHub.
 
 ### Gestão
 - Cria e prioriza cartões a partir do que o dono do produto pede; mantém o quadro e as decisões.

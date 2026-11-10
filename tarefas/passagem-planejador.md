@@ -2,7 +2,7 @@
 
 Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê este arquivo, o [README.md](README.md), o [QUADRO.md](QUADRO.md) e o [decisoes.md](decisoes.md). Atualize este arquivo quando o estado mudar de forma que a próxima passagem precise saber.
 
-Última atualização: 2026-10-24.
+Última atualização: 2026-11-10.
 
 > **Migração (2026-10-24, ordem do dono):** o repositório passou a ser o **público** `Alexandremocmg/swarmstream` (sem refs `refs/pull`). O antigo, privado, é `Alexandremocmg/swarmstream-privado-antigo` (backup, com os PRs/revisões antigos). PRs reabertos: antigo #34 → **#1** (F1-11), #28 → **#2** (F1-49), #35 → **#3** (F1-54). Números de PR e o texto sobre "GitHub Actions bloqueado" abaixo são do repositório antigo. Pendências do suporte do GitHub e de billing deixaram de valer.
 
@@ -31,26 +31,32 @@ Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê e
 - Código crítico exige revisão independente de outra sessão, comentada no PR, e CI verde antes de pedir o aceite.
 
 ## Equipe
-| Papel | Sessão | Modelo | Situação em 2026-10-24 |
-| --- | --- | --- | --- |
-| Arquiteto (R1) | `local_730e5b24-964e-4697-acc8-1ef31fdfd64c` | Opus, alto | PR #34 (F1-11) aprovado pela Sênior; falta o CI. Depois: F1-13, numa sessão nova |
-| Sênior (R2) | a sessão nova do F1-54 (a antiga é `local_1718d5d4-ddd1-40fe-b90a-17a336aa853b`) | Sonnet | F1-54 (custo do CI) |
-| Pleno (R3) | `local_9c4d9116-23de-4e8c-83c7-637d5aa4899b` | Haiku, médio | PR #28 (F1-49) esperando o CI; depois F1-53, numa sessão nova |
+| Papel | Sessão | Situação em 2026-11-10 |
+| --- | --- | --- |
+| Coordenação (gestão) | `local_39716e51-ecfc-4e78-9383-22b567fe3a07` ("Planejador", Opus) | Assumiu em 2026-11-10 por pedido do dono. A anterior, `local_2e2d3843-77d4-4cf1-8782-427f70498d9c` ("Planejador novo"), foi avisada para não editar `tarefas/`, não fazer merge nem push e não mandar mensagens às sessões |
+| R1, F1-69 | `local_b0eb953b-04a5-47fd-a347-1b13c6e12542` ("F1-69 posse e piso de cache") | #37 parado no head `6a35568`, à espera da decisão do dono sobre o conflito do cartão F1-69 |
+| Arquiteto (R1) | `local_730e5b24-964e-4697-acc8-1ef31fdfd64c` | Sem trabalho desde 2026-10-24. O F1-20 voltou a `ABERTA` |
+| Pleno (R3) | `local_9c4d9116-23de-4e8c-83c7-637d5aa4899b` | Sem trabalho desde 2026-10-24. O F1-33 e o F1-47 voltaram a `ABERTA` |
+| Sênior (R2) | `local_1718d5d4-ddd1-40fe-b90a-17a336aa853b` | Sem trabalho desde 2026-10-28 |
 
-Regra de economia: **uma sessão nova por cartão** (seção Economia do [README.md](README.md)). As sessões antigas ficam até o PR em curso entrar.
+As três sessões antigas (Arquiteto, Pleno e Sênior) receberam o id do coordenador novo em 2026-11-10. Pela regra de economia, cartão novo vai para **sessão nova**; não reabra trabalho nessas sessões.
 
-## Estado em 2026-10-24
-- **Main:** veja `git log origin/main -1`. Histórico **reescrito** hoje, sem o `Exemplo_Engine_Navegador.md`. A raiz nova é `d191154`. Antes de qualquer push, uma sessão confere `git rev-list --max-parents=0 HEAD` (tem de dar `d191154`) e que o arquivo não aparece no log.
-- **GitHub Actions bloqueado:** a cota grátis de outubro acabou e o limite de gasto do Actions está em US$ 0 ("Usage blocked"); não há pagamento falho. Volta em 1º de novembro, ou com o repositório público, ou se o dono subir o limite.
-- **PRs abertos:** #34 (F1-11, crítico, aprovado pela Sênior, head `7de0906`, espera CI); #28 (F1-49, head `6736f97`, espera CI; a correção de `-fPIC` não foi provada).
-- **Pendente com o dono:** pedido ao suporte do GitHub para apagar as 32 refs `refs/pull/*` dos PRs fechados e o cache dos commits antigos; decidir quando tornar público.
-- **Backups do dono, fora do repositório:** `C:\Users\alexa\Downloads\swarmstream-backup-antes-reescrita-2026-10-24.bundle` e `swarmstream-mapa-commits-2026-10-24.txt`. O mapa não pode ir ao repositório enquanto o GitHub guardar os commits antigos.
-- A pasta compartilhada está na `main`. O branch local `local/pre-teste-hermes` guarda uma nota que nunca foi enviada ao GitHub.
+## Estado em 2026-11-10
+- **Main:** `c414504` (merge do #47). Último workflow na `main`: `extension` verde em `c2928e0`. PRs que só tocam `docs/` ou `tarefas/` não disparam CI.
+- **ADR-0018:** Aceita (#46, `ff90fe5`). A ordem passou a ser **C2 → C1** (análise do R1, #45): o F1-71 deixou de ser pré-requisito do F1-67, e a falta de memória no `sw_shutdown` fica como limitação declarada até o F1-71 entrar.
+- **#37 (F1-69, crítico), head `6a35568`:** revisão independente APROVADO COM RESSALVAS (exceção C2: `sw-core-floor-oom` no MSVC Debug pendente do F1-73). O dono aceitou em 2026-11-10, mas o merge não foi feito: depois do #47 o PR ficou em **conflito com a `main`, só em `tarefas/cartoes/F1-69.md`**. A resolução cria um head novo, que precisa de nova autorização do dono, e roda o CI de novo.
+- **#48 (coordenação):** troca o id do coordenador no README, volta F1-20, F1-33 e F1-47 a `ABERTA` e atualiza este arquivo. Espera o aceite do dono.
+- **Push direto na `main`:** a decisão de 2026-10-18 permite à gestão em `tarefas/`, mas a checagem de permissões desta sessão negou o push em 2026-11-10. Enquanto o dono não liberar nas permissões, mudanças em `tarefas/` vão por PR.
 
-## Quando o CI voltar
-1. Rodar de novo os checks do #34 e do #28 (um push novo, ou "Re-run all jobs" pelo `gh`). Conferir os 14 checks e o log (o teste de queda no Ubuntu e no Windows; o DiskFull no Ubuntu).
-2. Pedir ao dono o aceite do #34, e do #28 quando ele estiver verde.
-3. PR pequeno que tira de `docs/README.md` a menção ao arquivo removido.
+## Pendente com o dono (2026-11-10)
+1. Quem resolve o conflito do cartão F1-69 no #37 (a gestão ou a sessão do F1-69) e a nova autorização do head que sair disso.
+2. Aceite do #48.
+3. Perguntas deixadas pela coordenação anterior: a configuração **MSVC Release** para as medições do Portão 1 (com conferência de leitura do baseline e da máquina, sem rodar benchmark) e o destino do achado do FIFO do #37 (`installed_floor.cpp:95`): o F1-74 ou um cartão próprio.
+4. As pendências antigas da tabela de [decisoes.md](decisoes.md).
+
+## Próximos passos depois do #37
+1. PR do comentário de `sw_shutdown` no `swarmstream.h`, conforme o texto aceito do ADR-0018, com revisão do R1 e do R2.
+2. F1-73 (`sw-format` sem terminar o processo por falta de memória) e F1-67, cada um numa sessão nova e só com o início autorizado pelo dono.
 
 ## Como conferir (armadilhas)
 - Git Bash: use `MSYS_NO_PATHCONV=1` em `git show origin/main:caminho`.
