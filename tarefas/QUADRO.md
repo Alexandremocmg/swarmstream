@@ -4,16 +4,10 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 2 | 6 | 23 | 35 |
+| 0 | 0 | 1 | 11 | 25 | 37 |
 
 ## Espera o dono do produto
-- [F1-04](cartoes/F1-04.md): Geração do manifesto v0, assinado com a chave de teste (ADR-0012)
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
-
-## EM_ANDAMENTO
-- [F1-20](cartoes/F1-20.md) (R1, sessão: Arquiteto): GDExtension com `ResourceFormatLoader` na frente sobre o `sw-core` (com mock), conforme o ADR-0016
-- [F1-33](cartoes/F1-33.md) (R3, sessão: Pleno): Script de relatório da rodada (métricas por perfil)
-- [F1-47](cartoes/F1-47.md) (R3, sessão: Pleno): Validar a bancada com uma mudança conhecida (rede mais lenta tem de piorar a espera)
 
 ## BLOQUEADA
 - [F1-58](cartoes/F1-58.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Remedir o manifesto v0 com libsodium real e atender (ou renegociar) tempo, tamanho e memória
@@ -22,30 +16,37 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-67](cartoes/F1-67.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real, etapa 1: contexto, ciclo de vida, handles, VFS e protocolo de fechamento (`sw_init`, `sw_shutdown`, `sw_open`, `sw_close`, `sw_file_size`, `sw_stat`, `sw_dir_*`)
 - [F1-68](cartoes/F1-68.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da implementadora do F1-67): API C real, etapa 2: leitura, `sw_ensure_async`, `sw_cancel` e `sw_get_stats` sobre cache, agendador e fonte
 - [F1-71](cartoes/F1-71.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Fronteira `noexcept` do caminho de parada: `CacheOwner::stop()` e auditoria (alocação e exceções)
+- [F1-72](cartoes/F1-72.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da do F1-71): Falta de memória e exceções na inicialização do cache: `CacheOwner::start()` e `recover()`
+- [F1-73](cartoes/F1-73.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-69, F1-74, F1-71 e F1-72): `sw-format` sem terminar o processo por falta de memória (leitura do manifesto no MSVC Debug)
+- [F1-74](cartoes/F1-74.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-71 e F1-72): `replace_file` sem terminar o processo por falta de memória (helper compartilhado `platform_file.hpp`)
+- [F1-75](cartoes/F1-75.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Adaptador de medição PRELIMINAR (fora da API C) para validar a bancada e antecipar a leitura de rodadas
+- [F1-76](cartoes/F1-76.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Acompanhamento das limitações L1 a L3 do F1-67: reexecutar as varreduras de falta de memória sobre a API C e encerrar as limitações
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
 | --- | --- | --- | --- | --- | --- |
 | [F1-02](cartoes/F1-02.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Testes do chunker (arquivos vazios, pequenos, enormes, aleatórios) |
-| [F1-05](cartoes/F1-05.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-04 | Classificação core/grupo/opcional por regras de pasta |
+| [F1-05](cartoes/F1-05.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Classificação core/grupo/opcional por regras de pasta |
 | [F1-07](cartoes/F1-07.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-05 | Mips/LODs baixos sempre no core |
-| [F1-08](cartoes/F1-08.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-04 | Relatório da CLI: tamanho por grupo, nº de peças, taxa de compressão |
+| [F1-08](cartoes/F1-08.md) | R3 | Haiku 5.5, esforço médio | não | sim | Relatório da CLI: tamanho por grupo, nº de peças, taxa de compressão |
+| [F1-20](cartoes/F1-20.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | GDExtension com `ResourceFormatLoader` na frente sobre o `sw-core` (com mock), conforme o ADR-0016 |
 | [F1-21](cartoes/F1-21.md) | R1 | Opus 5.5, esforço alto | não | espera F1-20 | Política de falta para textura (mip menor + troca ao chegar) |
 | [F1-24](cartoes/F1-24.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Overlay de debug (acertos, faltas, fila, bytes por fonte) |
+| [F1-33](cartoes/F1-33.md) | R3 | Sonnet 5.5, esforço médio | não | sim | Script de relatório da rodada (métricas por perfil) |
 | [F1-34](cartoes/F1-34.md) | R3 | Haiku 5.5, esforço médio | não | espera F1-33 | Rodadas semanais nos 3 perfis + comparação com o baseline |
-| [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-04 | Vetor do envelope com payload FlatBuffers real |
+| [F1-37](cartoes/F1-37.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Vetor do envelope com payload FlatBuffers real |
 | [F1-45](cartoes/F1-45.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Formatar o C++ existente com clang-format (PR mecânico) depois do congelamento |
+| [F1-47](cartoes/F1-47.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Validar a bancada com uma mudança conhecida (rede mais lenta tem de piorar a espera) |
 | [F1-50](cartoes/F1-50.md) | R1 | Opus 5.5, esforço alto | sim | espera F1-20 | Trocar uma thread por peça e por ensure por um pool de threads (loader e mock) |
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
 | [F1-57](cartoes/F1-57.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Teste instável do agendador: destrutor atrás de callback lento (test_deadline_scheduler.cpp:962) |
 | [F1-62](cartoes/F1-62.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Medir o custo das funções de compressão (LZ4) e de assinatura (libsodium) no binário do cliente e avaliar alternativas |
 | [F1-69](cartoes/F1-69.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Posse e estado da pasta de cache: lock entre processos e piso anti-rollback por `game_id` |
-| [F1-70](cartoes/F1-70.md) | R1 | Opus 5.5, esforço alto | sim | sim | Conferência de `block_count` na recuperação do cache (docs/04 §5, passo 3) |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
 | --- | --- | --- | --- | --- | --- |
-| [F1-06](cartoes/F1-06.md) | R1 | Opus 5.5, esforço alto | não | espera F1-04 | Ordenação de blocos em peças por localidade (por pasta/região) |
+| [F1-06](cartoes/F1-06.md) | R1 | Opus 5.5, esforço alto | não | sim | Ordenação de blocos em peças por localidade (por pasta/região) |
 | [F1-22](cartoes/F1-22.md) | R2 | Sonnet 5.5, esforço alto | não | espera F1-20 | Política de falta para malha (LOD menor / esconder) |
 | [F1-23](cartoes/F1-23.md) | R2 | Sonnet 5.5, esforço médio | não | espera F1-20 | Nó `SwarmHintArea3D` chamando `sw_hint_group` |
 | [F1-25](cartoes/F1-25.md) | R3 | Sonnet 5.5, esforço médio | não | espera F1-20 | Gravação de traces de leitura (posição, tempo, peça) |
@@ -57,6 +58,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 ## Feitas
 - [F1-01](cartoes/F1-01.md): Chunker `swarmstream-fastcdc-v0` em C++ (definição aprovada: 03 §11.1, vetores)
 - [F1-03](cartoes/F1-03.md): Compressão por bloco Zstd/LZ4 com escolha por tipo de arquivo
+- [F1-04](cartoes/F1-04.md): Geração do manifesto v0, assinado com a chave de teste (ADR-0012)
 - [F1-10](cartoes/F1-10.md): Arquivos de store pré-alocados e slots
 - [F1-11](cartoes/F1-11.md): Índice + journal com ordem dados → flush → journal → flush
 - [F1-12](cartoes/F1-12.md): Thread dona do cache e fila MPSC de pedidos
@@ -90,3 +92,4 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-64](cartoes/F1-64.md): Reforçar os testes do VFS: byte alto após o prefixo de diretório, bloco de 262144 bytes e offsets acima de 4 GiB
 - [F1-65](cartoes/F1-65.md): Precondição de uso de `VfsFile` válido e proteção no F1-60 contra handles inválidos
 - [F1-66](cartoes/F1-66.md): Atualizar as referências ao ADR-0017 no código e a descrição do PR #25
+- [F1-70](cartoes/F1-70.md): Conferência de `block_count` na recuperação do cache (docs/04 §5, passo 3)

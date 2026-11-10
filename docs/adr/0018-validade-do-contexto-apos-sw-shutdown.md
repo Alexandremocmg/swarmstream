@@ -1,6 +1,6 @@
 # ADR-0018: Validade do contexto e liberação de recursos depois de `sw_shutdown`
 
-**Status:** Proposta (não aceita; o dono do produto escolheu a opção A em 2026-11-02, pediu correções em 2 rodadas e decide o aceite à parte) · **Data:** 2026-11-02 · **Autor:** Planejador (a pedido do dono)
+**Status:** Aceita (2026-11-07: aceite do texto pelo dono do produto, no chat, junto com a escolha C2 → C1 da [análise do R1](../propostas/analise-r1-caminho-minimo.md); a opção A tinha sido escolhida em 2026-11-02) · **Data:** 2026-11-02 · **Autor:** Planejador (a pedido do dono)
 
 ## Contexto
 O comentário de `sw_shutdown` em [`swarmstream.h`](../../sw-core/include/swarmstream.h) v0 (contrato congelado, [ADR-0014](0014-contrato-swarmstream-h-v0.md)) diz que a função encerra o contexto e solta o lock, que `SW_E_BUSY` não muda nada e que "depois de `SW_OK`, `ctx` é inválido". Ele **não diz**: (1) se `ctx` continua válido depois de outro erro; (2) se a chamada pode ser repetida; (3) o que acontece com os recursos quando uma etapa do encerramento falha.
@@ -16,10 +16,10 @@ O comentário de `sw_shutdown` em [`swarmstream.h`](../../sw-core/include/swarms
 2. **B. Contexto continua válido depois de erro e a chamada é repetível.** Contras: o flush não se repete; recursos e lock retidos; vazamento se o chamador não repetir.
 3. **C. Desliga sempre, devolve `SW_OK` e só registra o erro.** **Rejeitada pelo dono** (2026-11-02).
 
-## Decisão (proposta: opção A)
+## Decisão (opção A; aceita em 2026-11-07, título ajustado em 2026-11-09 sem mudar o conteúdo)
 **Não há promessa de desligamento sem alocações.** O encerramento **pode alocar** (o checkpoint final do cache, caminhos, resumo da telemetria). O que se promete é: falta de memória ou exceção **não termina o processo, não impede a liberação e é informada**. Para isso há requisitos internos explícitos (abaixo), com escopo próprio ([F1-71](../../tarefas/cartoes/F1-71.md)).
 
-### Texto proposto para o comentário de `sw_shutdown` (o header NÃO é alterado por este ADR; só depois do aceite, em PR próprio com R1 + R2)
+### Texto aprovado para o comentário de `sw_shutdown` (aceito em 2026-11-07; o header NÃO é alterado por este ADR: a mudança do comentário vai em PR próprio com R1 + R2, ainda não feito)
 ```c
 /* Encerra o contexto e solta o lock da pasta de cache.
  * Pré-condições: todos os sw_file e sw_dir fechados (senão SW_E_BUSY e nada
@@ -61,7 +61,7 @@ O comentário de `sw_shutdown` em [`swarmstream.h`](../../sw-core/include/swarms
 | disco cheio ao gravar o checkpoint (`DiskFull`) | `SW_E_DISK_FULL` |
 | `std::bad_alloc` em qualquer etapa | `SW_E_OUT_OF_MEMORY` |
 | outra exceção, ou condição interna inesperada | `SW_E_INTERNAL` |
-| falha de escrita da telemetria (diagnóstico, não dado) | **EM ABERTO.** A regra "só registrar no `log_fn`" **não foi aprovada** pelo dono (2026-11-02). Conclusão da auditoria no F1-71 (leitura preliminar): `~TelemetryLog()` não permite recolher o erro; só um `close()` explícito antes da destruição permitiria devolvê-lo. A regra será decidida junto do aceite do ADR |
+| falha ao encerrar a telemetria (resumo, `fflush`, `fclose`, `join`) | **Decisão do dono (2026-11-02): encerramento explícito e idempotente, com o resultado disponível antes da destruição; a falha participa do retorno de `sw_shutdown` pela mesma regra de precedência** (primeira falha na ordem do encerramento; as outras vão ao `log_fn`). Mapeia pelo mesmo critério das linhas acima (erro de disco `SW_E_IO`/`SW_E_DISK_FULL`, `bad_alloc` `SW_E_OUT_OF_MEMORY`, outra exceção `SW_E_INTERNAL`). Isso pede um `close() noexcept` em `TelemetryLog` (o destrutor só o chama), no escopo do [F1-71](../../tarefas/cartoes/F1-71.md) **na data desta linha (2026-11-02); em 2026-11-09 o dono moveu a entrega do `close()` e dos seus testes funcionais para o [F1-67](../../tarefas/cartoes/F1-67.md), ficando no F1-71 a auditoria e as garantias sob falta de memória**. (Nota de 2026-11-09: "não é aceite integral do ADR" era verdade em 2026-11-02; o ADR foi aceito em 2026-11-07.) **Não autoriza implementar** |
 
 Encerramento concluído implica contexto inválido e recursos liberados **também** com `SW_E_OUT_OF_MEMORY` e `SW_E_INTERNAL`: esses dois códigos só saem de `sw_shutdown` **depois** da validação; antes dela só saem `BUSY`, `INVALID_ARGUMENT` e `SHUTTING_DOWN`.
 
@@ -78,4 +78,5 @@ Encerramento concluído implica contexto inválido e recursos liberados **també
 - (−) Quem tratava "erro" como "contexto ainda vivo" erra; por isso o texto diz isso e o teste cobre a repetição (rejeição por melhor esforço, sem corromper memória).
 - (−) Um checkpoint pulado por falta de memória deixa o journal mais longo para o próximo `sw_init`; a recuperação pode custar mais tempo ou descartar indexação.
 - **Como verificar:** (a) em `stop()`: varredura de falha de `operator new` em **todos** os pontos do `stop()`, sem excluir pontos (como no F1-63), mais exceção injetada em cada passo: nenhum `terminate`, journal e store fechados, código esperado; (b) em `sw_shutdown` (F1-67): a mesma varredura sobre o `sw_shutdown` inteiro e falhas injetadas no `stop()` e na telemetria: resultado em {`OK`, `IO`, `DISK_FULL`, `OUT_OF_MEMORY`, `INTERNAL`}, contexto inválido, `vivos == 0` no alocador de teste, lock solto (outro processo o obtém), nenhuma chamada ao alocador nem ao `log_fn` depois do retorno; (c) reabertura da pasta depois da falha injetada: o `sw_init` aplica a recuperação e **ou** tem sucesso sem entregar dado não verificado, **ou** falha com diagnóstico (o teste aceita as duas saídas e reprova qualquer dado sem validação); (d) `git diff` do header limitado ao comentário.
-- **Efeito no processo:** o F1-67 não implementa a regra de resultado de `sw_shutdown` antes do aceite deste ADR; o F1-71 (fronteira do `stop()`) é pré-requisito do F1-67 e não depende do aceite do ADR para ser planejado, mas só começa com autorização do dono.
+- **Efeito no processo (texto de 2026-11-02; a parte "F1-71 é pré-requisito do F1-67" foi superada pela ordem do item seguinte):** o F1-67 não implementa a regra de resultado de `sw_shutdown` antes do aceite deste ADR; o F1-71 (fronteira do `stop()`) é pré-requisito do F1-67 e não depende do aceite do ADR para ser planejado, mas só começa com autorização do dono.
+- **Ordem depois do aceite (decisão do dono em 2026-11-07, opção C2 → C1 da [análise do R1](../propostas/analise-r1-caminho-minimo.md)):** o F1-71 deixa de ser pré-requisito do F1-67. Até o F1-71 ser mesclado, o requisito interno 1 ("nenhuma exceção cruza uma fronteira `noexcept` no caminho de parada") e a varredura de falta de memória do `sw_shutdown` ficam como **limitação declarada** do F1-67: com memória disponível, o texto acima vale integralmente; sem memória, o `stop()` ainda pode terminar o processo. O texto do comentário do header não muda por isso. A limitação sai quando o F1-71 entrar.
