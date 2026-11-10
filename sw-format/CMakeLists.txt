@@ -108,4 +108,26 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         target_compile_options(sw-format-client-min PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME sw-format-client-min COMMAND sw-format-client-min)
+
+    # F1-73: o sw-format não termina o processo por falta de memória. Varredura de falhas de
+    # alocação (um processo-filho por ponto e, de novo, em processo) sobre ManifestView::open,
+    # ManifestView::group, ed25519_verify e detail::ContiguousMessage, em toda configuração. O
+    # executável substitui o operator new global (tests/oom_inject.hpp), por isso é separado do
+    # cliente mínimo. 600 s é o limite, não o esperado (a varredura imprime o tempo que levou).
+    add_executable(sw-format-oom-tests
+        tests/test_manifest_oom.cpp
+        tests/child_process.hpp
+        tests/client_min_fixture.hpp
+        tests/manifest_oom_fixture.hpp
+        tests/oom_inject.hpp)
+    target_link_libraries(sw-format-oom-tests PRIVATE sw-format)
+    if(MSVC)
+        target_compile_options(sw-format-oom-tests PRIVATE /W4 /permissive-)
+        # DbgHelp: o processo pai descreve a pilha da alocação em que um filho terminou.
+        target_link_libraries(sw-format-oom-tests PRIVATE dbghelp)
+    else()
+        target_compile_options(sw-format-oom-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME sw-format-oom COMMAND sw-format-oom-tests)
+    set_tests_properties(sw-format-oom PROPERTIES TIMEOUT 600)
 endif()
