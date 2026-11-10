@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 0 | 1 | 10 | 22 | 37 |
+| 3 | 0 | 1 | 11 | 22 | 37 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -25,6 +25,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-73](cartoes/F1-73.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-69, F1-74, F1-71 e F1-72): `sw-format` sem terminar o processo por falta de memória (leitura do manifesto no MSVC Debug)
 - [F1-74](cartoes/F1-74.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-71 e F1-72): `replace_file` sem terminar o processo por falta de memória (helper compartilhado `platform_file.hpp`)
 - [F1-75](cartoes/F1-75.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Adaptador de medição PRELIMINAR (fora da API C) para validar a bancada e antecipar a leitura de rodadas
+- [F1-76](cartoes/F1-76.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Acompanhamento das limitações L1 a L3 do F1-67: reexecutar as varreduras de falta de memória sobre a API C e encerrar as limitações
 
 ## Abertas na F1a
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
