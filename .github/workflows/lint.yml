@@ -66,8 +66,14 @@ jobs:
       - name: Netlab shaping tests (F1-53)
         run: python -m unittest test_shaping -v
         working-directory: sw-netlab
+      # clang-format fixo na serie 18 (a do repositorio, 18.1.8): o apt acompanha a imagem do runner,
+      # e a troca de ubuntu-latest para 26.04 em 2026-11 trouxe o clang-format 21, que reprova codigo
+      # formatado pela 18. O pacote do PyPI nao depende da imagem. Para subir de versao: reformate o
+      # repositorio inteiro com a nova e troque este numero no mesmo PR.
+      - name: Install pinned clang-format
+        run: python -m pip install "clang-format==18.1.8"
       - name: Install clang analysis tools
-        run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy cmake g++ libsodium-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy cmake g++ libsodium-dev pkg-config
       - name: C++ format
         shell: bash
         env:
@@ -85,6 +91,7 @@ jobs:
             git fetch origin main
             base="origin/main"
           fi
+          clang-format --version
           mapfile -t files < <(git diff --name-only "$base...$GITHUB_SHA" -- '*.cpp' '*.c' '*.h' '*.hpp')
           if ((${#files[@]})); then
             clang-format --dry-run --Werror "${files[@]}"
