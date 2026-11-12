@@ -49,10 +49,12 @@ if(SANITIZE_THREAD)
 endif()
 
 # Submodules
-# sw-format antes do sw-core: o sw-core depende dele (F1-17), e o sw-pack também.
+# sw-format antes do sw-core: o sw-core depende dele (F1-17), e o sw-pack também. O sw-pack vem
+# antes do sw-core porque os TESTES do sw-core (F1-69: piso anti-rollback) montam manifestos
+# assinados com ele; a biblioteca sw-core continua sem depender do sw-pack.
 add_subdirectory(sw-format)
-add_subdirectory(sw-core)
 add_subdirectory(sw-pack)
+add_subdirectory(sw-core)
 
 # Parte da GDExtension do Godot que roda sem o Godot (F1-20)
 if(BUILD_TESTING)
