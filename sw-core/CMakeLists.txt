@@ -217,6 +217,28 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         target_compile_options(sw-core-lock-oom-tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(sw-core-posse-tool PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+    # F1-74: replace_file (platform_file.hpp) sem terminar o processo por falta de memória: varredura
+    # de operator new sem pontos excluídos, falha do rename e CacheErrorCode::OutOfMemory/Internal.
+    add_executable(sw-core-replace-tests tests/test_platform_file_replace.cpp)
+    target_link_libraries(sw-core-replace-tests PRIVATE sw-core)
+    target_include_directories(sw-core-replace-tests PRIVATE src)
+    add_test(NAME sw-core-replace COMMAND sw-core-replace-tests)
+    set_tests_properties(sw-core-replace PROPERTIES TIMEOUT 300)
+    # Falha da sincronização da pasta DEPOIS do rename (pasta em 0300). Sai com 77 (PULADO no
+    # ctest) no Windows, como root ou onde a permissão de pasta não vale.
+    add_executable(sw-core-replace-perm-tests tests/test_platform_file_replace_perm.cpp)
+    target_link_libraries(sw-core-replace-perm-tests PRIVATE sw-core)
+    target_include_directories(sw-core-replace-perm-tests PRIVATE src)
+    add_test(NAME sw-core-replace-perm COMMAND sw-core-replace-perm-tests)
+    set_tests_properties(sw-core-replace-perm PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    if(MSVC)
+        target_link_libraries(sw-core-replace-tests PRIVATE dbghelp) # pilha do std::terminate
+        target_compile_options(sw-core-replace-tests PRIVATE /W4 /permissive-)
+        target_compile_options(sw-core-replace-perm-tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(sw-core-replace-tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(sw-core-replace-perm-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
     # Piso anti-rollback: os testes montam manifestos assinados com o sw-pack (ferramenta de build),
     # que a raiz do projeto adiciona ANTES do sw-core. Só os TESTES o usam; a biblioteca sw-core
     # continua dependendo apenas do sw-format. Sem o alvo sw-pack (sw-core configurado sozinho, como

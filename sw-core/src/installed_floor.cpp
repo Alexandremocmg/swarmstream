@@ -177,30 +177,11 @@ public:
 
     CacheErrorCode replace(const fs::path& from, const fs::path& to) noexcept override
     {
-#if defined(_WIN32)
-        return replace_file(from, to); // MoveFileExW: nada aqui aloca
-#else
-        // Equivalente a replace_file (platform_file.hpp:297-309: rename e depois fsync da pasta),
-        // salvo o `parent_path()` (que ALOCA) dentro de try. Caso a caso:
-        //  (a) rename falha            -> IoError, troca NÃO ocorreu: igual ao helper.
-        //  (b) rename e sync_directory ok -> Success: igual.
-        //  (c) rename ok, sync_directory falha -> IoError com a troca JÁ feita: igual; o chamador
-        //      trata como may_have_changed (piso antigo OU novo).
-        //  (d) NOVO: `parent_path()` sem memória depois do rename -> IoError (no helper: o
-        //      bad_alloc sai de uma função noexcept e é std::terminate, com a troca já feita).
-        //  (e) Diferença de superfície: esta lógica DUPLICA a do helper e pode divergir se ele
-        //      mudar (por isso o helper compartilhado não foi alterado: ele também serve ao
-        //      índice e ao journal). Testes: (a) test_real_replace_missing_source; (b) toda
-        //      gravação com as operações reais no POSIX; (c) test_installed_floor_perm.cpp
-        //      (installed/ em 0300, só Linux como não-root); (d) a varredura do POSIX em
-        //      test_installed_floor_oom.cpp (só POSIX; não rodou localmente).
-        if (::rename(from.c_str(), to.c_str()) != 0) return CacheErrorCode::IoError;
-        try {
-            return sync_directory(to.parent_path());
-        } catch (...) {
-            return CacheErrorCode::IoError;
-        }
-#endif
+        // F1-74: o helper compartilhado não aloca depois do rename (o contorno local do F1-69,
+        // que duplicava a lógica dele no POSIX, foi removido). Qualquer retorno diferente de
+        // Success é tratado por quem chama como "piso antigo OU novo" (`may_have_changed`),
+        // inclusive OutOfMemory, que garante "nada trocado" mas aqui vale como o caso conservador.
+        return replace_file(from, to);
     }
 };
 
