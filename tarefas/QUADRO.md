@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 1 | 11 | 25 | 37 |
+| 0 | 0 | 1 | 11 | 24 | 38 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -41,7 +41,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 | [F1-52](cartoes/F1-52.md) | R2 | Sonnet 5.5, esforço baixo | não | sim | Teste do chunker em C++ cobre o vetor de bordas edges_small_params |
 | [F1-57](cartoes/F1-57.md) | R2 | Sonnet 5.5, esforço alto | não | sim | Teste instável do agendador: destrutor atrás de callback lento (test_deadline_scheduler.cpp:962) |
 | [F1-62](cartoes/F1-62.md) | R2 | Sonnet 5.5, esforço médio | não | sim | Medir o custo das funções de compressão (LZ4) e de assinatura (libsodium) no binário do cliente e avaliar alternativas |
-| [F1-69](cartoes/F1-69.md) | R1 | Opus 5.5, esforço muito alto | sim | sim | Posse e estado da pasta de cache: lock entre processos e piso anti-rollback por `game_id` |
 
 ## Abertas na F1b
 | Cartão | Papel | Modelo e esforço | Crítico | Pode começar? | Tarefa |
@@ -92,4 +91,5 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-64](cartoes/F1-64.md): Reforçar os testes do VFS: byte alto após o prefixo de diretório, bloco de 262144 bytes e offsets acima de 4 GiB
 - [F1-65](cartoes/F1-65.md): Precondição de uso de `VfsFile` válido e proteção no F1-60 contra handles inválidos
 - [F1-66](cartoes/F1-66.md): Atualizar as referências ao ADR-0017 no código e a descrição do PR #25
+- [F1-69](cartoes/F1-69.md): Posse e estado da pasta de cache: lock entre processos e piso anti-rollback por `game_id`
 - [F1-70](cartoes/F1-70.md): Conferência de `block_count` na recuperação do cache (docs/04 §5, passo 3)
