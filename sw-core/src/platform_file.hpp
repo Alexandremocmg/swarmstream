@@ -3,7 +3,8 @@
 
 // Arquivo do cache com todo retorno de E/S conferido (Windows e POSIX). Interno do sw-core: usado
 // pelo StoreFiles (F1-10) e pelo journal e pelo índice (F1-11). Saiu de store_files.cpp sem
-// mudança de comportamento; a F1-11 acrescentou replace_file e remove_file.
+// mudança de comportamento; a F1-11 acrescentou replace_file e remove_file; o F1-74 fez o
+// replace_file não alocar depois do rename (falta de memória => OutOfMemory sem tocar o disco).
 #pragma once
 
 #include "swarmstream/types.hpp"
@@ -11,7 +12,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <new>
 #include <system_error>
+#include <type_traits>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -294,17 +298,43 @@ inline CacheErrorCode sync_directory([[maybe_unused]] const std::filesystem::pat
 // Troca `to` por `from` de forma atômica e durável (checkpoint do índice e do journal, 04 §4).
 // Windows: MoveFileExW com MOVEFILE_WRITE_THROUGH, que só volta depois de o rename estar no
 // disco. POSIX: rename(2) e depois fsync da pasta.
+//
+// Resultado (F1-74; a assinatura é a do F1-11). O que o chamador pode concluir de cada código:
+//  - Success: a troca foi feita e confirmada no disco (`to` tem o conteúdo de `from`).
+//  - OutOfMemory: faltou memória ANTES da troca. NADA foi tocado: `to` está intacto e `from`
+//    continua onde estava. É o único código que garante "nada trocado".
+//  - IoError: o rename falhou (nada foi trocado) OU o rename deu certo e a sincronização da pasta
+//    falhou (POSIX; a troca JÁ FOI FEITA). O helper não distingue os dois casos: o chamador deve
+//    tratar IoError como "`to` antigo OU novo" (o piso faz isso com `may_have_changed`). Sem nunca
+//    deixar `to` parcial: o rename é atômico.
+//  - Internal: exceção inesperada antes da troca (defeito; nada foi trocado).
+// Nenhuma exceção sai desta função (é noexcept) e NADA aloca depois do rename: o caminho da pasta
+// (que ALOCA: fs::path por valor) é calculado ANTES, dentro de try. Sem isso, a falta de memória
+// depois de a troca já ter acontecido viraria std::terminate (achado do F1-69).
 inline CacheErrorCode replace_file(const std::filesystem::path& from,
                                    const std::filesystem::path& to) noexcept
 {
 #if defined(_WIN32)
+    // Nada aqui aloca (c_str() só devolve ponteiros): não há o que tratar de falta de memória.
     if (!::MoveFileExW(from.c_str(), to.c_str(),
                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
         return CacheErrorCode::IoError;
     return CacheErrorCode::Success;
 #else
-    if (::rename(from.c_str(), to.c_str()) != 0) return CacheErrorCode::IoError;
-    return sync_directory(to.parent_path());
+    // Depois do rename só restam chamadas que não lançam: sync_directory (noexcept, sem alocação)
+    // e o destrutor do fs::path (noexcept). Logo os `catch` abaixo só podem disparar ANTES do
+    // rename (em parent_path()), e por isso "nada foi trocado" vale para OutOfMemory e Internal.
+    static_assert(noexcept(sync_directory(std::declval<const std::filesystem::path&>())));
+    static_assert(std::is_nothrow_destructible_v<std::filesystem::path>);
+    try {
+        const std::filesystem::path dir = to.parent_path(); // aloca: SÓ antes do rename
+        if (::rename(from.c_str(), to.c_str()) != 0) return CacheErrorCode::IoError;
+        return sync_directory(dir); // a troca já foi feita: IoError aqui significa "antigo OU novo"
+    } catch (const std::bad_alloc&) {
+        return CacheErrorCode::OutOfMemory;
+    } catch (...) {
+        return CacheErrorCode::Internal;
+    }
 #endif
 }
 

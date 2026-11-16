@@ -116,7 +116,10 @@ enum class CacheErrorCode {
     CorruptedChecksum,
     IoError,
     DiskFull, // sem espaço no disco (pré-alocação ou escrita); F1-10
-    Stopped   // a thread dona do cache parou; o pedido não foi atendido (F1-12)
+    Stopped,  // a thread dona do cache parou; o pedido não foi atendido (F1-12)
+    // F1-74. Acrescentados DEPOIS do último valor antigo: nenhum valor existente muda.
+    OutOfMemory, // faltou memória (std::bad_alloc); o chamador distingue memória de disco
+    Internal // exceção ou estado inesperado dentro do sw-core (defeito, não condição de E/S)
 };
 
 [[nodiscard]] constexpr std::string_view to_string(CacheErrorCode code) noexcept
@@ -133,6 +136,8 @@ enum class CacheErrorCode {
     case CacheErrorCode::IoError: return "IoError";
     case CacheErrorCode::DiskFull: return "DiskFull";
     case CacheErrorCode::Stopped: return "Stopped";
+    case CacheErrorCode::OutOfMemory: return "OutOfMemory";
+    case CacheErrorCode::Internal: return "Internal";
     }
     return "UnknownCacheError";
 }
