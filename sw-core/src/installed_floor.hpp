@@ -114,6 +114,11 @@ public:
     virtual FileReadStatus read_file(const std::filesystem::path& file, std::size_t max_bytes,
                                      std::vector<std::byte>& out) noexcept = 0;
     // W5: troca `to` por `from` (replace_file: no POSIX rename + fsync da pasta).
+    // Contrato do retorno (o chamador, commit_installed_floor, distingue os dois casos):
+    //  - Success: trocou e confirmou.
+    //  - OutOfMemory: falhou ANTES da troca; nada foi trocado (`to` e `from` como estavam).
+    //  - qualquer outro != Success (IoError, Internal...): o estado de `to` e antigo OU novo
+    //    (o rename pode ter dado certo e o fsync da pasta falhado depois).
     virtual CacheErrorCode replace(const std::filesystem::path& from,
                                    const std::filesystem::path& to) noexcept = 0;
 };
