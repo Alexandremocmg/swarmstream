@@ -30,8 +30,10 @@
 // `build_seq` de um manifesto que passou na verificação completa; nunca desce e nunca fica
 // parcial. Falha antes de W5 (W1-W4) não o altera. Erro de replace_file, ou queda depois de W4,
 // pode deixá-lo ANTIGO OU NOVO: o helper não distingue "falhou antes da troca" de "falhou
-// depois" (no POSIX faz rename(2) e depois fsync da pasta), então o resultado diz
-// `may_have_changed` e a abertura seguinte lê o que existir e verifica.
+// depois" no caso IoError (no POSIX faz rename(2) e depois fsync da pasta), então o resultado
+// diz `may_have_changed` e a abertura seguinte lê o que existir e verifica. Exceção (F1-74):
+// OutOfMemory do replace significa que NADA foi trocado (status OutOfMemory, `may_have_changed`
+// falso, alvo intacto).
 //
 // Limites (docs/04): a assinatura autentica o conteúdo, não impede quem tem escrita na pasta de
 // APAGAR a cópia (indistinguível de primeira instalação) nem de SUBSTITUÍ-LA por outra cópia
@@ -168,7 +170,8 @@ struct FloorWrite
     FloorStatus status = FloorStatus::Ok;
     FloorCategory category = FloorCategory::None;
     bool wrote = false; // true: o alvo foi trocado (replace devolveu sucesso)
-    // true quando um erro de replace_file deixou o alvo ANTIGO OU NOVO. Falsa em W1-W4.
+    // true quando um erro de replace_file deixou o alvo ANTIGO OU NOVO. Falsa em W1-W4 e quando o
+    // replace devolveu OutOfMemory (F1-74: o helper só o devolve antes do rename, sem trocar nada).
     bool may_have_changed = false;
     // Nulo com Ok; nulo também quando o OutOfMemory nasceu de não conseguir montar o texto.
     FloorDetail detail;

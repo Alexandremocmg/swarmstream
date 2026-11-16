@@ -178,9 +178,9 @@ public:
     CacheErrorCode replace(const fs::path& from, const fs::path& to) noexcept override
     {
         // F1-74: o helper compartilhado não aloca depois do rename (o contorno local do F1-69,
-        // que duplicava a lógica dele no POSIX, foi removido). Qualquer retorno diferente de
-        // Success é tratado por quem chama como "piso antigo OU novo" (`may_have_changed`),
-        // inclusive OutOfMemory, que garante "nada trocado" mas aqui vale como o caso conservador.
+        // que duplicava a lógica dele no POSIX, foi removido). O código é repassado como está:
+        // quem chama (W5 de commit_installed_floor) trata OutOfMemory como "nada trocado" e
+        // qualquer outro != Success como "piso antigo OU novo" (`may_have_changed`).
         return replace_file(from, to);
     }
 };
@@ -791,7 +791,18 @@ FloorWrite commit_installed_floor(const fs::path& cache_dir,
             return fail(FloorStatus::Io, FloorCategory::VerifyTmp,
                         describe(FloorCategory::VerifyTmp, tmp, "a releitura diverge da memoria"));
         // W5
-        if (ops.replace(tmp, target) != CacheErrorCode::Success) {
+        const CacheErrorCode replaced = ops.replace(tmp, target);
+        if (replaced == CacheErrorCode::OutOfMemory) {
+            // F1-74: o helper só devolve OutOfMemory ANTES do rename e sem tocar o disco: o alvo
+            // está intacto e `may_have_changed` fica falso. Sem texto (montá-lo alocaria): só
+            // atribuições que não alocam, como no `catch (const std::bad_alloc&)` abaixo.
+            out.status = FloorStatus::OutOfMemory;
+            out.category = FloorCategory::None;
+            out.wrote = false;
+            out.detail.reset();
+            return out;
+        }
+        if (replaced != CacheErrorCode::Success) {
             out.may_have_changed = true; // ANTES de montar o texto: se faltar memória ali, vale
             return fail(FloorStatus::Io, FloorCategory::Replace,
                         describe(FloorCategory::Replace, target,
