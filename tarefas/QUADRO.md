@@ -4,7 +4,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 1 | 11 | 24 | 38 |
+| 0 | 0 | 1 | 10 | 24 | 39 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
@@ -17,7 +17,6 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-68](cartoes/F1-68.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da implementadora do F1-67): API C real, etapa 2: leitura, `sw_ensure_async`, `sw_cancel` e `sw_get_stats` sobre cache, agendador e fonte
 - [F1-71](cartoes/F1-71.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Fronteira `noexcept` do caminho de parada: `CacheOwner::stop()` e auditoria (alocação e exceções)
 - [F1-72](cartoes/F1-72.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da do F1-71): Falta de memória e exceções na inicialização do cache: `CacheOwner::start()` e `recover()`
-- [F1-73](cartoes/F1-73.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-69, F1-74, F1-71 e F1-72): `sw-format` sem terminar o processo por falta de memória (leitura do manifesto no MSVC Debug)
 - [F1-74](cartoes/F1-74.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente das do F1-71 e F1-72): `replace_file` sem terminar o processo por falta de memória (helper compartilhado `platform_file.hpp`)
 - [F1-75](cartoes/F1-75.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Adaptador de medição PRELIMINAR (fora da API C) para validar a bancada e antecipar a leitura de rodadas
 - [F1-76](cartoes/F1-76.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Acompanhamento das limitações L1 a L3 do F1-67: reexecutar as varreduras de falta de memória sobre a API C e encerrar as limitações
@@ -93,3 +92,4 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-66](cartoes/F1-66.md): Atualizar as referências ao ADR-0017 no código e a descrição do PR #25
 - [F1-69](cartoes/F1-69.md): Posse e estado da pasta de cache: lock entre processos e piso anti-rollback por `game_id`
 - [F1-70](cartoes/F1-70.md): Conferência de `block_count` na recuperação do cache (docs/04 §5, passo 3)
+- [F1-73](cartoes/F1-73.md): `sw-format` sem terminar o processo por falta de memória (leitura do manifesto no MSVC Debug)

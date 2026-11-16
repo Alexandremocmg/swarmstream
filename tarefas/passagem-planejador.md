@@ -2,7 +2,7 @@
 
 Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê este arquivo, o [README.md](README.md), o [QUADRO.md](QUADRO.md) e o [decisoes.md](decisoes.md). Atualize este arquivo quando o estado mudar de forma que a próxima passagem precise saber.
 
-Última atualização: 2026-11-14.
+Última atualização: 2026-11-16.
 
 > **Migração (2026-10-24, ordem do dono):** o repositório passou a ser o **público** `Alexandremocmg/swarmstream` (sem refs `refs/pull`). O antigo, privado, é `Alexandremocmg/swarmstream-privado-antigo` (backup, com os PRs/revisões antigos). PRs reabertos: antigo #34 → **#1** (F1-11), #28 → **#2** (F1-49), #35 → **#3** (F1-54). Números de PR e o texto sobre "GitHub Actions bloqueado" abaixo são do repositório antigo. Pendências do suporte do GitHub e de billing deixaram de valer.
 
@@ -31,33 +31,33 @@ Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê e
 - Código crítico exige revisão independente de outra sessão, comentada no PR, e CI verde antes de pedir o aceite.
 
 ## Equipe
-| Papel | Sessão | Situação em 2026-11-14 |
+| Papel | Sessão | Situação em 2026-11-16 |
 | --- | --- | --- |
 | Coordenação (gestão) | `local_39716e51-ecfc-4e78-9383-22b567fe3a07` ("Planejador") | Assumiu em 2026-11-10. A anterior, `local_2e2d3843-77d4-4cf1-8782-427f70498d9c` ("Planejador novo"), foi avisada para não editar `tarefas/`, fazer merge, push nem mandar mensagens às sessões de trabalho |
 | R1, F1-69 | `local_b0eb953b-04a5-47fd-a347-1b13c6e12542` ("F1-69 posse e piso de cache") | #37 mesclado; ociosa. Pela regra de economia, não reabra trabalho nela |
-| Teste de capacidade | `local_033169a3-45c7-456a-a655-b63a5772377f` ("Fable_5.2") | **F1-73**, atribuído em 2026-11-10 pelo dono, "só medir, sem mesclar". Sem resposta até aqui |
-| Revisão independente do #37 | `local_cd64fdea-4cdd-4c60-bd1f-583969008786` | Terminou (parecer publicado) |
+| Implementadora F1-73 (teste de capacidade) | `local_033169a3-45c7-456a-a655-b63a5772377f` ("Fable_5.2") | #51 mesclado; ociosa |
+| Revisões independentes | `local_cd64fdea-4cdd-4c60-bd1f-583969008786` (#37) e `local_ae9ec816-c8bf-471f-95d6-e524a59349e7` (#51) | Terminaram (pareceres publicados) |
 | Arquiteto, Pleno e Sênior | `local_730e5b24…`, `local_9c4d9116…`, `local_1718d5d4…` | Sem trabalho desde 2026-10-24 (Sênior: 2026-10-28); receberam o id do coordenador novo. F1-20, F1-33 e F1-47 voltaram a `ABERTA` |
 
 Pela regra de economia, cartão novo vai para **sessão nova**.
 
-## Estado em 2026-11-14
-- **Main:** `6908cac` (merge do #37). O workflow `lint` da `main` passou em `5730536`; o `ci` da `main` em `5730536` falhou só no TSan, no teste instável do F1-57 (`test_deadline_scheduler.cpp:962`, `sw-core-scheduler`). PRs que só tocam `docs/` ou `tarefas/` não disparam CI.
-- **#37 (F1-69) mesclado** em `6908cac`, head `a0785f5`, com a pendência **C2**: `sw-core-floor-oom` no MSVC Debug só fecha depois do F1-73. F1-69 FEITA.
-- **Lint:** `clang-format` fixo em 18.1.8 (pacote do PyPI), #49. O `clang-tidy` continua pelo `apt`, sem versão fixa (passou na imagem 26.04).
-- **ADR-0018:** Aceita. Ordem **C2 → C1** (F1-71 deixou de ser pré-requisito do F1-67).
+## Estado em 2026-11-16
+- **Main:** `3cba80c` (merge do #50), sobre `44e6711` (merge do #51). O `ci`, o `lint` e o `extension` da `main` em `44e6711` passaram (run `43784731962`). PRs que só tocam `docs/` ou `tarefas/` não disparam CI.
+- **F1-69 (#37) e F1-73 (#51) FEITOS.** A pendência **C2** está encerrada: o `sw-core-floor-oom` passou no Windows Debug (MSVC 14.51) na `main`.
+- **Lint:** `clang-format` fixo em 18.1.8 (pacote do PyPI, #49). O `clang-tidy` continua pelo `apt`, sem versão fixa.
+- **ADR-0018:** Aceita. Ordem **C2 → C1**; a C2 acabou, falta a C1 (F1-67 e depois).
 - **F1-57 (teste instável do TSan)** falhou duas vezes na tarde de 2026-11-12 e uma em 2026-11-02; ver o registro do cartão.
 - **Push direto na `main`:** a decisão de 2026-10-18 permite à gestão em `tarefas/`, mas a checagem de permissões da sessão negou o push em 2026-11-10. Enquanto o dono não liberar, mudanças em `tarefas/` vão por PR.
 
-## Pendente com o dono (2026-11-14)
+## Pendente com o dono (2026-11-16)
 1. **Achado do FIFO do #37** (`installed_floor.cpp:95`, `open` sem `O_NONBLOCK`; severidade baixa, reproduzido pela revisora): vai para o F1-74 ou para um cartão próprio?
-2. **Configuração MSVC Release para as medições do Portão 1**, com conferência de leitura do baseline e da máquina, sem rodar benchmark (pergunta deixada pela coordenação anterior).
-3. Resultado do F1-73 pela sessão Fable_5.2, quando chegar: revisão independente de outra sessão e aceite do PR.
-4. Prioridade do F1-57 (TSan instável) e as pendências antigas de [decisoes.md](decisoes.md).
+2. **Configuração MSVC Release para as medições do Portão 1**, com conferência de leitura do baseline e da máquina, sem rodar benchmark.
+3. **Ressalvas do #51** (perguntas A, B e C do cartão F1-73): `to_model()`; falta de memória em `ed25519_verify` virando `SignatureInvalid` (sugestão: condição do F1-67 e do F1-72); run extra para os dois mutantes só do MSVC.
+4. Prioridade do F1-57 e as pendências antigas de [decisoes.md](decisoes.md).
 
 ## Próximos passos
 1. PR do comentário de `sw_shutdown` no `swarmstream.h`, conforme o texto aceito do ADR-0018, com revisão do R1 e do R2.
-2. F1-73 (em teste com a sessão Fable_5.2), depois F1-74, F1-71 e F1-72, e o F1-67 numa sessão nova, cada um só com início autorizado pelo dono.
+2. F1-74, depois F1-71 e F1-72, e o F1-67 numa sessão nova, cada um só com início autorizado pelo dono.
 
 ## Como conferir (armadilhas)
 - Git Bash: use `MSYS_NO_PATHCONV=1` em `git show origin/main:caminho`.
