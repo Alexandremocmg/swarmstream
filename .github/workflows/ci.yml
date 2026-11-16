@@ -116,6 +116,16 @@ jobs:
         shell: bash
         run: ctest --test-dir build --build-config Debug --output-on-failure --timeout 120
 
+      # F1-73: o ctest só mostra a saída de quem falha. Este passo copia para o log do job o resumo
+      # da varredura de falta de memória do sw-format (linhas "[F1-73]": STL, pontos por cenário,
+      # terminate e tempo), que o teste acabou de deixar em LastTest.log. Não roda nada de novo.
+      # Falha se o resumo não estiver lá (teste não registrado ou não executado).
+      - name: "Resumo da varredura de falta de memória do sw-format (F1-73)"
+        shell: bash
+        run: |
+          log=build/Testing/Temporary/LastTest.log
+          grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
+
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
       # no log. Se a inspeção for PULADA (ferramenta ausente) é ERRO no CI, em qualquer sistema.
@@ -151,6 +161,17 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: bash
         run: ctest --test-dir build-release --build-config Release --output-on-failure --timeout 120
+
+      # F1-73: o ctest só mostra a saída de quem falha. Este passo copia para o log do job o resumo
+      # da varredura de falta de memória do sw-format (linhas "[F1-73]": STL, pontos por cenário,
+      # terminate e tempo), que o teste acabou de deixar em LastTest.log. Não roda nada de novo.
+      # Falha se o resumo não estiver lá (teste não registrado ou não executado).
+      - name: "[Release] Resumo da varredura de falta de memória do sw-format (F1-73)"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: bash
+        run: |
+          log=build-release/Testing/Temporary/LastTest.log
+          grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
@@ -202,6 +223,16 @@ jobs:
         shell: bash
         run: ctest --test-dir build --build-config Release --output-on-failure --timeout 120
 
+      # F1-73: o ctest só mostra a saída de quem falha. Este passo copia para o log do job o resumo
+      # da varredura de falta de memória do sw-format (linhas "[F1-73]": STL, pontos por cenário,
+      # terminate e tempo), que o teste acabou de deixar em LastTest.log. Não roda nada de novo.
+      # Falha se o resumo não estiver lá (teste não registrado ou não executado).
+      - name: "Resumo da varredura de falta de memória do sw-format (F1-73)"
+        shell: bash
+        run: |
+          log=build/Testing/Temporary/LastTest.log
+          grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
+
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
       # no log. Se a inspeção for PULADA (ferramenta ausente) é ERRO no CI, em qualquer sistema.
@@ -239,6 +270,16 @@ jobs:
       - name: Test under sanitizers
         run: ctest --test-dir build --output-on-failure --timeout 120
 
+      # F1-73: o ctest só mostra a saída de quem falha. Este passo copia para o log do job o resumo
+      # da varredura de falta de memória do sw-format (linhas "[F1-73]": STL, pontos por cenário,
+      # terminate e tempo), que o teste acabou de deixar em LastTest.log. Não roda nada de novo.
+      # Falha se o resumo não estiver lá (teste não registrado ou não executado).
+      - name: "Resumo da varredura de falta de memória do sw-format (F1-73)"
+        shell: bash
+        run: |
+          log=build/Testing/Temporary/LastTest.log
+          grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
+
   # F1-12: critério de aceite "sem data race no TSan com 16 threads leitoras"
   # (sw-core-owner). Roda todos os testes com -fsanitize=thread; halt_on_error derruba o teste
   # na primeira corrida reportada.
@@ -271,3 +312,13 @@ jobs:
       # traz threads novas.
       - name: Test under TSan
         run: ctest --test-dir build --output-on-failure --timeout 300 -LE crash
+
+      # F1-73: o ctest só mostra a saída de quem falha. Este passo copia para o log do job o resumo
+      # da varredura de falta de memória do sw-format (linhas "[F1-73]": STL, pontos por cenário,
+      # terminate e tempo), que o teste acabou de deixar em LastTest.log. Não roda nada de novo.
+      # Falha se o resumo não estiver lá (teste não registrado ou não executado).
+      - name: "Resumo da varredura de falta de memória do sw-format (F1-73)"
+        shell: bash
+        run: |
+          log=build/Testing/Temporary/LastTest.log
+          grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }

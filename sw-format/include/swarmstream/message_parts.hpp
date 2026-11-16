@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 namespace swarmstream::pack {
@@ -20,14 +21,22 @@ using MessageParts = std::initializer_list<std::span<const std::byte>>;
 namespace detail {
 
 // A mensagem contígua que o libsodium exige. Com uma só parte não copia. Pode lançar
-// std::bad_alloc na cópia (os chamadores capturam e tratam como falha).
+// std::bad_alloc (os chamadores capturam e tratam como falha).
+//
+// F1-73: `storage` nasce por `vector(n)`, que NÃO é `noexcept`, e nunca pelo construtor padrão. No
+// MSVC em Debug todo construtor de std::vector aloca o proxy dos iteradores; no construtor padrão
+// (`noexcept`) a falta de memória viraria std::terminate antes do `catch` do chamador. Assim ela é
+// um std::bad_alloc comum. Nas outras STLs `vector(0)` não aloca: uma só parte segue sem alocar.
 struct ContiguousMessage
 {
     std::vector<unsigned char> storage;
     const unsigned char* data = nullptr;
     unsigned long long size = 0;
 
-    explicit ContiguousMessage(MessageParts parts)
+    static_assert(!std::is_nothrow_constructible_v<std::vector<unsigned char>, std::size_t>,
+                  "vector(n) precisa poder lançar bad_alloc (ver o comentário acima)");
+
+    explicit ContiguousMessage(MessageParts parts) : storage(std::size_t{0})
     {
         if (parts.size() == 1) {
             data = reinterpret_cast<const unsigned char*>(parts.begin()->data());

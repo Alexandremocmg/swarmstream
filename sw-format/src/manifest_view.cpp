@@ -10,11 +10,17 @@
 #include "swarmstream/manifest_wire.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <numeric>
 #include <set>
-#include <unordered_set>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <vector>
 
 namespace swarmstream::pack {
 
@@ -305,16 +311,91 @@ bool valid_game_id(std::string_view id) noexcept
     });
 }
 
-std::string ascii_lower(std::string_view s)
+// ================================================================ colisão ignorando maiúsculas
+//
+// docs/03 §8, item 7: dois caminhos não podem ser iguais depois de dobrar A-Z para a-z (só ASCII).
+// F1-73: a conferência não usa contêiner de strings. No MSVC em Debug, o std::unordered_set
+// aloca num construtor `noexcept` qualquer que seja o construtor usado, e cada std::string movida
+// para dentro de um contêiner aloca no construtor de movimento, que também é `noexcept`: a falta
+// de memória viraria std::terminate. Aqui há UMA alocação, por `vector(n)` (que pode lançar).
+
+constexpr unsigned char fold_ascii(char c) noexcept
 {
-    std::string out(s);
-    for (char& c : out) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
+    return static_cast<unsigned char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c);
+}
+
+// FNV-1a de 64 bits do caminho dobrado. Só serve para ordenar depressa: quem decide se dois
+// caminhos colidem é sempre a comparação exata (fold_compare).
+std::uint64_t fold_hash(std::string_view s) noexcept
+{
+    std::uint64_t h = 14695981039346656037ULL;
+    for (const char c : s) {
+        h = (h ^ fold_ascii(c)) * 1099511628211ULL;
+    }
+    return h;
+}
+
+// Ordem dos caminhos dobrados, byte a byte (sem sinal): negativo, zero ou positivo.
+int fold_compare(std::string_view a, std::string_view b) noexcept
+{
+    const std::size_t n = std::min(a.size(), b.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const int d = static_cast<int>(fold_ascii(a[i])) - static_cast<int>(fold_ascii(b[i]));
+        if (d != 0) {
+            return d;
         }
     }
-    return out;
+    return a.size() < b.size() ? -1 : (a.size() > b.size() ? 1 : 0);
 }
+
+struct FoldKey
+{
+    std::uint64_t hash = 0;
+    std::uint32_t index = 0; // kMaxFiles cabe em 32 bits
+};
+static_assert(kMaxFiles <= std::numeric_limits<std::uint32_t>::max());
+static_assert(!std::is_nothrow_constructible_v<std::vector<FoldKey>, std::size_t>,
+              "vector(n) precisa poder lançar bad_alloc (F1-73)");
+
+// Leitura de um vetor de uint16 little-endian do payload como iterador de entrada, para construir
+// um std::vector direto dos bytes (construtor por intervalo, que pode lançar), sem objeto
+// intermediário a mover (F1-73).
+class U16LeIterator
+{
+public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type = std::uint16_t;
+    using difference_type = std::ptrdiff_t;
+    using pointer = const std::uint16_t*;
+    using reference = std::uint16_t;
+
+    U16LeIterator() noexcept = default;
+    explicit U16LeIterator(const std::uint8_t* p) noexcept : p_(p) {}
+
+    std::uint16_t operator*() const noexcept { return rd16(p_); }
+    U16LeIterator& operator++() noexcept
+    {
+        p_ += 2;
+        return *this;
+    }
+    U16LeIterator operator++(int) noexcept
+    {
+        const U16LeIterator old = *this;
+        p_ += 2;
+        return old;
+    }
+    friend bool operator==(const U16LeIterator& a, const U16LeIterator& b) noexcept
+    {
+        return a.p_ == b.p_;
+    }
+    friend bool operator!=(const U16LeIterator& a, const U16LeIterator& b) noexcept
+    {
+        return a.p_ != b.p_;
+    }
+
+private:
+    const std::uint8_t* p_ = nullptr;
+};
 
 } // namespace
 
@@ -329,6 +410,7 @@ public:
 private:
     static ManifestStatus parse(ManifestView& v);
     static ManifestStatus validate(const ManifestView& v, const ReadOptions& options);
+    static std::size_t first_fold_collision(const ManifestView& v);
 };
 
 const char* to_string(ManifestError error) noexcept
@@ -417,34 +499,36 @@ ManifestStatus ManifestReader::open(std::span<const std::byte> bytes, const Read
         return fail(ManifestError::SignatureInvalid, "libsodium nao iniciou");
     }
 
-    // Passo 2: a chave pelo key_id.
+    // Passos 2 e 3: a chave pelo key_id e a assinatura, ANTES de ler qualquer coisa do payload.
+    // As chaves com o key_id do envelope são testadas na ordem em que foram dadas, direto sobre
+    // `trusted_keys`, sem lista intermediária (F1-73: era um std::vector construído por padrão,
+    // que no MSVC em Debug aloca num construtor `noexcept`). O resultado é o de antes: sem chave
+    // com esse key_id, "chave desconhecida"; com chave e nenhuma assinatura válida, "assinatura
+    // nao confere".
     KeyId wanted{};
     std::memcpy(wanted.data(), p + 24, wanted.size());
-    std::vector<const Ed25519PublicKey*> candidates;
-    for (const Ed25519PublicKey& key : options.trusted_keys) {
-        if (key_id_of(key) == wanted) {
-            candidates.push_back(&key);
-        }
-    }
-    if (candidates.empty()) {
-        return fail(ManifestError::SignatureInvalid, "chave desconhecida (key_id)");
-    }
-
-    // Passo 3: a assinatura, ANTES de ler qualquer coisa do payload.
     Ed25519Signature signature{};
     std::memcpy(signature.data(), p + 40, signature.size());
     const std::span<const std::byte> payload_bytes = bytes.subspan(kEnvelopeSize);
     const auto as_span = [](std::string_view s) {
         return std::span<const std::byte>(reinterpret_cast<const std::byte*>(s.data()), s.size());
     };
+    bool key_known = false;
     bool signed_ok = false;
-    for (const Ed25519PublicKey* key : candidates) {
+    for (const Ed25519PublicKey& key : options.trusted_keys) {
+        if (key_id_of(key) != wanted) {
+            continue;
+        }
+        key_known = true;
         if (ed25519_verify(
-                *key, signature,
+                key, signature,
                 {as_span(kSignaturePrefix), bytes.first(kSignedHeaderSize), payload_bytes})) {
             signed_ok = true;
             break;
         }
+    }
+    if (!key_known) {
+        return fail(ManifestError::SignatureInvalid, "chave desconhecida (key_id)");
     }
     if (!signed_ok) {
         return fail(ManifestError::SignatureInvalid, "assinatura nao confere");
@@ -456,7 +540,10 @@ ManifestStatus ManifestReader::open(std::span<const std::byte> bytes, const Read
         return probe;
     }
 
-    // Passo 5: verificador e validações semânticas.
+    // Passo 5: verificador e validações semânticas, numa visão LOCAL: `out` só recebe o resultado
+    // depois de tudo ter passado. A construção padrão da visão pode lançar std::bad_alloc (F1-73:
+    // não é mais `noexcept`; ver detail::empty_string em manifest_view.hpp); a publicação, por
+    // atribuição de movimento, não aloca nem lança.
     ManifestView view;
     view.payload_ = {p + kEnvelopeSize, static_cast<std::size_t>(payload_len)};
     view.payload_size_ = static_cast<std::size_t>(payload_len);
@@ -724,8 +811,10 @@ ManifestStatus ManifestReader::validate(const ManifestView& v, const ReadOptions
     }
 
     // Itens 7 e 8: arquivos.
-    std::unordered_set<std::string> folded;
-    folded.reserve(nf);
+    // O primeiro arquivo cujo caminho dobrado repete o de um anterior (`nf` se não houver): é
+    // exatamente o índice em que o laço abaixo acusaria a colisão se fosse guardando os caminhos
+    // já vistos, então a ordem dos erros é a de sempre.
+    const std::size_t fold_collision = first_fold_collision(v);
     std::uint64_t expected_ref = 0;
     std::string_view previous;
     for (std::size_t i = 0; i < nf; ++i) {
@@ -737,7 +826,7 @@ ManifestStatus ManifestReader::validate(const ManifestView& v, const ReadOptions
             return invalid("caminhos fora de ordem ou repetidos");
         }
         previous = path;
-        if (!folded.insert(ascii_lower(path)).second) {
+        if (i == fold_collision) {
             return invalid("caminhos que colidem ignorando maiusculas");
         }
 
@@ -780,6 +869,36 @@ ManifestStatus ManifestReader::validate(const ManifestView& v, const ReadOptions
         return fail(ManifestError::Rollback, "build_seq menor que o instalado");
     }
     return {};
+}
+
+// Menor índice j para o qual existe k < j com o mesmo caminho dobrado (A-Z -> a-z); `file_n_` se
+// não houver. Ordena os índices por (hash do caminho dobrado, caminho dobrado, índice): caminhos
+// que colidem ficam vizinhos, em ordem de índice, e o segundo de cada grupo é onde a colisão
+// aparece pela primeira vez. Só lê os caminhos (já conferidos por parse()).
+std::size_t ManifestReader::first_fold_collision(const ManifestView& v)
+{
+    const std::size_t nf = v.file_n_;
+    std::vector<FoldKey> keys(nf); // vector(n): pode lançar bad_alloc, nunca terminar (F1-73)
+    for (std::size_t i = 0; i < nf; ++i) {
+        keys[i] = FoldKey{fold_hash(v.file_path(i)), static_cast<std::uint32_t>(i)};
+    }
+    std::sort(keys.begin(), keys.end(), [&v](const FoldKey& a, const FoldKey& b) {
+        if (a.hash != b.hash) {
+            return a.hash < b.hash;
+        }
+        if (const int c = fold_compare(v.file_path(a.index), v.file_path(b.index)); c != 0) {
+            return c < 0;
+        }
+        return a.index < b.index;
+    });
+    std::size_t first = nf;
+    for (std::size_t k = 1; k < nf; ++k) {
+        if (keys[k].hash == keys[k - 1].hash &&
+            fold_compare(v.file_path(keys[k - 1].index), v.file_path(keys[k].index)) == 0) {
+            first = std::min<std::size_t>(first, keys[k].index);
+        }
+    }
+    return first;
 }
 
 // ================================================================ acessores
@@ -876,24 +995,31 @@ GroupInfo ManifestView::group(std::size_t i) const
     Fb fb{payload_.data(), payload_.size()};
     Fb::Tbl t;
     fb.table(group_table(i), t);
-    GroupInfo g;
-    g.name = std::string(fb.string_field(t, 0));
+    const std::string_view name = fb.string_field(t, 0);
+    std::uint8_t priority = 0;
     if (const std::size_t at = fb.field(t, 1, 1); at != 0) {
-        g.priority = fb.u8(at);
+        priority = fb.u8(at);
     }
+    std::uint32_t piece_first = 0;
     if (const std::size_t at = fb.field(t, 2, 4); at != 0) {
-        g.piece_first = fb.u32(at);
+        piece_first = fb.u32(at);
     }
+    std::uint32_t piece_count = 0;
     if (const std::size_t at = fb.field(t, 3, 4); at != 0) {
-        g.piece_count = fb.u32(at);
+        piece_count = fb.u32(at);
     }
     std::size_t first = 0;
     std::size_t count = 0;
     fb.vector(t, 4, 2, 2, first, count);
-    for (std::size_t k = 0; k < count; ++k) {
-        g.deps.push_back(rd16(payload_.data() + first + 2 * k));
-    }
-    return g;
+    const std::uint8_t* const deps = payload_.data() + first;
+    // F1-73: o GroupInfo é construído DIRETO no retorno, e cada membro direto do seu valor
+    // (`string(string_view)` e `vector(primeiro, último)`, construtores que podem lançar). Não há
+    // GroupInfo construído por padrão nem movido: no MSVC em Debug os construtores padrão e de
+    // movimento de std::string e std::vector são `noexcept` e alocam, e a falta de memória ali
+    // terminaria o processo em vez de chegar ao chamador.
+    return GroupInfo{
+        std::string(name), priority, piece_first, piece_count,
+        std::vector<std::uint16_t>(U16LeIterator(deps), U16LeIterator(deps + 2 * count))};
 }
 
 ManifestModel ManifestView::to_model() const

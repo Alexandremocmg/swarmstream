@@ -676,6 +676,151 @@ void resign(Bytes& bytes, const sp::Ed25519Seed& seed, bool with_domain_prefix =
     std::memcpy(bytes.data() + 40, signature->data(), signature->size());
 }
 
+// F1-73: a conferência de caminhos que colidem ignorando maiúsculas (§8, item 7) deixou de usar
+// um conjunto de strings (ver first_fold_collision em sw-format/src/manifest_view.cpp). Estes
+// casos travam o que não pode mudar: QUAL erro sai quando há mais de um, colisão entre arquivos
+// que não são vizinhos na ordem dos caminhos, e o que NÃO é colisão (só A-Z dobra).
+void test_case_fold_collisions()
+{
+    const sp::Ed25519Seed seed = test_seed();
+    const std::array<sp::Ed25519PublicKey, 1> trusted = {public_key_of(seed)};
+    const sp::ReadOptions options = trusting(trusted);
+    const sp::ManifestModel base = st::make_synthetic_model(60, 4, 11);
+    SW_CHECK(sp::build_manifest(base, seed).status.ok());
+    const std::size_t last = base.file_path.size() - 1;
+    SW_CHECK(last >= 5);
+
+    const auto upper = [](std::string s) {
+        for (char& c : s) {
+            if (c >= 'a' && c <= 'z') {
+                c = static_cast<char>(c - 'a' + 'A');
+            }
+        }
+        return s;
+    };
+    // Deixa o arquivo `i` com classe e grupo incoerentes (o erro "class e group" do item 8).
+    const auto break_class = [](sp::ManifestModel& m, std::size_t i) {
+        m.file_class[i] = m.file_group[i] == 0 ? sp::FileClass::Group : sp::FileClass::Core;
+    };
+
+    struct Case
+    {
+        const char* name;
+        const char* detail; // trecho do detalhe esperado; nullptr = o manifesto é ACEITO
+        std::function<void(sp::ManifestModel&)> apply;
+    };
+    // Os nomes novos mantêm a ordem dos caminhos: maiúsculas vêm antes de minúsculas, e "a/..."
+    // vem antes de "a_core/...".
+    const std::vector<Case> cases = {
+        {"colisao entre vizinhos", "maiusculas",
+         [](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "a/X";
+         }},
+        {"colisao entre arquivos que nao sao vizinhos", "maiusculas",
+         [](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "B";
+             m.file_path[2] = "a/X";
+         }},
+        {"colisao do primeiro com o ultimo arquivo", "maiusculas",
+         [&](auto& m) { m.file_path[0] = upper(m.file_path[last]); }},
+        {"tres caminhos que colidem", "maiusculas",
+         [](auto& m) {
+             m.file_path[0] = "A/X";
+             m.file_path[1] = "A/x";
+             m.file_path[2] = "a/x";
+         }},
+        {"duas colisoes independentes", "maiusculas",
+         [&](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = upper(m.file_path[last]);
+             m.file_path[2] = "a/X";
+         }},
+        // Ordem dos erros: vale o do arquivo de menor índice; no mesmo arquivo, a colisão vem
+        // antes de "class e group".
+        {"erro de classe num arquivo ANTERIOR ao da colisao", "class e group",
+         [&](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "B";
+             m.file_path[2] = "a/X";
+             break_class(m, 1);
+         }},
+        {"erro de classe num arquivo POSTERIOR ao da colisao", "maiusculas",
+         [&](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "a/X";
+             break_class(m, 2);
+         }},
+        {"erro de classe no PRIMEIRO arquivo do par que colide", "class e group",
+         [&](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "a/X";
+             break_class(m, 0);
+         }},
+        {"erro de classe no MESMO arquivo em que a colisao aparece", "maiusculas",
+         [&](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "a/X";
+             break_class(m, 1);
+         }},
+        {"erro de classe logo antes da colisao com o ultimo arquivo", "class e group",
+         [&](auto& m) {
+             m.file_path[0] = upper(m.file_path[last]);
+             break_class(m, last - 1);
+         }},
+        {"caminho invalido no arquivo em que a colisao aparece", "caminho invalido",
+         [](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = std::string("a/X\0", 4);
+         }},
+        // O que NÃO colide: só A-Z dobra para a-z.
+        {"letras acentuadas nao dobram (UTF-8 de E agudo maiusculo e minusculo)", nullptr,
+         [](auto& m) {
+             m.file_path[0] = "a/\xC3\x89";
+             m.file_path[1] = "a/\xC3\xA9";
+         }},
+        {"arroba e crase (vizinhos de A e a na tabela ASCII) nao colidem", nullptr,
+         [](auto& m) {
+             m.file_path[0] = "a/@";
+             m.file_path[1] = "a/`";
+         }},
+        {"colchete e chave (vizinhos de Z e z na tabela ASCII) nao colidem", nullptr,
+         [](auto& m) {
+             m.file_path[0] = "a/[";
+             m.file_path[1] = "a/{";
+         }},
+        {"prefixo que colide com tamanhos diferentes nao e colisao", nullptr,
+         [](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "a/xy";
+         }},
+        {"mesma pasta com outra caixa e arquivos diferentes nao e colisao", nullptr,
+         [](auto& m) {
+             m.file_path[0] = "A/x";
+             m.file_path[1] = "a/y";
+         }},
+    };
+
+    for (const Case& c : cases) {
+        sp::ManifestModel m = base;
+        c.apply(m);
+        const Bytes bytes = sp::encode_manifest(m, seed);
+        SW_CHECK(!bytes.empty());
+        const sp::ManifestStatus s = open_bytes(bytes, options);
+        const bool as_expected = c.detail == nullptr ? s.ok()
+                                                     : (s.code == sp::ManifestError::Invalid &&
+                                                        std::strstr(s.detail, c.detail) != nullptr);
+        if (!as_expected) {
+            std::fprintf(stderr, "caso '%s': esperava %s, veio %s (%s)\n", c.name,
+                         c.detail != nullptr ? c.detail : "aceitar", sp::to_string(s.code),
+                         s.detail);
+        }
+        SW_CHECK(as_expected);
+        SW_CHECK(sp::build_manifest(m, seed).status.ok() == (c.detail == nullptr));
+    }
+}
+
 sp::ManifestError open_code(const Bytes& bytes, const std::vector<sp::Ed25519PublicKey>& keys)
 {
     sp::ReadOptions options;
@@ -937,6 +1082,8 @@ int main(int argc, char** argv)
     lap("adulteracao ok");
     test_semantic_rejections();
     lap("validacoes do 03 secao 8 ok");
+    test_case_fold_collisions();
+    lap("colisao de caminhos ignorando maiusculas ok");
     test_resigned_envelopes_and_reader_order();
     lap("envelopes re-assinados e ordem do leitor ok");
     test_build_is_deterministic();

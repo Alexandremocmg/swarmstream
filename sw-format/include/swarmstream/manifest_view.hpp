@@ -24,9 +24,39 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace swarmstream::pack {
+
+namespace detail {
+
+// String e vetor VAZIOS criados por um construtor que NÃO é `noexcept` (F1-73).
+//
+// Por quê: no MSVC em Debug (_ITERATOR_DEBUG_LEVEL != 0) TODO construtor de std::string e de
+// std::vector aloca o proxy dos iteradores, inclusive o construtor padrão, que é `noexcept`. Se
+// faltar memória ali, o std::bad_alloc sai de uma função `noexcept` da STL e vira std::terminate
+// antes de chegar a qualquer `catch` (medido no CI: run 41346678621 no `Vfs`, run 42044485012 no
+// `sw-format`). Com `string(n, c)` e `vector(n)` a mesma falta de memória é um std::bad_alloc
+// comum, que sobe ao chamador. Nas outras STLs (e no MSVC em Release) nenhum dos dois aloca.
+//
+// Usados como inicializador dos membros abaixo: o construtor padrão implícito de cada struct
+// deixa de ser `noexcept`, e os `static_assert`s travam isso em compilação. NÃO troque por `{}`,
+// por `= ""` nem pelo construtor padrão: volta a terminar o processo no MSVC Debug.
+[[nodiscard]] inline std::string empty_string() { return std::string(std::size_t{0}, '\0'); }
+
+template <typename T>
+[[nodiscard]] inline std::vector<T> empty_vector()
+{
+    return std::vector<T>(std::size_t{0});
+}
+
+static_assert(!std::is_nothrow_constructible_v<std::string, std::size_t, char>,
+              "string(n, c) precisa poder lançar bad_alloc (ver o comentário acima)");
+static_assert(!std::is_nothrow_constructible_v<std::vector<std::uint16_t>, std::size_t>,
+              "vector(n) precisa poder lançar bad_alloc (ver o comentário acima)");
+
+} // namespace detail
 
 using Hash32 = Sha256Digest;
 
@@ -68,19 +98,25 @@ struct ChunkerInfo
     std::uint32_t min_size = 0;
     std::uint32_t avg_size = 0;
     std::uint32_t max_size = 0;
-    std::string algorithm;
+    std::string algorithm = detail::empty_string(); // F1-73: ver detail::empty_string
     friend bool operator==(const ChunkerInfo&, const ChunkerInfo&) = default;
 };
 
 struct GroupInfo
 {
-    std::string name;
+    std::string name = detail::empty_string(); // F1-73: ver detail::empty_string
     std::uint8_t priority = 0;
     std::uint32_t piece_first = 0;
     std::uint32_t piece_count = 0;
-    std::vector<std::uint16_t> deps; // v0: sempre vazio
+    std::vector<std::uint16_t> deps = detail::empty_vector<std::uint16_t>(); // v0: sempre vazio
     friend bool operator==(const GroupInfo&, const GroupInfo&) = default;
 };
+
+// F1-73: a construção padrão destes structs (e de quem os contém, como o ManifestView) pode lançar
+// std::bad_alloc; não pode ser `noexcept`. Continuam agregados (o sw-pack os inicializa por lista).
+static_assert(!std::is_nothrow_default_constructible_v<ChunkerInfo>);
+static_assert(!std::is_nothrow_default_constructible_v<GroupInfo>);
+static_assert(std::is_aggregate_v<ChunkerInfo> && std::is_aggregate_v<GroupInfo>);
 
 // Tabelas colunares, como no esquema (um vetor por campo, mesmo índice).
 struct ManifestModel
@@ -149,6 +185,13 @@ struct ReadOptions
 // Visão sobre os bytes do manifesto (que precisam continuar vivos e imutáveis). Depois de
 // open() ok, todos os índices e limites foram conferidos; os acessores não verificam de novo,
 // então o chamador respeita `0 <= i < contagem`.
+//
+// Falta de memória (F1-73): o construtor padrão, `open`, `group` e `to_model` NÃO são `noexcept`
+// e podem lançar std::bad_alloc, que sobe ao chamador. Em `open`, `out` só é escrito no sucesso:
+// em qualquer falha (status diferente de Ok ou exceção) fica exatamente como estava. Uma exceção:
+// se faltar memória para montar a mensagem da assinatura, `ed25519_verify` (que é `noexcept`)
+// recusa, e `open` devolve SignatureInvalid em vez de lançar. Nenhum desses caminhos termina o
+// processo, com a ressalva de `to_model` no MSVC em Debug (ver o comentário dele).
 class ManifestView
 {
 public:
@@ -193,6 +236,9 @@ public:
     [[nodiscard]] GroupInfo group(std::size_t i) const;
 
     // Cópia completa para o modelo (testes e ferramentas; o caminho de leitura não usa).
+    // Ressalva (F1-73, auditado por leitura, NÃO corrigido): no MSVC em Debug esta função ainda
+    // pode terminar o processo por falta de memória (o ManifestModel nasce pelo construtor padrão
+    // dos seus contêineres, e os vetores de strings e de grupos crescem movendo elementos).
     [[nodiscard]] ManifestModel to_model() const;
 
 private:
@@ -228,5 +274,12 @@ private:
     Column cdn_, trackers_, infohashes_;
     std::uint8_t cipher_id_ = 0;
 };
+
+// F1-73: construir a visão pode lançar (nunca terminar); publicá-la por movimento não lança (é o
+// último passo de `open`, depois de tudo validado); copiá-la pode lançar (o `Vfs::build` conta
+// com isso).
+static_assert(!std::is_nothrow_default_constructible_v<ManifestView>);
+static_assert(std::is_nothrow_move_assignable_v<ManifestView>);
+static_assert(!std::is_nothrow_copy_constructible_v<ManifestView>);
 
 } // namespace swarmstream::pack
