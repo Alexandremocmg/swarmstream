@@ -224,6 +224,22 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     target_include_directories(sw-core-replace-tests PRIVATE src)
     add_test(NAME sw-core-replace COMMAND sw-core-replace-tests)
     set_tests_properties(sw-core-replace PROPERTIES TIMEOUT 300)
+    # F1-71: CacheOwner::stop() (e ~CacheOwner) sem terminar o processo por falta de memória nem por
+    # exceção: varredura de operator new sem pontos excluídos, exceção injetada em cada passo.
+    add_executable(sw-core-stop-oom-tests tests/test_cache_owner_stop_oom.cpp)
+    target_link_libraries(sw-core-stop-oom-tests PRIVATE sw-core)
+    target_include_directories(sw-core-stop-oom-tests PRIVATE src)
+    if(NOT MSVC)
+        target_link_libraries(sw-core-stop-oom-tests PRIVATE pthread)
+    endif()
+    add_test(NAME sw-core-stop-oom COMMAND sw-core-stop-oom-tests)
+    set_tests_properties(sw-core-stop-oom PROPERTIES TIMEOUT 600)
+    if(MSVC)
+        target_link_libraries(sw-core-stop-oom-tests PRIVATE dbghelp) # pilha do std::terminate
+        target_compile_options(sw-core-stop-oom-tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(sw-core-stop-oom-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
     # Falha da sincronização da pasta DEPOIS do rename (pasta em 0300). Sai com 77 (PULADO no
     # ctest) no Windows, como root ou onde a permissão de pasta não vale.
     add_executable(sw-core-replace-perm-tests tests/test_platform_file_replace_perm.cpp)

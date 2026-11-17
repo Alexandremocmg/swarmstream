@@ -54,13 +54,6 @@ uint64_t get64(const std::byte* p) noexcept
     return v;
 }
 
-fs::path tmp_of(const fs::path& file)
-{
-    fs::path t = file;
-    t += ".tmp";
-    return t;
-}
-
 int64_t now_us() noexcept
 {
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -81,6 +74,22 @@ CacheErrorCode write_whole(const fs::path& tmp, std::span<const std::byte> bytes
 }
 
 } // namespace
+
+void append_path_leaf(std::filesystem::path& p, const PathChar* leaf)
+{
+    const auto& n = p.native();
+    if (!n.empty()) {
+#if defined(_WIN32)
+        const bool ends_in_separator = n.back() == L'\\' || n.back() == L'/';
+        const bool drive_only = n.size() == 2 && n[1] == L':';
+#else
+        const bool ends_in_separator = n.back() == '/';
+        const bool drive_only = false;
+#endif
+        if (!ends_in_separator && !drive_only) p += fs::path::preferred_separator;
+    }
+    p += leaf;
+}
 
 // ------------------------------------------------------------------ registros
 
@@ -124,7 +133,11 @@ std::array<std::byte, kJournalHeaderSize> encode_journal_header(uint64_t checkpo
 CacheErrorCode Journal::create_fresh(const fs::path& file, uint64_t checkpoint_lsn, CrashHook hook,
                                      void* hook_context)
 {
-    std::vector<std::byte> bytes;
+    // Regra R (F1-71): nada de construtor padrão nem de movimento de std::vector/fs::path aqui (no
+    // MSVC em Debug são noexcept e alocam o proxy dos iteradores: bad_alloc viraria terminate).
+    // `vector(0)`, `JournalRecord()` (construtor próprio, não noexcept) e a cópia do caminho não
+    // são.
+    std::vector<std::byte> bytes(std::size_t{0});
     const auto header = encode_journal_header(checkpoint_lsn, checkpoint_lsn);
     bytes.insert(bytes.end(), header.begin(), header.end());
     JournalRecord cp;
@@ -132,7 +145,10 @@ CacheErrorCode Journal::create_fresh(const fs::path& file, uint64_t checkpoint_l
     cp.lsn = checkpoint_lsn == 0 ? 1 : checkpoint_lsn; // LSN 0 não existe
     cp.timestamp_us = now_us();
     encode_record(cp, bytes);
-    const fs::path tmp = tmp_of(file);
+    // O caminho do .tmp nasce por CÓPIA (construtor que não é noexcept) e é ajustado no lugar: um
+    // helper que devolvesse o fs::path por valor o MOVERIA (noexcept, aloca o proxy no MSVC Debug).
+    fs::path tmp(file);
+    tmp += kTmpSuffix;
     if (auto rc = write_whole(tmp, bytes); rc != CacheErrorCode::Success) return rc;
     if (hook) hook(CrashPoint::CheckpointJournalTmp, hook_context);
     return replace_file(tmp, file);
@@ -142,21 +158,38 @@ Result<Journal, CacheErrorCode>
 Journal::open(const fs::path& file, uint64_t after_lsn,
               const std::function<void(const JournalRecord&)>& apply, JournalReplay& info)
 {
+    Journal j;
+    if (auto rc = open_in_place(j, file, after_lsn, apply, info); rc != CacheErrorCode::Success)
+        return Unexpected(rc);
+    return j;
+}
+
+CacheErrorCode Journal::open_in_place(Journal& j, const fs::path& file, uint64_t after_lsn,
+                                      const std::function<void(const JournalRecord&)>& apply,
+                                      JournalReplay& info)
+{
     info = JournalReplay{};
     std::error_code ec;
     const bool exists = fs::exists(file, ec);
-    if (ec) return Unexpected(CacheErrorCode::IoError);
+    if (ec) return CacheErrorCode::IoError;
     if (!exists) {
         info.created = true;
         if (auto rc = create_fresh(file, after_lsn, nullptr, nullptr);
             rc != CacheErrorCode::Success)
-            return Unexpected(rc);
+            return rc;
     }
 
-    Journal j;
-    if (auto rc = j.file_.open(file); rc != CacheErrorCode::Success) return Unexpected(rc);
+    // `j` volta ao estado de um Journal recém-criado (o que open() entregava antes de existir
+    // open_in_place), menos a capacidade do buffer.
+    if (auto rc = j.file_.close(); rc != CacheErrorCode::Success) return rc;
+    j.end_ = 0;
+    j.syncs_ = 0;
+    j.fail_next_sync_ = false;
+    j.fail_append_ = CacheErrorCode::Success;
+    j.buffer_.clear();
+    if (auto rc = j.file_.open(file); rc != CacheErrorCode::Success) return rc;
     uint64_t total = 0;
-    if (auto rc = j.file_.size(total); rc != CacheErrorCode::Success) return Unexpected(rc);
+    if (auto rc = j.file_.size(total); rc != CacheErrorCode::Success) return rc;
 
     // Cabeçalho
     std::array<std::byte, kJournalHeaderSize> h{};
@@ -169,13 +202,13 @@ Journal::open(const fs::path& file, uint64_t after_lsn,
     if (!header_ok) {
         // Sem cabeçalho confiável não há como confiar nos registros: recomeça do índice.
         info.header_ok = false;
-        if (auto rc = j.file_.close(); rc != CacheErrorCode::Success) return Unexpected(rc);
+        if (auto rc = j.file_.close(); rc != CacheErrorCode::Success) return rc;
         if (auto rc = create_fresh(file, after_lsn, nullptr, nullptr);
             rc != CacheErrorCode::Success)
-            return Unexpected(rc);
+            return rc;
         JournalReplay ignored;
-        auto again = open(file, after_lsn, apply, ignored);
-        if (again) {
+        const CacheErrorCode again = open_in_place(j, file, after_lsn, apply, ignored);
+        if (again == CacheErrorCode::Success) {
             info.checkpoint_lsn = ignored.checkpoint_lsn;
             info.last_lsn = ignored.last_lsn;
             info.truncated_bytes = total; // tudo o que havia foi descartado
@@ -189,7 +222,7 @@ Journal::open(const fs::path& file, uint64_t after_lsn,
     uint64_t pos = kJournalHeaderSize;
     uint64_t prev_lsn = 0;
     std::array<std::byte, kRecordFixedSize> fixed{};
-    std::vector<std::byte> rec;
+    std::vector<std::byte> rec(std::size_t{0}); // vector(n): Regra R (cache_journal.hpp)
     JournalRecord r;
     for (;;) {
         if (total - pos < kRecordFixedSize) break; // fim (ou cauda rasgada)
@@ -240,11 +273,11 @@ Journal::open(const fs::path& file, uint64_t after_lsn,
         // Primeira escrita incompleta ou inválida: trunca ali (04 §5) para os appends seguintes
         // continuarem de um ponto válido.
         info.truncated_bytes = total - pos;
-        if (auto rc = j.file_.truncate(pos); rc != CacheErrorCode::Success) return Unexpected(rc);
-        if (auto rc = j.file_.sync(); rc != CacheErrorCode::Success) return Unexpected(rc);
+        if (auto rc = j.file_.truncate(pos); rc != CacheErrorCode::Success) return rc;
+        if (auto rc = j.file_.sync(); rc != CacheErrorCode::Success) return rc;
     }
     j.end_ = pos;
-    return j;
+    return CacheErrorCode::Success;
 }
 
 CacheErrorCode Journal::append(const JournalRecord& r, CrashHook hook, void* hook_context)
