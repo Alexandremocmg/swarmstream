@@ -284,7 +284,9 @@ struct CacheOwner::Impl
     // F1-71: o corpo do stop() com `stop_mutex` tomado e `stopped` já marcado. noexcept DE VERDADE:
     // cada passo roda atrás de um catch (run_stop_step) e vira código.
     [[nodiscard]] CacheErrorCode stop_locked() noexcept;
-    void maybe_throw_stop_fault(StopStep step) const; // CacheOwnerTestHook::inject_stop_fault
+    // CacheOwnerTestHook::inject_stop_fault: lança a falha injetada no passo, ou devolve IoError no
+    // lugar de `real` (StopFault::IoError), ou devolve `real` (sem falha injetada).
+    [[nodiscard]] CacheErrorCode stop_fault_code(StopStep step, CacheErrorCode real) const;
     [[nodiscard]] CacheErrorCode append_record(detail::JournalRecord& rec);
     [[nodiscard]] CacheErrorCode append_and_sync(detail::JournalRecord& rec);
     // Remove peças pelo relógio até sobrarem no máximo `target`. Success também quando não há
@@ -979,14 +981,16 @@ CacheErrorCode run_stop_step(Step&& step) noexcept
 
 } // namespace
 
-void CacheOwner::Impl::maybe_throw_stop_fault(StopStep step) const
+CacheErrorCode CacheOwner::Impl::stop_fault_code(StopStep step, CacheErrorCode real) const
 {
     switch (static_cast<StopFault>(stop_fault[static_cast<int>(step)].load())) {
-    case StopFault::None: return;
+    case StopFault::None: return real;
     case StopFault::StdException: throw std::runtime_error("F1-71: excecao injetada no stop()");
     case StopFault::NonStdException: throw 71;
     case StopFault::BadAlloc: throw std::bad_alloc();
+    case StopFault::IoError: return CacheErrorCode::IoError;
     }
+    return real;
 }
 
 // Só a dona e o stop() mexem no que vem depois do join (store, índice, journal). Cada passo é
@@ -1023,19 +1027,22 @@ CacheErrorCode CacheOwner::Impl::stop_locked() noexcept
     // recuperação o aplica) e os fechamentos abaixo executam do mesmo jeito.
     if (!broken && !skip_stop_checkpoint.load()) {
         note(run_stop_step([this]() -> CacheErrorCode {
-            maybe_throw_stop_fault(StopStep::Checkpoint);
+            // IoError injetado: o checkpoint nem roda (o erro vem no lugar dele).
+            if (const CacheErrorCode injected =
+                    stop_fault_code(StopStep::Checkpoint, CacheErrorCode::Success);
+                injected != CacheErrorCode::Success) {
+                return injected;
+            }
             return checkpoint();
         }));
     }
     note(run_stop_step([this]() -> CacheErrorCode {
-        const CacheErrorCode rc = journal.close();
-        maybe_throw_stop_fault(StopStep::JournalClose);
-        return rc;
+        return stop_fault_code(StopStep::JournalClose, journal.close()); // fecha, depois injeta
     }));
     note(run_stop_step([this]() -> CacheErrorCode {
         const auto rc = store.close();
-        maybe_throw_stop_fault(StopStep::StoreClose);
-        return rc.has_value() ? CacheErrorCode::Success : rc.error();
+        return stop_fault_code(StopStep::StoreClose,
+                               rc.has_value() ? CacheErrorCode::Success : rc.error());
     }));
     return first;
 }

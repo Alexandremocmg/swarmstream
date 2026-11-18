@@ -344,6 +344,11 @@ SweepResult sweep(Scenario scenario, bool via_destructor)
     if (!via_destructor) SW_CHECK(detail_oom == result.fired_points);
     std::cout << "  pontos de falha cobertos: " << result.fired_points << " (stop() completo na "
               << result.ok_at << "a alocacao)" << std::endl;
+    // Resumo para o log do CI (o ctest só mostra a saída de quem falha; o passo do ci.yml copia as
+    // linhas "[F1-71]" de LastTest.log): uma queda silenciosa dos pontos, inclusive no MSVC Debug,
+    // fica visível.
+    std::cout << "[F1-71] cenario='" << label << "' pontos_de_falha=" << result.fired_points
+              << " stop_completo_na_alocacao=" << result.ok_at << std::endl;
     return result;
 }
 
@@ -366,6 +371,7 @@ const char* fault_name(StopFault f)
     case StopFault::StdException: return "std::runtime_error";
     case StopFault::NonStdException: return "int (nao e std::exception)";
     case StopFault::BadAlloc: return "std::bad_alloc";
+    case StopFault::IoError: return "IoError devolvido";
     }
     return "?";
 }
@@ -492,6 +498,97 @@ void test_first_error_wins()
         SW_CHECK(reopen_and_verify(dir, Scenario::Pieces) == 4);
         cleanup(dir);
     }
+}
+
+// R1 da revisão: o ERRO de journal.close() e de store.close() é guardado, devolvido e o primeiro
+// vence. O gancho faz o passo devolver IoError (nos fechamentos, depois de fechar de verdade).
+struct StopCase
+{
+    const char* name;
+    StopStep step1;
+    StopFault fault1;
+    StopStep step2; // StopFault::None = só uma falha
+    StopFault fault2;
+    CacheErrorCode expected;
+    uint64_t expected_applied; // registros do journal que a recuperação aplica depois
+};
+
+void test_close_errors_are_returned_and_first_wins()
+{
+    std::cout
+        << "[Test] erro de journal.close()/store.close(): devolvido, o passo seguinte executa, "
+           "o primeiro erro vence"
+        << std::endl;
+    const StopCase cases[] = {
+        {"journal.close() devolve IoError", StopStep::JournalClose, StopFault::IoError,
+         StopStep::StoreClose, StopFault::None, CacheErrorCode::IoError, 0},
+        {"store.close() devolve IoError", StopStep::StoreClose, StopFault::IoError,
+         StopStep::JournalClose, StopFault::None, CacheErrorCode::IoError, 0},
+        {"checkpoint devolve IoError (nem roda)", StopStep::Checkpoint, StopFault::IoError,
+         StopStep::JournalClose, StopFault::None, CacheErrorCode::IoError, 4},
+        {"journal IoError e store bad_alloc: vence o journal", StopStep::JournalClose,
+         StopFault::IoError, StopStep::StoreClose, StopFault::BadAlloc, CacheErrorCode::IoError, 0},
+        {"journal bad_alloc e store IoError: vence o journal", StopStep::JournalClose,
+         StopFault::BadAlloc, StopStep::StoreClose, StopFault::IoError, CacheErrorCode::OutOfMemory,
+         0},
+        {"journal IoError e store IoError", StopStep::JournalClose, StopFault::IoError,
+         StopStep::StoreClose, StopFault::IoError, CacheErrorCode::IoError, 0},
+    };
+    oom::warm_up_exceptions();
+    for (const StopCase& c : cases) {
+        for (const bool via_destructor : {false, true}) {
+            std::cout << "  " << c.name << (via_destructor ? " [destrutor]" : "") << std::endl;
+            const fs::path dir = fresh_dir("close_err");
+            const std::size_t handles_before = open_handles();
+            auto owner = open_owner(dir);
+            populate(*owner, Scenario::Pieces);
+            CacheOwnerTestHook::inject_stop_fault(*owner, c.step1, c.fault1);
+            CacheOwnerTestHook::inject_stop_fault(*owner, c.step2, c.fault2);
+            if (via_destructor) {
+                owner.reset(); // não pode terminar o processo
+            } else {
+                const auto r = owner->stop();
+                SW_CHECK(!r.has_value());
+                SW_CHECK(r.error() == c.expected);
+                // O passo seguinte ainda executou: journal e store fechados.
+                SW_CHECK(journal_and_store_closed(dir, handles_before));
+                SW_CHECK(owner->stop().has_value());
+                owner.reset();
+            }
+            SW_CHECK(journal_and_store_closed(dir, handles_before));
+            SW_CHECK(reopen_and_verify(dir, Scenario::Pieces) == c.expected_applied);
+            cleanup(dir);
+        }
+    }
+}
+
+// R3 da revisão: cache `broken` => stop() PULA o checkpoint (a recuperação decide na próxima
+// abertura). O checkpoint, se rodasse, gravaria o índice sem a remoção que falhou e consolidaria o
+// journal (applied == 0); pulado, o journal fica com os registros (applied > 0).
+void test_broken_cache_skips_checkpoint_on_stop()
+{
+    std::cout << "[Test] cache quebrado (sync do journal falhou): stop() pula o checkpoint"
+              << std::endl;
+    const fs::path dir = fresh_dir("broken");
+    {
+        auto owner = open_owner(dir);
+        populate(*owner, Scenario::Pieces);
+        CacheOwnerTestHook::fail_next_journal_sync(*owner);
+        auto rm = sw::CacheRequest::remove(piece(1));
+        const auto res = owner->call(rm);
+        SW_CHECK(!res.has_value() && res.error() == CacheErrorCode::IoError);
+        SW_CHECK(owner->broken());
+        SW_CHECK(owner->stop().has_value()); // fecha sem erro; o checkpoint não rodou
+    }
+    {
+        auto o = open_owner(dir);
+        SW_CHECK(o->recovery().journal_records_applied > 0); // o journal NÃO foi consolidado
+        for (const uint32_t i : {0u, 2u, 3u})
+            SW_CHECK(present_and_verified(*o, i));
+        (void)present_and_verified(*o, 1); // presente ou não, se vier tem de vir certa
+        SW_CHECK(o->stop().has_value());
+    }
+    cleanup(dir);
 }
 
 // ---------------------------------------------------------------------------- 4. fronteiras sem
@@ -640,11 +737,35 @@ void test_open_in_place_resets_state()
     cleanup(dir);
 }
 
+// Linha "[F1-71] STL:" para o log do CI (compilador, depuração de iteradores e NDEBUG): diz em que
+// configuração a varredura rodou (no MSVC Debug o proxy dos iteradores é alocado por construtores
+// `noexcept`, e é só ali que uma regressão da Regra R aparece).
+void print_stl_facts()
+{
+    std::cout << "[F1-71] STL:";
+#if defined(_MSC_FULL_VER)
+    std::cout << " _MSC_FULL_VER=" << _MSC_FULL_VER;
+#endif
+#if defined(__GNUC__) && !defined(__clang__)
+    std::cout << " __GNUC__=" << __GNUC__;
+#endif
+#if defined(_ITERATOR_DEBUG_LEVEL)
+    std::cout << " _ITERATOR_DEBUG_LEVEL=" << _ITERATOR_DEBUG_LEVEL;
+#endif
+#if defined(NDEBUG)
+    std::cout << " NDEBUG=1";
+#else
+    std::cout << " NDEBUG=0";
+#endif
+    std::cout << std::endl;
+}
+
 } // namespace
 
 int main()
 {
     oom::make_abort_fail_instead_of_hang();
+    print_stl_facts();
     const SweepResult empty = sweep(Scenario::Empty, false);
     const SweepResult pieces = sweep(Scenario::Pieces, false);
     const SweepResult freed = sweep(Scenario::PiecesFreed, false);
@@ -654,11 +775,17 @@ int main()
     SW_CHECK(pieces.fired_points > empty.fired_points);
     SW_CHECK(freed.fired_points >= pieces.fired_points);
     SW_CHECK(destructor.fired_points == pieces.fired_points);
+    // Pisos baixos (a contagem real depende da STL: 28/34 no libstdc++, mais no MSVC Debug): uma
+    // varredura que deixasse de ver o checkpoint cairia abaixo deles.
+    SW_CHECK(empty.fired_points >= 5);
+    SW_CHECK(pieces.fired_points >= 10);
     test_native_leaf_matches_operator_slash();
     test_open_in_place_resets_state();
     test_control_without_fault();
     test_injected_exception_in_each_step();
     test_first_error_wins();
+    test_close_errors_are_returned_and_first_wins();
+    test_broken_cache_skips_checkpoint_on_stop();
     test_close_boundaries_do_not_allocate();
     test_other_stop_path_destructors_do_not_allocate();
     std::cout << "TODOS OS TESTES DE FALTA DE MEMORIA E EXCECAO DO stop() (F1-71) PASSARAM"
