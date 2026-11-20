@@ -2,7 +2,7 @@
 
 Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê este arquivo, o [README.md](README.md), o [QUADRO.md](QUADRO.md) e o [decisoes.md](decisoes.md). Atualize este arquivo quando o estado mudar de forma que a próxima passagem precise saber.
 
-Última atualização: 2026-11-16.
+Última atualização: 2026-11-20.
 
 > **Migração (2026-10-24, ordem do dono):** o repositório passou a ser o **público** `Alexandremocmg/swarmstream` (sem refs `refs/pull`). O antigo, privado, é `Alexandremocmg/swarmstream-privado-antigo` (backup, com os PRs/revisões antigos). PRs reabertos: antigo #34 → **#1** (F1-11), #28 → **#2** (F1-49), #35 → **#3** (F1-54). Números de PR e o texto sobre "GitHub Actions bloqueado" abaixo são do repositório antigo. Pendências do suporte do GitHub e de billing deixaram de valer.
 
@@ -31,35 +31,39 @@ Documento para a sessão que coordena o projeto (a "gestão"). Quem assume lê e
 - Código crítico exige revisão independente de outra sessão, comentada no PR, e CI verde antes de pedir o aceite.
 
 ## Equipe
-| Papel | Sessão | Situação em 2026-11-16 |
+| Papel | Sessão | Situação em 2026-11-20 |
 | --- | --- | --- |
 | Coordenação (gestão) | `local_39716e51-ecfc-4e78-9383-22b567fe3a07` ("Planejador") | Assumiu em 2026-11-10. A anterior, `local_2e2d3843-77d4-4cf1-8782-427f70498d9c` ("Planejador novo"), foi avisada para não editar `tarefas/`, fazer merge, push nem mandar mensagens às sessões de trabalho |
 | R1, F1-69 | `local_b0eb953b-04a5-47fd-a347-1b13c6e12542` ("F1-69 posse e piso de cache") | #37 mesclado; ociosa. Pela regra de economia, não reabra trabalho nela |
 | Implementadora F1-73 (teste de capacidade) | `local_033169a3-45c7-456a-a655-b63a5772377f` ("Fable_5.2") | #51 mesclado; ociosa |
-| Implementadora F1-74 | sessão nova do cartão (id no cartão e no #53) | #53 mesclado; ociosa |
-| Revisões independentes | `local_cd64fdea-4cdd-4c60-bd1f-583969008786` (#37), `local_ae9ec816-c8bf-471f-95d6-e524a59349e7` (#51) e a sessão revisora do #53 | Terminaram (pareceres publicados) |
+| Implementadora F1-74 | `local_8382f78b-7137-4576-bc91-d1d50b34e8f8` | #53 mesclado; ociosa |
+| Implementadora F1-71 | `local_d93addac-d1e5-4191-a24a-e8c263f5672f` | #55 mesclado; ociosa |
+| Revisões independentes | `local_cd64fdea-4cdd-4c60-bd1f-583969008786` (#37), `local_ae9ec816-c8bf-471f-95d6-e524a59349e7` (#51) `local_1231925f-ba4d-4905-8fe5-076315d74a39` (#53) e `local_d0a402ce-3a0b-4a77-910c-9f446d4a9cb5` (#55) | Terminaram (pareceres publicados) |
 | Arquiteto, Pleno e Sênior | `local_730e5b24…`, `local_9c4d9116…`, `local_1718d5d4…` | Sem trabalho desde 2026-10-24 (Sênior: 2026-10-28); receberam o id do coordenador novo. F1-20, F1-33 e F1-47 voltaram a `ABERTA` |
 
 Pela regra de economia, cartão novo vai para **sessão nova**.
 
-## Estado em 2026-11-16
-- **Main:** `95194b3` (merge do #53, F1-74), sobre `7112e48`. O `ci`, o `lint` e o `extension` da `main` em `95194b3` passaram. PRs que só tocam `docs/` ou `tarefas/` não disparam CI.
-- **F1-69 (#37), F1-73 (#51) e F1-74 (#53) FEITOS.** C2 encerrada. O helper `replace_file` não aloca depois do `rename`; `CacheErrorCode::OutOfMemory`=11 e `Internal`=12 existem; o piso trata `OutOfMemory` como "nada trocado".
+## Estado em 2026-11-20
+- **Main:** `0be4c4d` (merge do #55, F1-71), sobre `3b1e2c1`. O `ci` e o `lint` da `main` em `0be4c4d` passaram; o `extension` (run `44768643933`) ficou **vermelho só no job Windows** (configuração do `zstd` no CMake do GDExtension; imagem nova do runner; ver a pendência em `decisoes.md`), com o job Ubuntu verde. PRs que só tocam `docs/` ou `tarefas/` não disparam CI.
+- **F1-69 (#37), F1-73 (#51), F1-74 (#53) e F1-71 (#55) FEITOS.** `CacheOwner::stop()` não termina o processo por falta de memória ou exceção (cada passo atrás de `catch`; `OutOfMemory`/`Internal`; primeiro erro vence; idempotente); o checkpoint segue a Regra R. A C2 está encerrada; falta a C1 completa (F1-72 e F1-67).
 - **Lint:** `clang-format` fixo em 18.1.8 (pacote do PyPI, #49). O `clang-tidy` continua pelo `apt`, sem versão fixa.
-- **ADR-0018:** Aceita. Ordem **C2 → C1**; a C2 acabou, falta a C1 (F1-71, F1-72, F1-67).
+- **ADR-0018:** Aceita. Ordem **C2 → C1**.
+- **CI:** o `ci.yml` passou a exigir o resumo `[F1-71]` (pontos de falha por cenário do `stop()`) nos 5 passos de resumo; no Windows Debug: 21, 31, 31 e 31.
 - **F1-57 (teste instável do TSan)** falhou duas vezes na tarde de 2026-11-12 e uma em 2026-11-02; ver o registro do cartão.
 - **Push direto na `main`:** a decisão de 2026-10-18 permite à gestão em `tarefas/`, mas a checagem de permissões da sessão negou o push em 2026-11-10. Enquanto o dono não liberar, mudanças em `tarefas/` vão por PR.
 
-## Pendente com o dono (2026-11-16)
-1. **Achado do FIFO do #37** (`installed_floor.cpp:95`, `open` sem `O_NONBLOCK`; severidade baixa): o F1-74 saiu sem tratá-lo. Vai para o F1-71/F1-72, para cartão próprio ou fica como limitação?
+## Pendente com o dono (2026-11-20)
+1. **Achado do FIFO do #37** (`installed_floor.cpp:95`, `open` sem `O_NONBLOCK`; severidade baixa): vai para o F1-72, para cartão próprio ou fica como limitação?
 2. **Configuração MSVC Release para as medições do Portão 1**, com conferência de leitura do baseline e da máquina, sem rodar benchmark.
-3. **Ressalvas do #51** (perguntas A, B e C do cartão F1-73): `to_model()`; falta de memória em `ed25519_verify` virando `SignatureInvalid` (sugestão: condição do F1-67 e do F1-72); run extra para os dois mutantes só do MSVC.
-4. **Autorização do próximo cartão de código** (F1-71, depois F1-72; F1-67 e F1-68): sessão nova e palavra do dono para cada um.
-5. Prioridade do F1-57 e as pendências antigas de [decisoes.md](decisoes.md). Baixa gravidade, sem dono: `to.parent_path()` vazio no helper.
+3. **Ressalvas do #51** (perguntas A, B e C do cartão F1-73): `to_model()`; falta de memória em `ed25519_verify` virando `SignatureInvalid`; run extra para os dois mutantes só do MSVC.
+4. **Ressalvas do #55:** R1' (valor real de `File::close()` sem teste), N3 só detectável no MSVC Debug e não rodado, R4 (`stop()` da thread dona; condição do F1-67).
+5. **`extension` da `main` vermelho no job Windows** (GDExtension, CMake do `zstd`; imagem do runner nova; run `44768643933`): corrigir em cartão e decidir sobre reexecução única. Detalhe em `decisoes.md` e no cartão F1-71.
+6. **Autorização do próximo cartão de código:** **F1-72** (sem dependência pendente), F1-67 e F1-68: sessão nova e palavra do dono para cada um.
+7. Prioridade do F1-57 e as pendências antigas de [decisoes.md](decisoes.md). Baixa gravidade, sem dono: `to.parent_path()` vazio no helper.
 
 ## Próximos passos
 1. PR do comentário de `sw_shutdown` no `swarmstream.h`, conforme o texto aceito do ADR-0018, com revisão do R1 e do R2.
-2. F1-71 e depois F1-72 (o F1-67 numa sessão nova), cada um só com início autorizado pelo dono.
+2. F1-72 (`start()`/`recover()`), depois o F1-67 numa sessão nova, cada um só com início autorizado pelo dono.
 
 ## Como conferir (armadilhas)
 - Git Bash: use `MSYS_NO_PATHCONV=1` em `git show origin/main:caminho`.
