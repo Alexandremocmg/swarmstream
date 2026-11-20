@@ -292,9 +292,16 @@ public:
     // submit + wait. Bloqueia. Um pedido ainda pendente devolve SlotBusy sem ser reenviado.
     [[nodiscard]] Result<size_t, CacheErrorCode> call(CacheRequest& request);
 
-    // Para a dona e fecha o store, devolvendo o erro do fechamento. Os pedidos que estavam na
-    // fila são atendidos ou terminam com Stopped; todos recebem resposta, inclusive os que
-    // outras threads enviarem durante a parada. Chamar de novo devolve sucesso.
+    // Para a dona e fecha o store, devolvendo o PRIMEIRO erro (checkpoint, fechamento do journal,
+    // fechamento do store, nesta ordem). Os pedidos que estavam na fila são atendidos ou terminam
+    // com Stopped; todos recebem resposta, inclusive os que outras threads enviarem durante a
+    // parada. Chamar de novo devolve sucesso.
+    // Nunca termina o processo (F1-71, ADR-0018): cada passo roda atrás de um catch e vira código,
+    // std::bad_alloc => OutOfMemory, qualquer outra exceção => Internal. Sem memória para o
+    // checkpoint, ele é PULADO (o journal permanece e a recuperação o aplica) e o journal e o store
+    // são fechados do mesmo jeito. O destrutor (que chama stop()) tem a mesma garantia. Exceção: se
+    // stop() for chamado da própria thread dona, o join falha (IoError), nada é fechado e destruir
+    // a CacheOwner em seguida é uso incorreto (a thread continua viva).
     [[nodiscard]] Result<void, CacheErrorCode> stop() noexcept;
 
     // true na thread dona (para asserts de quem estende a dona: F1-11, F1-13).

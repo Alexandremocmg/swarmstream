@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <functional>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 namespace swarmstream::detail {
@@ -49,14 +50,42 @@ constexpr uint16_t kIndexVersion = 1;
 constexpr size_t kIndexHeaderSize = 64;
 constexpr size_t kIndexEntrySize = 56;
 
+// Nomes do checkpoint na largura NATIVA do fs::path (wchar_t no Windows). `path += "texto"` e
+// `path /= "texto"` com `char*` convertem estreito->largo por dentro, e essa conversão constrói
+// std::wstring por construtor `noexcept` (no MSVC em Debug, aloca o proxy dos iteradores: Regra R,
+// F1-71, como no piso do F1-69). Com literal nativo só há `basic_string::append`, que não é
+// noexcept.
+using PathChar = std::filesystem::path::value_type;
+#if defined(_WIN32)
+inline constexpr PathChar kIndexLeaf[] = L"index.bin";
+inline constexpr PathChar kJournalLeaf[] = L"journal.bin";
+inline constexpr PathChar kTmpSuffix[] = L".tmp";
+#else
+inline constexpr PathChar kIndexLeaf[] = "index.bin";
+inline constexpr PathChar kJournalLeaf[] = "journal.bin";
+inline constexpr PathChar kTmpSuffix[] = ".tmp";
+#endif
+
+// Acrescenta "<separador><leaf>" a `p`, que o chamador constrói por CÓPIA da pasta (construtor que
+// não é noexcept). Mesmo resultado de `dir / leaf` para os caminhos comuns (nenhum separador se `p`
+// está vazio ou já termina em um; no Windows, nem para "C:").
+void append_path_leaf(std::filesystem::path& p, const PathChar* leaf);
+
 enum class JournalType : uint16_t {
     CommitPiece = 1,
     FreeSlot = 2,
     Checkpoint = 3,
 };
 
+// F1-71 (Regra R, ver F1-63 e F1-69): o construtor PADRÃO de std::vector é `noexcept` e, no MSVC em
+// Debug (_ITERATOR_DEBUG_LEVEL != 0), aloca o proxy dos iteradores: um bad_alloc ali é
+// std::terminate antes de qualquer catch. Por isso o construtor padrão daqui constrói `blocks` com
+// `vector(0)`, que NÃO é noexcept: a falta de memória (inclusive a do proxy) chega a quem chama
+// como std::bad_alloc comum. O resto do caminho de parada nunca MOVE um JournalRecord nem um
+// IndexEntry (o movimento de std::vector também é noexcept e aloca o proxy no Debug).
 struct JournalRecord
 {
+    JournalRecord() : blocks(std::size_t{0}) {}
     JournalType type = JournalType::CommitPiece;
     uint16_t flags = 0;
     uint64_t lsn = 0;
@@ -100,7 +129,9 @@ using CrashHook = void (*)(CrashPoint point, void* context);
 class Journal
 {
 public:
-    Journal() = default;
+    // `vector(0)` e não `= default`: o construtor padrão do vector é noexcept e aloca o proxy no
+    // MSVC Debug (Regra R acima).
+    Journal() : buffer_(std::size_t{0}) {}
 
     // Abre (ou cria) o journal e entrega a `apply`, em ordem, cada registro válido com
     // LSN > after_lsn. Trunca a cauda inválida e sincroniza. Um cabeçalho inválido descarta
@@ -108,6 +139,15 @@ public:
     [[nodiscard]] static Result<Journal, CacheErrorCode>
     open(const std::filesystem::path& file, uint64_t after_lsn,
          const std::function<void(const JournalRecord&)>& apply, JournalReplay& info);
+
+    // Como open(), mas reabre DENTRO de `j` (F1-71): não constrói nem move um Journal, que no MSVC
+    // em Debug aloca dentro de construtor `noexcept` (Regra R acima). `j` volta ao estado de um
+    // Journal recém-criado (contadores e falhas injetadas zerados; o buffer só é esvaziado) e, em
+    // erro, pode ficar com o arquivo aberto: quem chama fecha com close(). É o que o checkpoint
+    // usa.
+    [[nodiscard]] static CacheErrorCode
+    open_in_place(Journal& j, const std::filesystem::path& file, uint64_t after_lsn,
+                  const std::function<void(const JournalRecord&)>& apply, JournalReplay& info);
 
     // Cria `file` do zero (tmp + rename): cabeçalho e um CHECKPOINT(checkpoint_lsn).
     [[nodiscard]] static CacheErrorCode create_fresh(const std::filesystem::path& file,
@@ -137,10 +177,18 @@ private:
     std::vector<std::byte> buffer_; // reaproveitado entre appends (registros de até ~8 MiB)
 };
 
+// Travas da Regra R: um construtor padrão que NÃO é noexcept deixa a falta de memória do proxy do
+// MSVC Debug chegar como bad_alloc comum (o que o checkpoint e o stop() capturam).
+static_assert(!std::is_nothrow_default_constructible_v<JournalRecord>);
+static_assert(!std::is_nothrow_default_constructible_v<Journal>);
+static_assert(!std::is_nothrow_constructible_v<std::vector<uint64_t>, std::size_t>,
+              "vector(n) precisa poder lançar bad_alloc (Regra R)");
+
 // ------------------------------------------------------------------ index.bin
 
 struct IndexEntry
 {
+    IndexEntry() : blocks(std::size_t{0}) {} // vector(0): Regra R (ver JournalRecord)
     PieceHash piece{};
     SlotId slot = kInvalidSlot; // global: store_file_id × slots_per_file + slot no arquivo
     uint32_t size = 0;
@@ -149,6 +197,8 @@ struct IndexEntry
     uint8_t flags = 0;
     std::vector<uint64_t> blocks;
 };
+
+static_assert(!std::is_nothrow_default_constructible_v<IndexEntry>);
 
 struct LoadedIndex
 {

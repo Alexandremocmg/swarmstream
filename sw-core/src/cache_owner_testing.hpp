@@ -18,8 +18,24 @@
 
 namespace swarmstream {
 
+// F1-71: os passos do stop() onde o teste injeta uma exceção ou um IoError. O checkpoint lança
+// ANTES de rodar; os dois fechamentos lançam DEPOIS de fechar de verdade (o arquivo já está
+// fechado: o teste confere pela contagem de handles que o passo seguinte executou).
+enum class StopStep : int { Checkpoint = 0, JournalClose = 1, StoreClose = 2 };
+enum class StopFault : int {
+    None = 0,
+    StdException,    // std::runtime_error
+    NonStdException, // um int (não deriva de std::exception)
+    BadAlloc,        // std::bad_alloc
+    IoError,         // o passo devolve IoError (no checkpoint, ele nem roda; nos fechamentos, o
+                     // arquivo é fechado de verdade e o IoError substitui o resultado)
+};
+
 struct CacheOwnerTestHook
 {
+    // F1-71: no próximo stop(), o passo `step` lança `fault`. Cada passo guarda a sua falha.
+    static void inject_stop_fault(CacheOwner& owner, StopStep step, StopFault fault) noexcept;
+
     // A partir daqui, todo submit() para depois de ler `stopping` e antes do push, até
     // open_submit_window().
     static void close_submit_window(CacheOwner& owner) noexcept;

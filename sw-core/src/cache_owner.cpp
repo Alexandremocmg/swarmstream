@@ -14,8 +14,10 @@
 #include <chrono>
 #include <iterator>
 #include <new>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -250,6 +252,8 @@ struct CacheOwner::Impl
     std::thread thread;
     std::mutex stop_mutex;
     bool stopped = false; // guardado por stop_mutex
+    // CacheOwnerTestHook (F1-71): a falha que cada passo do stop() lança (StopFault; 0 = nenhuma).
+    std::atomic<int> stop_fault[3] = {};
 
     // CacheOwnerTestHook: segura os submit() na janela entre ler `stopping` e o push, e marca
     // quando a dona saiu do laço principal. Fora dos testes, custa uma leitura relaxada.
@@ -277,6 +281,12 @@ struct CacheOwner::Impl
 
     [[nodiscard]] CacheErrorCode recover();
     [[nodiscard]] CacheErrorCode checkpoint();
+    // F1-71: o corpo do stop() com `stop_mutex` tomado e `stopped` já marcado. noexcept DE VERDADE:
+    // cada passo roda atrás de um catch (run_stop_step) e vira código.
+    [[nodiscard]] CacheErrorCode stop_locked() noexcept;
+    // CacheOwnerTestHook::inject_stop_fault: lança a falha injetada no passo, ou devolve IoError no
+    // lugar de `real` (StopFault::IoError), ou devolve `real` (sem falha injetada).
+    [[nodiscard]] CacheErrorCode stop_fault_code(StopStep step, CacheErrorCode real) const;
     [[nodiscard]] CacheErrorCode append_record(detail::JournalRecord& rec);
     [[nodiscard]] CacheErrorCode append_and_sync(detail::JournalRecord& rec);
     // Remove peças pelo relógio até sobrarem no máximo `target`. Success também quando não há
@@ -415,38 +425,53 @@ CacheErrorCode CacheOwner::Impl::recover()
 // cujos registros têm LSN menor ou igual ao do índice e são pulados na recuperação.
 CacheErrorCode CacheOwner::Impl::checkpoint()
 {
+    // F1-71, Regra R (F1-63, F1-69): este é o único trecho do stop() que aloca, e roda atrás de um
+    // `catch` em stop(). Só que um `catch` não basta no MSVC em Debug: os construtores PADRÃO e de
+    // MOVIMENTO de std::vector/std::string/fs::path são `noexcept` e alocam o proxy dos iteradores,
+    // e um bad_alloc ali é std::terminate antes de chegar ao catch. Por isso aqui só há
+    // construtores que NÃO são noexcept (`vector(0)`, `vector(n)`, cópia de fs::path, IndexEntry()
+    // e JournalRecord() próprios) e nenhum movimento de contêiner: `entries` é reservado e
+    // preenchido no lugar, os caminhos são copiados e ajustados no lugar, e o journal é reaberto
+    // DENTRO de `journal`.
+    static_assert(!std::is_nothrow_constructible_v<std::vector<detail::IndexEntry>, std::size_t>);
+    static_assert(
+        !std::is_nothrow_constructible_v<std::vector<const detail::IndexEntry*>, std::size_t>);
     const uint64_t lsn = next_lsn - 1;
-    std::vector<detail::IndexEntry> entries;
-    entries.reserve(index.size());
+    std::vector<detail::IndexEntry> entries(std::size_t{0});
+    entries.reserve(index.size()); // sem realocar depois: nada é movido
     for (const auto& [piece, e] : index) {
-        detail::IndexEntry out;
+        entries.emplace_back();
+        detail::IndexEntry& out = entries.back();
         out.piece = piece;
         out.slot = e.slot;
         out.size = e.size;
         out.blocks = e.blocks;
-        entries.push_back(std::move(out));
     }
-    std::vector<const detail::IndexEntry*> ptrs;
-    ptrs.reserve(entries.size());
-    for (const auto& e : entries)
-        ptrs.push_back(&e);
-    std::filesystem::path tmp = index_path();
-    tmp += ".tmp";
-    if (auto rc = detail::write_index_file(index_path(), tmp, lsn, config.layout, ptrs, crash_hook,
+    std::vector<const detail::IndexEntry*> ptrs(entries.size());
+    for (size_t i = 0; i < entries.size(); ++i)
+        ptrs[i] = &entries[i];
+    std::filesystem::path index_file(config.dir);
+    detail::append_path_leaf(index_file, detail::kIndexLeaf);
+    std::filesystem::path tmp(index_file);
+    tmp += detail::kTmpSuffix;
+    if (auto rc = detail::write_index_file(index_file, tmp, lsn, config.layout, ptrs, crash_hook,
                                            crash_context);
         rc != CacheErrorCode::Success) {
         return rc;
     }
     if (auto rc = journal.close(); rc != CacheErrorCode::Success) return rc;
-    if (auto rc = detail::Journal::create_fresh(journal_path(), lsn, crash_hook, crash_context);
+    std::filesystem::path journal_file(config.dir);
+    detail::append_path_leaf(journal_file, detail::kJournalLeaf);
+    if (auto rc = detail::Journal::create_fresh(journal_file, lsn, crash_hook, crash_context);
         rc != CacheErrorCode::Success) {
         return rc;
     }
     detail::JournalReplay replay;
-    auto opened =
-        detail::Journal::open(journal_path(), lsn, [](const detail::JournalRecord&) {}, replay);
-    if (!opened) return opened.error();
-    journal = std::move(*opened);
+    if (auto rc = detail::Journal::open_in_place(
+            journal, journal_file, lsn, [](const detail::JournalRecord&) {}, replay);
+        rc != CacheErrorCode::Success) {
+        return rc;
+    }
     next_lsn = std::max(next_lsn, replay.last_lsn + 1);
     return CacheErrorCode::Success;
 }
@@ -935,31 +960,107 @@ Result<size_t, CacheErrorCode> CacheOwner::call(CacheRequest& request)
     return request.wait();
 }
 
-Result<void, CacheErrorCode> CacheOwner::stop() noexcept
+namespace {
+
+// Roda um passo do stop() e converte toda exceção em código (F1-71, ADR-0018 decisão 1 e 2):
+// std::bad_alloc => OutOfMemory; qualquer outra, std::exception ou não => Internal. Nada atravessa
+// a fronteira noexcept do stop() nem do destrutor.
+template <class Step>
+CacheErrorCode run_stop_step(Step&& step) noexcept
 {
-    Impl& s = *impl_;
-    std::lock_guard stop_lock(s.stop_mutex);
-    if (s.stopped) return {};
-    s.stopped = true;
-    s.stopping.store(true, std::memory_order_seq_cst);
-    {
-        std::lock_guard lock(s.wake_mutex); // a dona está dormindo ou ainda vai conferir `stopping`
+    try {
+        return step();
+    } catch (const std::bad_alloc&) {
+        return CacheErrorCode::OutOfMemory;
+    } catch (const std::exception&) {
+        return CacheErrorCode::Internal;
+    } catch (...) {
+        return CacheErrorCode::Internal;
     }
-    s.wake_cv.notify_one();
-    if (s.thread.joinable()) {
+}
+
+} // namespace
+
+CacheErrorCode CacheOwner::Impl::stop_fault_code(StopStep step, CacheErrorCode real) const
+{
+    switch (static_cast<StopFault>(stop_fault[static_cast<int>(step)].load())) {
+    case StopFault::None: return real;
+    case StopFault::StdException: throw std::runtime_error("F1-71: excecao injetada no stop()");
+    case StopFault::NonStdException: throw 71;
+    case StopFault::BadAlloc: throw std::bad_alloc();
+    case StopFault::IoError: return CacheErrorCode::IoError;
+    }
+    return real;
+}
+
+// Só a dona e o stop() mexem no que vem depois do join (store, índice, journal). Cada passo é
+// guardado: um erro (de disco, de memória ou uma exceção) NÃO impede os passos seguintes, e o
+// primeiro erro é o devolvido.
+CacheErrorCode CacheOwner::Impl::stop_locked() noexcept
+{
+    CacheErrorCode first = CacheErrorCode::Success;
+    const auto note = [&first](CacheErrorCode rc) noexcept {
+        if (first == CacheErrorCode::Success) first = rc;
+    };
+    stopping.store(true, std::memory_order_seq_cst);
+    note(run_stop_step([this]() -> CacheErrorCode {
+        std::lock_guard lock(wake_mutex); // a dona está dormindo ou ainda vai conferir `stopping`
+        return CacheErrorCode::Success;
+    }));
+    wake_cv.notify_one();
+    if (thread.joinable()) {
         try {
-            s.thread.join();
+            thread.join();
         } catch (const std::system_error&) {
-            return Unexpected(CacheErrorCode::IoError); // chamado da própria dona
+            // Chamado da própria dona: a thread continua viva e o store, o índice e o journal
+            // ainda são dela. Nada é tocado.
+            note(CacheErrorCode::IoError);
+            return first;
+        } catch (...) {
+            note(CacheErrorCode::Internal);
+            return first;
         }
     }
     // Depois do join, o store, o índice e o journal são desta thread. Checkpoint para a próxima
-    // abertura não precisar reler o journal; com o cache quebrado, só fecha (a recuperação
-    // decide na próxima abertura).
+    // abertura não precisar reler o journal; com o cache quebrado, só fecha (a recuperação decide
+    // na próxima abertura). Falta de memória no checkpoint: ele é PULADO (o journal permanece e a
+    // recuperação o aplica) e os fechamentos abaixo executam do mesmo jeito.
+    if (!broken && !skip_stop_checkpoint.load()) {
+        note(run_stop_step([this]() -> CacheErrorCode {
+            // IoError injetado: o checkpoint nem roda (o erro vem no lugar dele).
+            if (const CacheErrorCode injected =
+                    stop_fault_code(StopStep::Checkpoint, CacheErrorCode::Success);
+                injected != CacheErrorCode::Success) {
+                return injected;
+            }
+            return checkpoint();
+        }));
+    }
+    note(run_stop_step([this]() -> CacheErrorCode {
+        return stop_fault_code(StopStep::JournalClose, journal.close()); // fecha, depois injeta
+    }));
+    note(run_stop_step([this]() -> CacheErrorCode {
+        const auto rc = store.close();
+        return stop_fault_code(StopStep::StoreClose,
+                               rc.has_value() ? CacheErrorCode::Success : rc.error());
+    }));
+    return first;
+}
+
+// Idempotente (a segunda chamada devolve sucesso) e noexcept DE VERDADE: nem o stop() nem o
+// destrutor terminam o processo por falta de memória ou exceção. Devolve o primeiro erro.
+Result<void, CacheErrorCode> CacheOwner::stop() noexcept
+{
+    Impl& s = *impl_;
     CacheErrorCode first = CacheErrorCode::Success;
-    if (!s.broken && !s.skip_stop_checkpoint.load()) first = s.checkpoint();
-    if (const auto rc = s.journal.close(); first == CacheErrorCode::Success) first = rc;
-    if (auto rc = s.store.close(); !rc && first == CacheErrorCode::Success) first = rc.error();
+    try {
+        std::lock_guard stop_lock(s.stop_mutex);
+        if (s.stopped) return {};
+        s.stopped = true;
+        first = s.stop_locked();
+    } catch (...) { // só a trava lança (system_error do SO); stop_locked() é noexcept
+        first = CacheErrorCode::Internal;
+    }
     if (first != CacheErrorCode::Success) return Unexpected(first);
     return {};
 }
@@ -1048,6 +1149,12 @@ CacheOwnerTestHook::start_with_crash_hook(CacheOwnerConfig config, detail::Crash
                                           void* context)
 {
     return CacheOwner::start_impl(std::move(config), hook, context);
+}
+
+void CacheOwnerTestHook::inject_stop_fault(CacheOwner& owner, StopStep step,
+                                           StopFault fault) noexcept
+{
+    owner.impl_->stop_fault[static_cast<int>(step)].store(static_cast<int>(fault));
 }
 
 void CacheOwnerTestHook::fail_next_store_sync(CacheOwner& owner) noexcept
