@@ -807,6 +807,84 @@ void test_shrink_removes_only_canonical_names()
     cleanup(dir);
 }
 
+// read_index_file confere slot e peça repetidos com vetores ordenados (F1-72: sem unordered_set,
+// que no MSVC Debug aloca o proxy dentro de construtor noexcept): índice com qualquer um dos dois
+// repetido é recusado inteiro, e as entradas saem vazias; sem repetido, é aceito.
+void test_index_with_repeated_slot_or_piece_is_invalid()
+{
+    std::cout << "[Test] index.bin com slot ou peca repetidos e recusado inteiro" << std::endl;
+    const fs::path dir = fresh_dir("index_dup");
+    const fs::path file = dir / "index.bin";
+    const fs::path tmp = dir / "index.bin.tmp";
+    std::vector<det::IndexEntry> entries(std::size_t{3});
+    for (uint32_t i = 0; i < 3; ++i) {
+        entries[i].piece = piece(i).hash;
+        entries[i].slot = i;
+        entries[i].size = 1000;
+        entries[i].blocks = {uint64_t{i} + 1};
+    }
+    const auto load = [&]() {
+        std::vector<const det::IndexEntry*> ptrs;
+        for (const det::IndexEntry& e : entries)
+            ptrs.push_back(&e);
+        SW_CHECK(det::write_index_file(file, tmp, 7, kLayout, ptrs, nullptr, nullptr) ==
+                 CacheErrorCode::Success);
+        det::LoadedIndex loaded;
+        const det::IndexLoad r = det::read_index_file(file, kLayout, loaded);
+        if (r != det::IndexLoad::Ok) SW_CHECK(loaded.entries.empty());
+        return r;
+    };
+    SW_CHECK(load() == det::IndexLoad::Ok); // controle
+    entries[2].piece = entries[0].piece;    // a mesma peça em dois slots
+    SW_CHECK(load() == det::IndexLoad::Invalid);
+    entries[2].piece = piece(2).hash;
+    entries[2].slot = entries[1].slot; // duas peças no mesmo slot
+    SW_CHECK(load() == det::IndexLoad::Invalid);
+    entries[2].slot = 2;
+    SW_CHECK(load() == det::IndexLoad::Ok);
+    cleanup(dir);
+}
+
+// F1-72, opção A: o índice em memória é uma árvore, então o checkpoint grava as entradas do
+// index.bin em ordem de hash (antes, na ordem da tabela hash). O formato não depende da ordem: um
+// index.bin com as MESMAS entradas em outra ordem é relido igual e a pasta reabre igual.
+void test_index_order_is_irrelevant()
+{
+    std::cout << "[Test] ordem das entradas do index.bin nao importa (checkpoint em ordem de hash)"
+              << std::endl;
+    const fs::path dir = fresh_dir("index_order");
+    prepare(dir, Scenario::Consolidated); // 4 peças, checkpoint do stop()
+    det::LoadedIndex written;
+    SW_CHECK(det::read_index_file(dir / "index.bin", kLayout, written) == det::IndexLoad::Ok);
+    SW_CHECK(written.entries.size() == 4);
+    for (size_t i = 1; i < written.entries.size(); ++i)
+        SW_CHECK(written.entries[i - 1].piece < written.entries[i].piece); // ordem de hash
+    // Regrava com as mesmas entradas em ordem INVERSA e confere que relê o mesmo conjunto.
+    std::vector<const det::IndexEntry*> reversed;
+    for (size_t i = written.entries.size(); i-- > 0;)
+        reversed.push_back(&written.entries[i]);
+    SW_CHECK(det::write_index_file(dir / "index.bin", dir / "index.bin.tmp", written.checkpoint_lsn,
+                                   kLayout, reversed, nullptr, nullptr) == CacheErrorCode::Success);
+    det::LoadedIndex reread;
+    SW_CHECK(det::read_index_file(dir / "index.bin", kLayout, reread) == det::IndexLoad::Ok);
+    SW_CHECK(reread.checkpoint_lsn == written.checkpoint_lsn);
+    SW_CHECK(reread.entries.size() == written.entries.size());
+    for (size_t i = 0; i < reread.entries.size(); ++i) {
+        const det::IndexEntry& a = reread.entries[i];
+        const det::IndexEntry& b = written.entries[written.entries.size() - 1 - i];
+        SW_CHECK(a.piece == b.piece && a.slot == b.slot && a.size == b.size &&
+                 a.blocks == b.blocks);
+    }
+    reopen_and_verify(dir, Scenario::Consolidated); // as 4 peças, lidas e conferidas
+    // E o checkpoint da reabertura volta a gravar em ordem de hash.
+    det::LoadedIndex again;
+    SW_CHECK(det::read_index_file(dir / "index.bin", kLayout, again) == det::IndexLoad::Ok);
+    SW_CHECK(again.entries.size() == 4);
+    for (size_t i = 0; i < again.entries.size(); ++i)
+        SW_CHECK(again.entries[i].piece == written.entries[i].piece);
+    cleanup(dir);
+}
+
 // Linha "[F1-72] STL:" para o log do CI: em que configuração a varredura rodou.
 void print_stl_facts()
 {
@@ -839,6 +917,8 @@ int main()
     print_stl_facts();
     test_store_file_leaf_matches_file_path();
     test_shrink_removes_only_canonical_names();
+    test_index_with_repeated_slot_or_piece_is_invalid();
+    test_index_order_is_irrelevant();
     test_control_and_fault_not_left_pending();
     test_thread_failure_does_not_checkpoint_again();
     test_injected_fault_in_each_step();

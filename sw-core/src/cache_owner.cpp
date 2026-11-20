@@ -13,12 +13,12 @@
 #include <algorithm>
 #include <chrono>
 #include <iterator>
+#include <map>
 #include <new>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 
 namespace swarmstream {
@@ -216,11 +216,12 @@ struct CacheOwner::Impl
     // de std::vector/std::string/fs::path são `noexcept` e alocam o proxy dos iteradores; um
     // bad_alloc ali é std::terminate antes de qualquer catch. Por isso a Impl COPIA o config (a
     // cópia de fs::path não é noexcept), recebe o store por movimento (só um unique_ptr) e constrói
-    // cada contêiner com `(0)`, que não é noexcept, em vez do construtor padrão.
+    // cada vetor com `(0)`, que não é noexcept, em vez do construtor padrão. O índice é std::map
+    // (ver abaixo): o construtor padrão da árvore pode lançar e não tem o problema.
     Impl(StoreFiles&& s, const CacheOwnerConfig& c)
         : store(std::move(s)), slots(c.total_slots), config(c),
-          leases(std::make_shared<detail::LeaseTable>(c.total_slots)), index(std::size_t{0}),
-          clock(std::size_t{0}), victims(std::size_t{0})
+          leases(std::make_shared<detail::LeaseTable>(c.total_slots)), clock(std::size_t{0}),
+          victims(std::size_t{0})
     {
     }
 
@@ -232,9 +233,18 @@ struct CacheOwner::Impl
     // F1-13: contagem de leases por slot. A dona soma (Acquire) e lê (invalidate); os
     // PieceLease subtraem de qualquer thread. Criada antes de a thread existir.
     std::shared_ptr<detail::LeaseTable> leases;
-    std::unordered_map<PieceHash, Entry> index; // chave: a raiz Merkle (ADR-0007)
-    static_assert(
-        !std::is_nothrow_constructible_v<std::unordered_map<PieceHash, Entry>, std::size_t>);
+    // Chave: a raiz Merkle (ADR-0007). F1-72 (opção A, decisão do dono em 2026-11-20): ÁRVORE, não
+    // tabela hash. No MSVC com _ITERATOR_DEBUG_LEVEL != 0, todo construtor de std::unordered_map
+    // passa por `_Hash_vec(_Any_alloc&&) noexcept`, que aloca o proxy dos iteradores: sem memória,
+    // o start() terminava o processo ao construir a Impl (CI do #57, K=17). A árvore aloca a
+    // sentinela e o proxy em construtor que pode lançar (`_Alloc_sentinel_and_proxy`), e find/erase
+    // não alocam, então o caminho de leitura continua sem alocação. A busca da peça passa a
+    // O(log n) (medido no cartão: ~0,5% do Acquire); o O(1) do docs/04 é o do checksum do bloco
+    // dentro da peça (o vetor da Entry), que não muda.
+    std::map<PieceHash, Entry> index;
+#if defined(_MSC_VER)
+    static_assert(!std::is_nothrow_default_constructible_v<std::map<PieceHash, Entry>>);
+#endif
     static_assert(!std::is_nothrow_constructible_v<CacheOwnerConfig, const CacheOwnerConfig&>);
 
     // F1-14: o relógio. Um item por slot, reservado em start(); só a dona toca.
@@ -371,14 +381,14 @@ struct CacheOwner::Impl
 //
 // F1-72: aloca (índice, mapa por slot, checksums, caminhos, a std::function do replay) e roda atrás
 // do catch de start(). Regra R (ver o construtor da Impl): nada de construtor padrão nem de
-// movimento de std::vector/fs::path/Journal. Os caminhos nascem por CÓPIA da pasta e ganham o nome
-// na largura nativa (append_path_leaf), as entradas do índice são construídas NO LUGAR com os
-// checksums COPIADOS, e o journal é aberto DENTRO de `journal` (open_in_place), sem
-// Result<Journal>.
+// movimento de std::vector/fs::path/Journal, e nenhum std::unordered_map local (no MSVC Debug todo
+// construtor dele aloca o proxy dentro de `_Hash_vec(...) noexcept`; o mapa por slot é std::map,
+// cuja árvore aloca a sentinela e o proxy em construtor que pode lançar). Os caminhos nascem por
+// CÓPIA da pasta e ganham o nome na largura nativa (append_path_leaf), as entradas do índice são
+// construídas NO LUGAR com os checksums COPIADOS, e o journal é aberto DENTRO de `journal`
+// (open_in_place), sem Result<Journal>.
 CacheErrorCode CacheOwner::Impl::recover()
 {
-    static_assert(
-        !std::is_nothrow_constructible_v<std::unordered_map<SlotId, PieceHash>, std::size_t>);
     if (auto rc = detail::start_fault_code(start_faults, StartStep::ReadIndex);
         rc != CacheErrorCode::Success)
         return rc;
@@ -391,7 +401,7 @@ CacheErrorCode CacheOwner::Impl::recover()
     recovery.index_invalid = load == detail::IndexLoad::Invalid;
     recovery.index_lsn = recovery.index_loaded ? loaded.checkpoint_lsn : 0;
 
-    std::unordered_map<SlotId, PieceHash> by_slot(std::size_t{0});
+    std::map<SlotId, PieceHash> by_slot;
     auto erase_piece = [&](const PieceHash& piece) {
         if (auto it = index.find(piece); it != index.end()) {
             by_slot.erase(it->second.slot);
@@ -1015,7 +1025,6 @@ CacheOwner::start_impl(const CacheOwnerConfig& config, detail::CrashHook hook, v
         if (auto rc = detail::start_fault_code(&faults, StartStep::Reserve);
             rc != CacheErrorCode::Success)
             return Unexpected(rc);
-        impl->index.reserve(impl->config.total_slots); // o índice não reorganiza no meio do jogo
         impl->clock.resize(impl->config.total_slots);
         impl->victims.reserve(Impl::kEvictBatch);
         if (evict_on) {
