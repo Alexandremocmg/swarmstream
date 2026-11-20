@@ -3,13 +3,22 @@
 
 #include "swarmstream/store_files.hpp"
 
+#include "cache_journal.hpp" // append_store_file_leaf (nome nativo do store-NNN.bin)
 #include "platform_file.hpp"
 #include "store_files_testing.hpp"
 
+#if !defined(_WIN32)
+#include <dirent.h>
+#endif
+
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
+#include <cwchar>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -31,10 +40,127 @@ using detail::sync_directory;
 
 Unexpected<CacheErrorCode> fail(CacheErrorCode code) { return Unexpected(code); }
 
+// F1-72: o NNN se `name` (um nome de arquivo, sem pasta, com `len` caracteres na largura NATIVA) é
+// um nome canônico "store-NNN.bin" (o de file_name, "%03u"). Não converte nem aloca (Regra R).
+// Aceita exatamente os nomes que o sscanf("store-%u.bin%c") seguido da comparação com o nome
+// canônico aceitava antes: 3 dígitos quaisquer, ou mais de 3 sem zero à esquerda, até 4294967295, e
+// nada antes de "store-" nem depois de ".bin" (maiúsculas contam).
+bool canonical_store_index(const std::filesystem::path::value_type* name, size_t len,
+                           uint32_t& out) noexcept
+{
+    using Char = std::filesystem::path::value_type;
+    static constexpr char kPrefix[] = "store-";
+    static constexpr char kSuffix[] = ".bin";
+    constexpr size_t prefix_len = sizeof kPrefix - 1;
+    constexpr size_t suffix_len = sizeof kSuffix - 1;
+    if (len < prefix_len + 3 + suffix_len) return false;
+    for (size_t i = 0; i < prefix_len; ++i)
+        if (name[i] != static_cast<Char>(kPrefix[i])) return false;
+    for (size_t i = 0; i < suffix_len; ++i)
+        if (name[len - suffix_len + i] != static_cast<Char>(kSuffix[i])) return false;
+    const size_t digits = len - prefix_len - suffix_len;
+    if (digits > 3 && name[prefix_len] == static_cast<Char>('0')) return false; // não é "%03u"
+    uint64_t value = 0;
+    for (size_t i = 0; i < digits; ++i) {
+        const Char c = name[prefix_len + i];
+        if (c < static_cast<Char>('0') || c > static_cast<Char>('9')) return false;
+        value = value * 10 + static_cast<uint64_t>(c - static_cast<Char>('0'));
+        if (value > 0xFFFFFFFFu) return false;
+    }
+    out = static_cast<uint32_t>(value);
+    return true;
+}
+
+// F1-72: guarda em `out` o NNN de cada "store-NNN.bin" canônico de `dir` com NNN >= `count`.
+// NÃO usa std::filesystem::directory_iterator: na libstdc++ o avanço do iterador (_Dir::advance,
+// dentro da biblioteca) é noexcept e aloca o caminho de cada entrada, então uma falta de memória
+// ali é std::terminate antes de qualquer catch (pilha medida na varredura do F1-72,
+// libstdc++ 16.2). A API do sistema escreve o nome num buffer dela (WIN32_FIND_DATAW / dirent) e
+// aqui só alocam o padrão de busca (CÓPIA da pasta, no Windows) e o crescimento de `out` (vector de
+// inteiros, fora de qualquer noexcept): os dois lançam bad_alloc comum, e o handle da busca é
+// fechado pelo guarda. Falta de memória do próprio sistema (ENOMEM, ERROR_NOT_ENOUGH_MEMORY) =>
+// OutOfMemory; o resto, IoError. Toda chamada ao sistema tem o retorno conferido, inclusive o
+// fechamento.
+CacheErrorCode list_store_files_beyond(const std::filesystem::path& dir, uint32_t count,
+                                       std::vector<uint32_t>& out)
+{
+#if defined(_WIN32)
+    std::filesystem::path pattern(dir);
+    detail::append_path_leaf(pattern, L"*");
+    WIN32_FIND_DATAW found;
+    struct Search
+    {
+        HANDLE h;
+        ~Search()
+        {
+            if (h != INVALID_HANDLE_VALUE) (void)::FindClose(h); // só numa exceção (bad_alloc)
+        }
+    } search{::FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &found, FindExSearchNameMatch,
+                                nullptr, 0)};
+    if (search.h == INVALID_HANDLE_VALUE) {
+        const DWORD err = ::GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND) return CacheErrorCode::Success; // nada na pasta
+        return err == ERROR_NOT_ENOUGH_MEMORY || err == ERROR_OUTOFMEMORY
+                   ? CacheErrorCode::OutOfMemory
+                   : CacheErrorCode::IoError;
+    }
+    CacheErrorCode rc = CacheErrorCode::Success;
+    for (;;) {
+        uint32_t n = 0;
+        if (canonical_store_index(found.cFileName, std::wcslen(found.cFileName), n) && n >= count)
+            out.push_back(n);
+        if (!::FindNextFileW(search.h, &found)) {
+            if (::GetLastError() != ERROR_NO_MORE_FILES) rc = CacheErrorCode::IoError;
+            break;
+        }
+    }
+    const BOOL closed = ::FindClose(search.h);
+    search.h = INVALID_HANDLE_VALUE;
+    if (!closed && rc == CacheErrorCode::Success) rc = CacheErrorCode::IoError;
+    return rc;
+#else
+    struct Search
+    {
+        DIR* d;
+        ~Search()
+        {
+            if (d != nullptr) (void)::closedir(d); // só numa exceção (bad_alloc)
+        }
+    } search{::opendir(dir.c_str())};
+    if (search.d == nullptr)
+        return errno == ENOMEM ? CacheErrorCode::OutOfMemory : CacheErrorCode::IoError;
+    CacheErrorCode rc = CacheErrorCode::Success;
+    for (;;) {
+        errno = 0;
+        const dirent* e = ::readdir(search.d);
+        if (e == nullptr) {
+            if (errno != 0) rc = CacheErrorCode::IoError;
+            break;
+        }
+        uint32_t n = 0;
+        if (canonical_store_index(e->d_name, std::strlen(e->d_name), n) && n >= count)
+            out.push_back(n);
+    }
+    const int closed = ::closedir(search.d);
+    search.d = nullptr;
+    if (closed != 0 && rc == CacheErrorCode::Success) rc = CacheErrorCode::IoError;
+    return rc;
+#endif
+}
+
 } // namespace
 
 struct StoreFiles::Impl
 {
+    // F1-72, Regra R: roda no start() da CacheOwner. A pasta é COPIADA e o vetor nasce com `(n)`:
+    // nenhum construtor padrão de fs::path/std::vector, que no MSVC em Debug é noexcept e aloca o
+    // proxy dos iteradores (bad_alloc ali seria std::terminate antes de qualquer catch).
+    Impl(const std::filesystem::path& d, uint32_t total, StoreLayout l, std::size_t file_count)
+        : dir(d), total_slots(total), layout(l), files(file_count)
+    {
+    }
+    static_assert(!std::is_nothrow_constructible_v<std::vector<File>, std::size_t>);
+
     std::filesystem::path dir;
     uint32_t total_slots = 0;
     StoreLayout layout;
@@ -135,11 +261,10 @@ Result<StoreFiles, CacheErrorCode> StoreFiles::open(const std::filesystem::path&
     if (!std::filesystem::is_directory(dir, ec) || ec) {
         return fail(CacheErrorCode::IoError);
     }
-    auto impl = std::make_unique<Impl>();
-    impl->dir = dir;
-    impl->total_slots = total_slots;
-    impl->layout = layout;
-    impl->files.resize((uint64_t{total_slots} + layout.slots_per_file - 1) / layout.slots_per_file);
+    auto impl = std::make_unique<Impl>(
+        dir, total_slots, layout,
+        static_cast<std::size_t>((uint64_t{total_slots} + layout.slots_per_file - 1) /
+                                 layout.slots_per_file));
     return StoreFiles(std::move(impl));
 }
 
@@ -243,24 +368,25 @@ Result<void, CacheErrorCode> StoreFiles::shrink_to_ceiling()
     if (impl_->total_slots == 0) return fail(CacheErrorCode::InvalidSize);
     namespace fs = std::filesystem;
     const uint32_t count = file_count();
+    // F1-72, Regra R: roda no start() da CacheOwner. Nenhum fs::path por valor, nenhuma conversão
+    // do nome para estreito, nenhum std::vector<fs::path> (crescer o vetor MOVERIA os caminhos) e
+    // nenhum directory_iterator (ver list_store_files_beyond): só os números dos arquivos além do
+    // teto são guardados, e cada caminho nasce por CÓPIA da pasta.
     // Arquivos inteiros além do teto (só os de nome canônico "store-NNN.bin").
-    std::vector<fs::path> beyond;
+    std::vector<uint32_t> beyond(std::size_t{0});
+    if (const auto rc = list_store_files_beyond(impl_->dir, count, beyond);
+        rc != CacheErrorCode::Success)
+        return fail(rc);
     std::error_code ec;
-    for (fs::directory_iterator it(impl_->dir, ec), end; !ec && it != end; it.increment(ec)) {
-        const std::string name = it->path().filename().string();
-        unsigned n = 0;
-        char extra = 0;
-        if (std::sscanf(name.c_str(), "store-%u.bin%c", &n, &extra) != 1) continue;
-        if (name != file_name(fs::path{}, n).filename().string()) continue;
-        if (n >= count) beyond.push_back(it->path());
-    }
-    if (ec) return fail(CacheErrorCode::IoError);
-    for (const fs::path& p : beyond) {
+    for (const uint32_t n : beyond) {
+        fs::path p(impl_->dir);
+        if (!detail::append_store_file_leaf(p, n)) return fail(CacheErrorCode::Internal);
         if (detail::remove_file(p) != CacheErrorCode::Success) return fail(CacheErrorCode::IoError);
     }
     // Arquivos maiores que o layout pede agora (o último, quando o teto não fecha um arquivo).
     for (uint32_t i = 0; i < count; ++i) {
-        const fs::path p = file_name(impl_->dir, i);
+        fs::path p(impl_->dir);
+        if (!detail::append_store_file_leaf(p, i)) return fail(CacheErrorCode::Internal);
         if (!fs::exists(p, ec) || ec) {
             if (ec) return fail(CacheErrorCode::IoError);
             continue;

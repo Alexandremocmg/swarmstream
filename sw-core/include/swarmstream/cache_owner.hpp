@@ -272,10 +272,16 @@ class CacheOwner
 {
 public:
     // Abre o store, recupera o índice e o journal (04 §5), grava um checkpoint e sobe a thread
-    // dona. Erros do StoreFiles::open (IoError, InvalidSize), da recuperação (IoError,
-    // DiskFull) ou IoError se a thread não pôde ser criada.
+    // dona. Erros do StoreFiles::open (IoError, InvalidSize) e da recuperação (IoError, DiskFull).
+    // Nunca deixa sair exceção nem termina o processo (F1-72, ADR-0018): sem memória em qualquer
+    // passo, OutOfMemory; qualquer outra exceção (inclusive a thread que não pôde ser criada),
+    // Internal. Em toda falha, o que a chamada construiu é liberado antes de voltar: nenhum arquivo
+    // aberto, nenhuma thread, nenhuma memória; a pasta fica num estado que a próxima recuperação
+    // aceita. `config` é só lido (e copiado por dentro): o chamador o monta antes, e start() não
+    // depende de mover nem copiar o argumento (no MSVC em Debug, mover um fs::path aloca dentro de
+    // função noexcept).
     [[nodiscard]] static Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
-    start(CacheOwnerConfig config);
+    start(const CacheOwnerConfig& config);
 
     // Para a thread (como stop()) e fecha o store sem relatar erro. Chamar submit() de outra
     // thread durante ou depois da destruição é uso incorreto: a parada só protege os submit()
@@ -324,7 +330,7 @@ public:
 private:
     friend struct CacheOwnerTestHook; // src/cache_owner_testing.hpp, só para os testes
     [[nodiscard]] static Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
-    start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* context);
+    start_impl(const CacheOwnerConfig& config, detail::CrashHook hook, void* context);
     struct Impl;
     explicit CacheOwner(std::unique_ptr<Impl> impl) noexcept;
     std::unique_ptr<Impl> impl_;

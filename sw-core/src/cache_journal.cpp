@@ -6,7 +6,10 @@
 #include "swarmstream/xxh3.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <cstring>
+#include <cwchar>
+#include <iterator>
 #include <limits>
 #include <system_error>
 #include <unordered_set>
@@ -89,6 +92,21 @@ void append_path_leaf(std::filesystem::path& p, const PathChar* leaf)
         if (!ends_in_separator && !drive_only) p += fs::path::preferred_separator;
     }
     p += leaf;
+}
+
+bool append_store_file_leaf(std::filesystem::path& p, uint32_t index)
+{
+    PathChar name[32];
+#if defined(_WIN32)
+    const int n =
+        std::swprintf(name, std::size(name), L"store-%03u.bin", static_cast<unsigned>(index));
+#else
+    const int n =
+        std::snprintf(name, std::size(name), "store-%03u.bin", static_cast<unsigned>(index));
+#endif
+    if (n <= 0 || static_cast<size_t>(n) >= std::size(name)) return false;
+    append_path_leaf(p, name);
+    return true;
 }
 
 // ------------------------------------------------------------------ registros
@@ -375,9 +393,22 @@ CacheErrorCode write_index_file(const fs::path& file, const fs::path& tmp, uint6
     return CacheErrorCode::Success;
 }
 
+// Zera `out` NO LUGAR (F1-72, Regra R: sem construir um LoadedIndex temporário nem mover o vetor).
+void clear_loaded(LoadedIndex& out) noexcept
+{
+    out.checkpoint_lsn = 0;
+    out.entries.clear();
+}
+
 IndexLoad read_index_file(const fs::path& file, const StoreLayout& layout, LoadedIndex& out)
 {
-    out = LoadedIndex{};
+    // F1-72: roda no start() (recover), atrás do catch dele; aloca (o arquivo inteiro, as entradas,
+    // os conjuntos de conferência) e lança bad_alloc, que o start() devolve como OutOfMemory. Regra
+    // R: nenhum construtor padrão nem movimento de contêiner (no MSVC em Debug alocam o proxy
+    // dentro de construtor noexcept).
+    static_assert(!std::is_nothrow_constructible_v<std::unordered_set<SlotId>, std::size_t>);
+    static_assert(!std::is_nothrow_constructible_v<std::unordered_set<PieceHash>, std::size_t>);
+    clear_loaded(out);
     std::error_code ec;
     if (!fs::exists(file, ec) || ec) return IndexLoad::Missing;
     File f;
@@ -417,8 +448,8 @@ IndexLoad read_index_file(const fs::path& file, const StoreLayout& layout, Loade
     out.entries.resize(count);
     const std::byte* e_in = b.data() + kIndexHeaderSize;
     const std::byte* c_in = e_in + kIndexEntrySize * uint64_t{count};
-    std::unordered_set<SlotId> slots;
-    std::unordered_set<PieceHash> pieces;
+    std::unordered_set<SlotId> slots(std::size_t{0});
+    std::unordered_set<PieceHash> pieces(std::size_t{0});
     for (uint32_t i = 0; i < count; ++i, e_in += kIndexEntrySize) {
         IndexEntry& e = out.entries[i];
         std::memcpy(e.piece.bytes.data(), e_in, 32);
@@ -438,7 +469,7 @@ IndexLoad read_index_file(const fs::path& file, const StoreLayout& layout, Loade
                         slots.insert(static_cast<SlotId>(slot)).second &&
                         pieces.insert(e.piece).second;
         if (!ok) {
-            out = LoadedIndex{};
+            clear_loaded(out);
             return IndexLoad::Invalid; // um índice incoerente não é usado em parte
         }
         e.slot = static_cast<SlotId>(slot);
