@@ -16,6 +16,7 @@ endif()
 
 # Core library (headers and mocks)
 add_library(sw-core STATIC
+    src/api_allocator.cpp
     src/api_stub.cpp
     src/block_ram_cache.cpp
     src/cache_dir_lock.cpp
@@ -25,10 +26,12 @@ add_library(sw-core STATIC
     src/deadline_scheduler.cpp
     src/expected_block_counts.cpp
     src/expected_block_counts_manifest.cpp
+    src/handle_registry.cpp
     src/installed_floor.cpp
     src/memory_cache_store.cpp
     src/memory_content_source.cpp
     src/http_range_source.cpp
+    src/request_registry.cpp
     src/slot_allocator.cpp
     src/store_files.cpp
     src/telemetry.cpp
@@ -256,6 +259,48 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         target_compile_options(sw-core-start-oom-tests PRIVATE /W4 /permissive-)
     else()
         target_compile_options(sw-core-start-oom-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    # F1-67 parte B: componentes internos da API C (sem API pública): alocador do contexto em dois
+    # níveis, registro global de handles com pin/FECHANDO e quarentena, registro de pedidos com ids
+    # do processo e threads de conclusão. O job TSan roda os três (16 threads). O registro de
+    # handles e o de pedidos trazem varreduras de falta de memória (resumo [F1-67B] no log do CI).
+    add_executable(sw-core-api-alloc-tests tests/test_api_allocator.cpp)
+    target_link_libraries(sw-core-api-alloc-tests PRIVATE sw-core)
+    target_include_directories(sw-core-api-alloc-tests PRIVATE src)
+    add_test(NAME sw-core-api-alloc COMMAND sw-core-api-alloc-tests)
+    set_tests_properties(sw-core-api-alloc PROPERTIES TIMEOUT 120)
+    add_executable(sw-core-handle-registry-tests tests/test_handle_registry.cpp)
+    target_link_libraries(sw-core-handle-registry-tests PRIVATE sw-core)
+    target_include_directories(sw-core-handle-registry-tests PRIVATE src)
+    add_test(NAME sw-core-handle-registry COMMAND sw-core-handle-registry-tests)
+    set_tests_properties(sw-core-handle-registry PROPERTIES TIMEOUT 300)
+    add_executable(sw-core-request-registry-tests tests/test_request_registry.cpp)
+    target_link_libraries(sw-core-request-registry-tests PRIVATE sw-core)
+    target_include_directories(sw-core-request-registry-tests PRIVATE src)
+    add_test(NAME sw-core-request-registry COMMAND sw-core-request-registry-tests)
+    set_tests_properties(sw-core-request-registry PROPERTIES TIMEOUT 300)
+    # Esgotamento dos ids (F1-60 §1.5 teste 4): um processo por caso (mexe no contador global).
+    add_executable(sw-core-request-id-exhaustion-tests tests/test_request_id_exhaustion.cpp)
+    target_link_libraries(sw-core-request-id-exhaustion-tests PRIVATE sw-core)
+    target_include_directories(sw-core-request-id-exhaustion-tests PRIVATE src)
+    foreach(case raw submit concurrent)
+        add_test(NAME sw-core-request-id-exhaustion-${case}
+            COMMAND sw-core-request-id-exhaustion-tests ${case})
+        set_tests_properties(sw-core-request-id-exhaustion-${case} PROPERTIES TIMEOUT 120)
+    endforeach()
+    foreach(t sw-core-api-alloc-tests sw-core-handle-registry-tests sw-core-request-registry-tests
+              sw-core-request-id-exhaustion-tests)
+        if(MSVC)
+            target_compile_options(${t} PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(${t} PRIVATE -Wall -Wextra -Wpedantic)
+            target_link_libraries(${t} PRIVATE pthread)
+        endif()
+    endforeach()
+    if(MSVC)
+        # pilha do std::terminate nas varreduras (oom_support.hpp)
+        target_link_libraries(sw-core-handle-registry-tests PRIVATE dbghelp)
+        target_link_libraries(sw-core-request-registry-tests PRIVATE dbghelp)
     endif()
     # Falha da sincronização da pasta DEPOIS do rename (pasta em 0300). Sai com 77 (PULADO no
     # ctest) no Windows, como root ou onde a permissão de pasta não vale.
