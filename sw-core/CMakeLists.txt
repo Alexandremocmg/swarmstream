@@ -240,6 +240,23 @@ if(BUILD_TESTING OR CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     else()
         target_compile_options(sw-core-stop-oom-tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+    # F1-72: CacheOwner::start() (e a recuperação) sem terminar o processo e sem deixar nada preso
+    # por falta de memória, exceção ou falha parcial: varredura de operator new sem pontos
+    # excluídos, falha injetada em cada passo, falhas reais de disco.
+    add_executable(sw-core-start-oom-tests tests/test_cache_owner_start_oom.cpp)
+    target_link_libraries(sw-core-start-oom-tests PRIVATE sw-core)
+    target_include_directories(sw-core-start-oom-tests PRIVATE src)
+    if(NOT MSVC)
+        target_link_libraries(sw-core-start-oom-tests PRIVATE pthread)
+    endif()
+    add_test(NAME sw-core-start-oom COMMAND sw-core-start-oom-tests)
+    set_tests_properties(sw-core-start-oom PROPERTIES TIMEOUT 600)
+    if(MSVC)
+        target_link_libraries(sw-core-start-oom-tests PRIVATE dbghelp) # pilha do std::terminate
+        target_compile_options(sw-core-start-oom-tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(sw-core-start-oom-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
     # Falha da sincronização da pasta DEPOIS do rename (pasta em 0300). Sai com 77 (PULADO no
     # ctest) no Windows, como root ou onde a permissão de pasta não vale.
     add_executable(sw-core-replace-perm-tests tests/test_platform_file_replace_perm.cpp)

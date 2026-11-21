@@ -59,6 +59,10 @@ inline std::atomic<std::int64_t> g_fail_at{0}; // 0 = desarmado; K > 0: falha na
 inline std::atomic<std::int64_t> g_seen{0};    // alocações vistas desde o armamento
 inline std::atomic<bool> g_fired{false};
 inline std::atomic<std::uint64_t> g_total{0}; // todas as alocações (para provar "não aloca")
+// F1-72: alocações VIVAS deste executável (operator new que deram certo menos operator delete de
+// ponteiro não nulo). Serve para provar "nada ficou alocado" depois de uma operação que falhou:
+// compare antes e depois. Só vê o operator new/delete DESTE executável.
+inline std::atomic<std::int64_t> g_live{0};
 // Onde a varredura está, para o std::terminate dizer em que ponto a exceção escapou.
 inline std::atomic<std::int64_t> g_progress_k{0};
 inline std::atomic<const char*> g_progress_scenario{"(fora da varredura)"};
@@ -305,21 +309,30 @@ inline bool should_fail() noexcept
 inline void* raw_alloc(std::size_t n) noexcept
 {
     if (should_fail()) return nullptr;
-    return std::malloc(n == 0 ? 1 : n);
+    void* p = std::malloc(n == 0 ? 1 : n);
+    if (p != nullptr) g_live.fetch_add(1, std::memory_order_relaxed);
+    return p;
 }
 inline void* raw_alloc_aligned(std::size_t n, std::size_t align) noexcept
 {
     if (should_fail()) return nullptr;
     if (n == 0) n = 1;
 #if defined(_WIN32)
-    return ::_aligned_malloc(n, align);
+    void* p = ::_aligned_malloc(n, align);
 #else
-    return std::aligned_alloc(align, (n + align - 1) / align * align);
+    void* p = std::aligned_alloc(align, (n + align - 1) / align * align);
 #endif
+    if (p != nullptr) g_live.fetch_add(1, std::memory_order_relaxed);
+    return p;
 }
-inline void raw_free(void* p) noexcept { std::free(p); }
+inline void raw_free(void* p) noexcept
+{
+    if (p != nullptr) g_live.fetch_sub(1, std::memory_order_relaxed);
+    std::free(p);
+}
 inline void raw_free_aligned(void* p) noexcept
 {
+    if (p != nullptr) g_live.fetch_sub(1, std::memory_order_relaxed);
 #if defined(_WIN32)
     ::_aligned_free(p);
 #else

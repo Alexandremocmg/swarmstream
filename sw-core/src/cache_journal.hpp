@@ -71,6 +71,12 @@ inline constexpr PathChar kTmpSuffix[] = ".tmp";
 // está vazio ou já termina em um; no Windows, nem para "C:").
 void append_path_leaf(std::filesystem::path& p, const PathChar* leaf);
 
+// F1-72: acrescenta "<separador>store-NNN.bin" (o nome de StoreFiles::file_path, "store-%03u.bin")
+// a `p`, montado na largura NATIVA num buffer de pilha, pelo mesmo motivo de append_path_leaf.
+// `p` vem de uma CÓPIA da pasta. false só se a formatação falhar (não ocorre: o nome mais longo,
+// "store-4294967295.bin", tem 20 caracteres).
+[[nodiscard]] bool append_store_file_leaf(std::filesystem::path& p, uint32_t index);
+
 enum class JournalType : uint16_t {
     CommitPiece = 1,
     FreeSlot = 2,
@@ -202,9 +208,12 @@ static_assert(!std::is_nothrow_default_constructible_v<IndexEntry>);
 
 struct LoadedIndex
 {
+    LoadedIndex() : entries(std::size_t{0}) {} // vector(0): Regra R (F1-72, ver JournalRecord)
     uint64_t checkpoint_lsn = 0;
     std::vector<IndexEntry> entries;
 };
+
+static_assert(!std::is_nothrow_default_constructible_v<LoadedIndex>);
 
 enum class IndexLoad : uint8_t {
     Ok,

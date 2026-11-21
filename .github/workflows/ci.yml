@@ -127,6 +127,8 @@ jobs:
           grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
           # F1-71: pontos de falha por cenário do stop() (inclusive no MSVC Debug), para uma queda silenciosa ficar visível.
           grep -a '^\[F1-71\]' "$log" || { echo "::error::resumo [F1-71] ausente em $log"; exit 1; }
+          # F1-72: pontos de falha por cenário do start() (inclusive no MSVC Debug), pelo mesmo motivo.
+          grep -a '^\[F1-72\]' "$log" || { echo "::error::resumo [F1-72] ausente em $log"; exit 1; }
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
@@ -176,6 +178,8 @@ jobs:
           grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
           # F1-71: pontos de falha por cenário do stop() (inclusive no MSVC Debug), para uma queda silenciosa ficar visível.
           grep -a '^\[F1-71\]' "$log" || { echo "::error::resumo [F1-71] ausente em $log"; exit 1; }
+          # F1-72: pontos de falha por cenário do start() (inclusive no MSVC Debug), pelo mesmo motivo.
+          grep -a '^\[F1-72\]' "$log" || { echo "::error::resumo [F1-72] ausente em $log"; exit 1; }
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
@@ -238,6 +242,8 @@ jobs:
           grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
           # F1-71: pontos de falha por cenário do stop() (inclusive no MSVC Debug), para uma queda silenciosa ficar visível.
           grep -a '^\[F1-71\]' "$log" || { echo "::error::resumo [F1-71] ausente em $log"; exit 1; }
+          # F1-72: pontos de falha por cenário do start() (inclusive no MSVC Debug), pelo mesmo motivo.
+          grep -a '^\[F1-72\]' "$log" || { echo "::error::resumo [F1-72] ausente em $log"; exit 1; }
 
       # F1-61: o que ENTRA no binário de um cliente que liga só o sw-format. O ctest já roda este teste
       # acima; aqui ele é repetido com -V para a configuração de build e a lista de símbolos ficarem
@@ -287,6 +293,8 @@ jobs:
           grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
           # F1-71: pontos de falha por cenário do stop() (inclusive no MSVC Debug), para uma queda silenciosa ficar visível.
           grep -a '^\[F1-71\]' "$log" || { echo "::error::resumo [F1-71] ausente em $log"; exit 1; }
+          # F1-72: pontos de falha por cenário do start() (inclusive no MSVC Debug), pelo mesmo motivo.
+          grep -a '^\[F1-72\]' "$log" || { echo "::error::resumo [F1-72] ausente em $log"; exit 1; }
 
   # F1-12: critério de aceite "sem data race no TSan com 16 threads leitoras"
   # (sw-core-owner). Roda todos os testes com -fsanitize=thread; halt_on_error derruba o teste
@@ -332,3 +340,5 @@ jobs:
           grep -a '^\[F1-73\]' "$log" || { echo "::error::resumo [F1-73] ausente em $log"; exit 1; }
           # F1-71: pontos de falha por cenário do stop() (inclusive no MSVC Debug), para uma queda silenciosa ficar visível.
           grep -a '^\[F1-71\]' "$log" || { echo "::error::resumo [F1-71] ausente em $log"; exit 1; }
+          # F1-72: pontos de falha por cenário do start() (inclusive no MSVC Debug), pelo mesmo motivo.
+          grep -a '^\[F1-72\]' "$log" || { echo "::error::resumo [F1-72] ausente em $log"; exit 1; }

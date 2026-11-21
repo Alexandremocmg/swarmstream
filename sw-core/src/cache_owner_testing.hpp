@@ -31,8 +31,38 @@ enum class StopFault : int {
                      // arquivo é fechado de verdade e o IoError substitui o resultado)
 };
 
+// F1-72: os passos do start() (e da recuperação) onde o teste injeta uma falha, na ordem em que
+// rodam. Cada um dispara ANTES do trabalho do passo.
+enum class StartStep : int {
+    StoreOpen = 0, // antes de StoreFiles::open
+    ImplCreate,    // store aberto, antes de construir a Impl
+    Reserve,       // Impl construída, antes de reservar índice, relógio e vítimas
+    ReadIndex,     // recover(): antes de ler o index.bin
+    JournalOpen,   // índice aplicado, antes de abrir (e reaplicar) o journal
+    DropEntries,   // journal aberto, antes de descartar as entradas que não podem ser servidas
+    Shrink,        // antes de reduzir os store-NNN.bin ao teto
+    Checkpoint,    // antes do checkpoint do fim da recuperação
+    OwnerCreate,   // recuperação feita, antes de criar a CacheOwner
+    ThreadCreate,  // CacheOwner criada, antes de criar a thread dona
+    Count
+};
+enum class StartFault : int {
+    None = 0,
+    StdException,    // std::runtime_error
+    NonStdException, // um int (não deriva de std::exception)
+    BadAlloc,        // std::bad_alloc
+    SystemError,     // std::system_error (o que std::thread lança quando não cria a thread)
+    IoError,         // o passo devolve IoError (falha parcial de disco, sem exceção)
+};
+
 struct CacheOwnerTestHook
 {
+    // F1-72: o PRÓXIMO start()/start_with_crash_hook() (de qualquer thread) falha no passo `step`
+    // com `fault`. Cada passo guarda a sua falha. O start() seguinte toma TODAS as falhas pendentes
+    // ao começar: uma falha num passo que ele não alcançar (parou antes) é descartada, não fica
+    // para o start() depois dele.
+    static void inject_start_fault(StartStep step, StartFault fault) noexcept;
+
     // F1-71: no próximo stop(), o passo `step` lança `fault`. Cada passo guarda a sua falha.
     static void inject_stop_fault(CacheOwner& owner, StopStep step, StopFault fault) noexcept;
 
@@ -49,7 +79,7 @@ struct CacheOwnerTestHook
     // F1-11, testes de queda: start() com um gancho chamado nos pontos da escrita e do
     // checkpoint (detail::CrashPoint). O gancho roda na thread dona (e em start/stop).
     static Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
-    start_with_crash_hook(CacheOwnerConfig config, detail::CrashHook hook, void* context);
+    start_with_crash_hook(const CacheOwnerConfig& config, detail::CrashHook hook, void* context);
     // O próximo flush do store (num Put) falha como um EIO do disco.
     static void fail_next_store_sync(CacheOwner& owner) noexcept;
     // O próximo sync do journal (Barreira 2, no COMMIT_PIECE ou no FREE_SLOT) falha como um EIO.

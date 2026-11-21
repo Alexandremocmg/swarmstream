@@ -13,12 +13,12 @@
 #include <algorithm>
 #include <chrono>
 #include <iterator>
+#include <map>
 #include <new>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 
 namespace swarmstream {
@@ -158,6 +158,47 @@ void PieceLease::reset() noexcept
 
 // ---------------------------------------------------------------- CacheOwner
 
+namespace detail {
+
+// F1-72, CacheOwnerTestHook::inject_start_fault: a falha que cada passo do PRÓXIMO start() sofre
+// (StartFault; 0 = nenhuma). O start() toma todas ao começar (take_start_faults), então uma falha
+// num passo que ele não alcança é descartada. Fora dos testes, custa uma troca atômica por passo,
+// só no start().
+std::atomic<int> g_start_fault[static_cast<int>(StartStep::Count)] = {};
+
+struct StartFaults
+{
+    int fault[static_cast<int>(StartStep::Count)] = {};
+};
+
+StartFaults take_start_faults() noexcept
+{
+    StartFaults taken;
+    for (int i = 0; i < static_cast<int>(StartStep::Count); ++i)
+        taken.fault[i] = g_start_fault[i].exchange(0);
+    return taken;
+}
+
+// Lança a falha injetada no passo, ou devolve IoError no lugar do passo (StartFault::IoError), ou
+// Success (sem falha injetada).
+CacheErrorCode start_fault_code(const StartFaults* faults, StartStep step)
+{
+    if (faults == nullptr) return CacheErrorCode::Success;
+    switch (static_cast<StartFault>(faults->fault[static_cast<int>(step)])) {
+    case StartFault::None: return CacheErrorCode::Success;
+    case StartFault::StdException: throw std::runtime_error("F1-72: excecao injetada no start()");
+    case StartFault::NonStdException: throw 72;
+    case StartFault::BadAlloc: throw std::bad_alloc();
+    case StartFault::SystemError:
+        throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
+                                "F1-72: system_error injetado no start()");
+    case StartFault::IoError: return CacheErrorCode::IoError;
+    }
+    return CacheErrorCode::Success;
+}
+
+} // namespace detail
+
 struct CacheOwner::Impl
 {
     struct Entry
@@ -171,9 +212,16 @@ struct CacheOwner::Impl
         bool corrupt = false;
     };
 
-    Impl(StoreFiles s, CacheOwnerConfig c)
-        : store(std::move(s)), slots(c.total_slots), config(std::move(c)),
-          leases(std::make_shared<detail::LeaseTable>(config.total_slots))
+    // F1-72, Regra R (F1-63, F1-69, F1-71): no MSVC em Debug os construtores PADRÃO e de MOVIMENTO
+    // de std::vector/std::string/fs::path são `noexcept` e alocam o proxy dos iteradores; um
+    // bad_alloc ali é std::terminate antes de qualquer catch. Por isso a Impl COPIA o config (a
+    // cópia de fs::path não é noexcept), recebe o store por movimento (só um unique_ptr) e constrói
+    // cada vetor com `(0)`, que não é noexcept, em vez do construtor padrão. O índice é std::map
+    // (ver abaixo): o construtor padrão da árvore pode lançar e não tem o problema.
+    Impl(StoreFiles&& s, const CacheOwnerConfig& c)
+        : store(std::move(s)), slots(c.total_slots), config(c),
+          leases(std::make_shared<detail::LeaseTable>(c.total_slots)), clock(std::size_t{0}),
+          victims(std::size_t{0})
     {
     }
 
@@ -185,7 +233,19 @@ struct CacheOwner::Impl
     // F1-13: contagem de leases por slot. A dona soma (Acquire) e lê (invalidate); os
     // PieceLease subtraem de qualquer thread. Criada antes de a thread existir.
     std::shared_ptr<detail::LeaseTable> leases;
-    std::unordered_map<PieceHash, Entry> index; // chave: a raiz Merkle (ADR-0007)
+    // Chave: a raiz Merkle (ADR-0007). F1-72 (opção A, decisão do dono em 2026-11-20): ÁRVORE, não
+    // tabela hash. No MSVC com _ITERATOR_DEBUG_LEVEL != 0, todo construtor de std::unordered_map
+    // passa por `_Hash_vec(_Any_alloc&&) noexcept`, que aloca o proxy dos iteradores: sem memória,
+    // o start() terminava o processo ao construir a Impl (CI do #57, K=17). A árvore aloca a
+    // sentinela e o proxy em construtor que pode lançar (`_Alloc_sentinel_and_proxy`), e find/erase
+    // não alocam, então o caminho de leitura continua sem alocação. A busca da peça passa a
+    // O(log n) (medido no cartão: ~0,5% do Acquire); o O(1) do docs/04 é o do checksum do bloco
+    // dentro da peça (o vetor da Entry), que não muda.
+    std::map<PieceHash, Entry> index;
+#if defined(_MSC_VER)
+    static_assert(!std::is_nothrow_default_constructible_v<std::map<PieceHash, Entry>>);
+#endif
+    static_assert(!std::is_nothrow_constructible_v<CacheOwnerConfig, const CacheOwnerConfig&>);
 
     // F1-14: o relógio. Um item por slot, reservado em start(); só a dona toca.
     struct ClockSlot
@@ -203,6 +263,8 @@ struct CacheOwner::Impl
     static constexpr size_t kEvictBatch = 64; // FREE_SLOT por sync
     std::vector<ClockSlot> clock;
     std::vector<Victim> victims; // reservado: remover não aloca
+    static_assert(!std::is_nothrow_constructible_v<std::vector<ClockSlot>, std::size_t>);
+    static_assert(!std::is_nothrow_constructible_v<std::vector<Victim>, std::size_t>);
     uint32_t hand = 0;
     uint32_t high_slots = 0; // 0 = remoção desligada
     uint32_t low_slots = 0;
@@ -254,6 +316,9 @@ struct CacheOwner::Impl
     bool stopped = false; // guardado por stop_mutex
     // CacheOwnerTestHook (F1-71): a falha que cada passo do stop() lança (StopFault; 0 = nenhuma).
     std::atomic<int> stop_fault[3] = {};
+    // CacheOwnerTestHook (F1-72): as falhas do start() em curso (só durante start(); nullptr
+    // depois).
+    const detail::StartFaults* start_faults = nullptr;
 
     // CacheOwnerTestHook: segura os submit() na janela entre ler `stopping` e o push, e marca
     // quando a dona saiu do laço principal. Fora dos testes, custa uma leitura relaxada.
@@ -265,9 +330,6 @@ struct CacheOwner::Impl
     bool hook_owner_left_loop = false; // guardado por hook_mutex
 
     void hold_in_window() noexcept;
-
-    [[nodiscard]] std::filesystem::path index_path() const { return config.dir / "index.bin"; }
-    [[nodiscard]] std::filesystem::path journal_path() const { return config.dir / "journal.bin"; }
 
     void crash(detail::CrashPoint p) const noexcept
     {
@@ -316,35 +378,53 @@ struct CacheOwner::Impl
 // 04 §5. Índice do último checkpoint + registros do journal com LSN maior; depois descarta o
 // que não pode ser servido (fora do teto, arquivo de store ausente) e grava um checkpoint
 // novo, para o journal recomeçar limpo.
+//
+// F1-72: aloca (índice, mapa por slot, checksums, caminhos, a std::function do replay) e roda atrás
+// do catch de start(). Regra R (ver o construtor da Impl): nada de construtor padrão nem de
+// movimento de std::vector/fs::path/Journal, e nenhum std::unordered_map local (no MSVC Debug todo
+// construtor dele aloca o proxy dentro de `_Hash_vec(...) noexcept`; o mapa por slot é std::map,
+// cuja árvore aloca a sentinela e o proxy em construtor que pode lançar). Os caminhos nascem por
+// CÓPIA da pasta e ganham o nome na largura nativa (append_path_leaf), as entradas do índice são
+// construídas NO LUGAR com os checksums COPIADOS, e o journal é aberto DENTRO de `journal`
+// (open_in_place), sem Result<Journal>.
 CacheErrorCode CacheOwner::Impl::recover()
 {
+    if (auto rc = detail::start_fault_code(start_faults, StartStep::ReadIndex);
+        rc != CacheErrorCode::Success)
+        return rc;
     const StoreLayout& layout = config.layout;
+    std::filesystem::path index_file(config.dir);
+    detail::append_path_leaf(index_file, detail::kIndexLeaf);
     detail::LoadedIndex loaded;
-    const detail::IndexLoad load = detail::read_index_file(index_path(), layout, loaded);
+    const detail::IndexLoad load = detail::read_index_file(index_file, layout, loaded);
     recovery.index_loaded = load == detail::IndexLoad::Ok;
     recovery.index_invalid = load == detail::IndexLoad::Invalid;
     recovery.index_lsn = recovery.index_loaded ? loaded.checkpoint_lsn : 0;
 
-    std::unordered_map<SlotId, PieceHash> by_slot;
+    std::map<SlotId, PieceHash> by_slot;
     auto erase_piece = [&](const PieceHash& piece) {
         if (auto it = index.find(piece); it != index.end()) {
             by_slot.erase(it->second.slot);
             index.erase(it);
         }
     };
-    auto put_entry = [&](const PieceHash& piece, Entry e) {
-        if (auto s = by_slot.find(e.slot); s != by_slot.end() && s->second != piece) {
+    auto put_entry = [&](const PieceHash& piece, SlotId slot, uint32_t size,
+                         const std::vector<uint64_t>& blocks) {
+        if (auto s = by_slot.find(slot); s != by_slot.end() && s->second != piece) {
             // O slot foi reaproveitado: o dado antigo foi sobrescrito, vale o registro novo.
             erase_piece(s->second);
             ++recovery.dropped_conflict;
         }
         erase_piece(piece); // a mesma peça noutro slot: vale a mais nova
-        by_slot[e.slot] = piece;
-        index[piece] = std::move(e);
+        by_slot[slot] = piece;
+        // A peça não está mais no índice (erase_piece acima): try_emplace constrói a Entry NO
+        // LUGAR, com os checksums copiados (Entry(slot, size, blocks): agregado com parênteses,
+        // C++20).
+        index.try_emplace(piece, slot, size, blocks);
     };
     if (recovery.index_loaded) {
-        for (detail::IndexEntry& e : loaded.entries) {
-            put_entry(e.piece, Entry{e.slot, e.size, std::move(e.blocks)});
+        for (const detail::IndexEntry& e : loaded.entries) {
+            put_entry(e.piece, e.slot, e.size, e.blocks);
         }
     }
 
@@ -355,7 +435,7 @@ CacheErrorCode CacheOwner::Impl::recover()
             return;
         }
         if (r.type == detail::JournalType::CommitPiece) {
-            put_entry(r.piece, Entry{static_cast<SlotId>(slot), r.piece_size, r.blocks});
+            put_entry(r.piece, static_cast<SlotId>(slot), r.piece_size, r.blocks);
         } else if (r.type == detail::JournalType::FreeSlot) {
             if (auto s = by_slot.find(static_cast<SlotId>(slot));
                 s != by_slot.end() && s->second == r.piece) {
@@ -363,15 +443,25 @@ CacheErrorCode CacheOwner::Impl::recover()
             }
         }
     };
+    if (auto rc = detail::start_fault_code(start_faults, StartStep::JournalOpen);
+        rc != CacheErrorCode::Success)
+        return rc;
+    std::filesystem::path journal_file(config.dir);
+    detail::append_path_leaf(journal_file, detail::kJournalLeaf);
     detail::JournalReplay replay;
-    auto opened = detail::Journal::open(journal_path(), recovery.index_lsn, apply, replay);
-    if (!opened) return opened.error();
-    journal = std::move(*opened);
+    if (auto rc = detail::Journal::open_in_place(journal, journal_file, recovery.index_lsn, apply,
+                                                 replay);
+        rc != CacheErrorCode::Success) {
+        return rc; // o arquivo pode ter ficado aberto em `journal`: a Impl o fecha ao ser destruída
+    }
     recovery.journal_created = replay.created;
     recovery.journal_header_ok = replay.header_ok;
     recovery.journal_records_applied = replay.applied;
     recovery.journal_truncated_bytes = replay.truncated_bytes;
     next_lsn = std::max(replay.last_lsn, recovery.index_lsn) + 1;
+    if (auto rc = detail::start_fault_code(start_faults, StartStep::DropEntries);
+        rc != CacheErrorCode::Success)
+        return rc;
 
     // O que não pode ser servido sai do índice: fora do teto (o teto diminuiu), maior que o
     // slot, ou num store-XXX.bin que não existe (no Windows não há fsync da pasta: um arquivo
@@ -398,7 +488,10 @@ CacheErrorCode CacheOwner::Impl::recover()
             drop = true;
         } else {
             std::error_code ec;
-            const auto file = StoreFiles::file_path(config.dir, e.slot / layout.slots_per_file);
+            std::filesystem::path file(config.dir);
+            if (!detail::append_store_file_leaf(file, e.slot / layout.slots_per_file)) {
+                return CacheErrorCode::Internal; // não ocorre (ver append_store_file_leaf)
+            }
             if (!std::filesystem::exists(file, ec) || ec) {
                 ++recovery.dropped_missing_file;
                 drop = true;
@@ -408,6 +501,9 @@ CacheErrorCode CacheOwner::Impl::recover()
     }
 
     // Teto menor: apaga os arquivos além do teto e encurta o último (F1-10, item 6).
+    if (auto rc = detail::start_fault_code(start_faults, StartStep::Shrink);
+        rc != CacheErrorCode::Success)
+        return rc;
     if (auto s = store.shrink_to_ceiling(); !s) return s.error();
     for (const auto& [piece, e] : index) {
         if (!slots.mark_used(e.slot)) return CacheErrorCode::IoError; // não deveria ocorrer
@@ -417,6 +513,9 @@ CacheErrorCode CacheOwner::Impl::recover()
     recovery.pieces = static_cast<uint32_t>(index.size());
     // A visão do chamador só vale durante a recuperação: ele a libera depois de start().
     config.expected_block_counts = {};
+    if (auto rc = detail::start_fault_code(start_faults, StartStep::Checkpoint);
+        rc != CacheErrorCode::Success)
+        return rc;
     return checkpoint();
 }
 
@@ -876,14 +975,16 @@ void CacheOwner::Impl::remove(CacheRequest& r)
     r.complete(rc, 0);
 }
 
-Result<std::unique_ptr<CacheOwner>, CacheErrorCode> CacheOwner::start(CacheOwnerConfig config)
+Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
+CacheOwner::start(const CacheOwnerConfig& config)
 {
-    return start_impl(std::move(config), nullptr, nullptr);
+    return start_impl(config, nullptr, nullptr);
 }
 
 Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
-CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* context)
+CacheOwner::start_impl(const CacheOwnerConfig& config, detail::CrashHook hook, void* context)
 {
+    // As validações abaixo não alocam nem tocam no disco.
     // Teto 0 é configuração errada (um CacheOwnerConfig{} só com a pasta): reduzir o teto a 0
     // apagaria todos os store-NNN.bin na recuperação.
     if (config.layout.slots_per_file == 0 || config.total_slots == 0) {
@@ -899,12 +1000,31 @@ CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* co
     if (!expected_block_counts_valid(config.expected_block_counts)) {
         return Unexpected(CacheErrorCode::InvalidSize);
     }
-    auto store = StoreFiles::open(config.dir, config.total_slots, config.layout);
-    if (!store) return Unexpected(store.error());
-    std::unique_ptr<Impl> impl;
+    // Falhas injetadas pelo teste (CacheOwnerTestHook::inject_start_fault): tomadas agora, todas.
+    const detail::StartFaults faults = detail::take_start_faults();
+    // F1-72 (ADR-0018): daqui em diante quase tudo aloca ou toca no disco, e NENHUMA exceção sai de
+    // start(): std::bad_alloc => OutOfMemory; qualquer outra exceção, std::exception ou não
+    // (inclusive o std::system_error de std::thread que não criou a thread) => Internal; erro de
+    // disco continua IoError/DiskFull, devolvido como código pelo próprio passo. Em qualquer falha,
+    // o que esta chamada construiu é liberado ao sair do escopo, antes de devolver: o store (fecha
+    // os arquivos), a Impl (journal, índice, relógio) e a CacheOwner ainda sem thread. Nenhuma
+    // thread fica solta: ela é o ÚLTIMO passo e nada que possa falhar vem depois dela. O que a
+    // recuperação já gravou na pasta (journal criado ou truncado, checkpoint, store reduzido ao
+    // teto) é o que o protocolo (04 §4 e §5) admite, e a próxima abertura o refaz igual.
     try {
-        impl = std::make_unique<Impl>(std::move(*store), std::move(config));
-        impl->index.reserve(impl->config.total_slots); // o índice não reorganiza no meio do jogo
+        if (auto rc = detail::start_fault_code(&faults, StartStep::StoreOpen);
+            rc != CacheErrorCode::Success)
+            return Unexpected(rc);
+        auto store = StoreFiles::open(config.dir, config.total_slots, config.layout);
+        if (!store) return Unexpected(store.error());
+        if (auto rc = detail::start_fault_code(&faults, StartStep::ImplCreate);
+            rc != CacheErrorCode::Success)
+            return Unexpected(rc);
+        auto impl = std::make_unique<Impl>(std::move(*store), config);
+        impl->start_faults = &faults;
+        if (auto rc = detail::start_fault_code(&faults, StartStep::Reserve);
+            rc != CacheErrorCode::Success)
+            return Unexpected(rc);
         impl->clock.resize(impl->config.total_slots);
         impl->victims.reserve(Impl::kEvictBatch);
         if (evict_on) {
@@ -918,16 +1038,33 @@ CacheOwner::start_impl(CacheOwnerConfig config, detail::CrashHook hook, void* co
         impl->crash_hook = hook;
         impl->crash_context = context;
         if (auto rc = impl->recover(); rc != CacheErrorCode::Success) return Unexpected(rc);
+        impl->start_faults = nullptr;
+        if (auto rc = detail::start_fault_code(&faults, StartStep::OwnerCreate);
+            rc != CacheErrorCode::Success)
+            return Unexpected(rc);
+        // A CacheOwner nasce ANTES da thread: se a alocação dela falhasse com a thread já rodando,
+        // a Impl seria destruída com a thread juntável (std::terminate) e a thread usaria memória
+        // liberada. Se `new` falhar, `impl` continua dono de tudo (o construtor nem roda).
+        std::unique_ptr<CacheOwner> owner(new CacheOwner(std::move(impl)));
+        Impl& s = *owner->impl_;
+        // Até a thread existir, a CacheOwner fica marcada como parada: se criar a thread falhar, o
+        // destrutor dela não faz o checkpoint nem o join (não há o que juntar) e o journal e o
+        // store são fechados pelos destrutores da Impl. O erro devolvido é o do passo que falhou.
+        s.stopped = true;
+        if (auto rc = detail::start_fault_code(&faults, StartStep::ThreadCreate);
+            rc != CacheErrorCode::Success)
+            return Unexpected(rc);
+        Impl* p = &s;
+        s.thread = std::thread([p] { p->run(); });
+        s.stopped = false; // ninguém mais vê a CacheOwner ainda: sem corrida com stop()
+        return owner;
     } catch (const std::bad_alloc&) {
-        return Unexpected(CacheErrorCode::IoError);
+        return Unexpected(CacheErrorCode::OutOfMemory);
+    } catch (const std::exception&) {
+        return Unexpected(CacheErrorCode::Internal);
+    } catch (...) {
+        return Unexpected(CacheErrorCode::Internal);
     }
-    try {
-        Impl* p = impl.get();
-        impl->thread = std::thread([p] { p->run(); });
-    } catch (const std::system_error&) {
-        return Unexpected(CacheErrorCode::IoError);
-    }
-    return std::unique_ptr<CacheOwner>(new CacheOwner(std::move(impl)));
 }
 
 CacheOwner::CacheOwner(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
@@ -1145,10 +1282,15 @@ bool CacheOwnerTestHook::wait_submitters_in_window(CacheOwner& owner, uint32_t c
 }
 
 Result<std::unique_ptr<CacheOwner>, CacheErrorCode>
-CacheOwnerTestHook::start_with_crash_hook(CacheOwnerConfig config, detail::CrashHook hook,
+CacheOwnerTestHook::start_with_crash_hook(const CacheOwnerConfig& config, detail::CrashHook hook,
                                           void* context)
 {
-    return CacheOwner::start_impl(std::move(config), hook, context);
+    return CacheOwner::start_impl(config, hook, context);
+}
+
+void CacheOwnerTestHook::inject_start_fault(StartStep step, StartFault fault) noexcept
+{
+    detail::g_start_fault[static_cast<int>(step)].store(static_cast<int>(fault));
 }
 
 void CacheOwnerTestHook::inject_stop_fault(CacheOwner& owner, StopStep step,
