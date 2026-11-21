@@ -92,7 +92,11 @@ jobs:
             base="origin/main"
           fi
           clang-format --version
-          mapfile -t files < <(git diff --name-only "$base...$GITHUB_SHA" -- '*.cpp' '*.c' '*.h' '*.hpp')
+          # swarmstream.h (contrato publico v0, congelado pelo ADR-0014) e escrito e alinhado a mao e nunca
+          # foi formatado pelo clang-format: sem esta exclusao, qualquer PR que o toque (ate so um
+          # comentario) reprova aqui por linhas que ele nao alterou. As demais regras de revisao do header
+          # (ADR-0014: so muda por ADR aceito, com revisao) continuam valendo.
+          mapfile -t files < <(git diff --name-only "$base...$GITHUB_SHA" -- '*.cpp' '*.c' '*.h' '*.hpp' ':(exclude)sw-core/include/swarmstream.h')
           if ((${#files[@]})); then
             clang-format --dry-run --Werror "${files[@]}"
           else
