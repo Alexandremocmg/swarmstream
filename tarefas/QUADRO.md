@@ -4,16 +4,18 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 
 | EM_ANDAMENTO | EM_REVISAO | AGUARDANDO_DONO | BLOQUEADA | ABERTA | FEITA |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 1 | 7 | 24 | 42 |
+| 1 | 0 | 1 | 6 | 24 | 42 |
 
 ## Espera o dono do produto
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
+
+## EM_ANDAMENTO
+- [F1-67](cartoes/F1-67.md) (R1, sessão: quatro partes (ver "Divisão em quatro PRs"): parte B: sessão Opus2 `local_b92625b1-bb1f-47df-8ad5-f69c0f408a91`; parte A: (a atribuir, outra sessão Opus, em paralelo com a B); partes C e D: (a atribuir, depois de A, B e do PR do header)): API C real, etapa 1: contexto, ciclo de vida, handles, VFS e protocolo de fechamento (`sw_init`, `sw_shutdown`, `sw_open`, `sw_close`, `sw_file_size`, `sw_stat`, `sw_dir_*`)
 
 ## BLOQUEADA
 - [F1-58](cartoes/F1-58.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Remedir o manifesto v0 com libsodium real e atender (ou renegociar) tempo, tamanho e memória
 - [F1-59](cartoes/F1-59.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Integrar a telemetria às leituras reais (`sw_read`) e o `telemetry_path` ao `sw_init`
 - [F1-60](cartoes/F1-60.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real (`sw_init`, `sw_open`, `sw_read`, `sw_shutdown`) sobre cache, agendador, fonte e VFS
-- [F1-67](cartoes/F1-67.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): API C real, etapa 1: contexto, ciclo de vida, handles, VFS e protocolo de fechamento (`sw_init`, `sw_shutdown`, `sw_open`, `sw_close`, `sw_file_size`, `sw_stat`, `sw_dir_*`)
 - [F1-68](cartoes/F1-68.md) (R1, sessão: (a atribuir) sessão nova só para este cartão, diferente da implementadora do F1-67): API C real, etapa 2: leitura, `sw_ensure_async`, `sw_cancel` e `sw_get_stats` sobre cache, agendador e fonte
 - [F1-75](cartoes/F1-75.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Adaptador de medição PRELIMINAR (fora da API C) para validar a bancada e antecipar a leitura de rodadas
 - [F1-76](cartoes/F1-76.md) (R1, sessão: (a atribuir) sessão nova só para este cartão): Acompanhamento das limitações L1 a L3 do F1-67: reexecutar as varreduras de falta de memória sobre a API C e encerrar as limitações
