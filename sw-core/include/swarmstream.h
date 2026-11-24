@@ -243,7 +243,33 @@ SW_API sw_result SW_CALL sw_init(const sw_config* cfg, sw_ctx** out_ctx);
  * Pré-condições: todos os sw_file e sw_dir fechados (senão SW_E_BUSY e nada
  * muda); nenhuma outra chamada em curso com este ctx; não chamar de dentro
  * de callback (SW_E_BUSY). Pedidos de hint pendentes são descartados.
- * Depois de SW_OK, `ctx` é inválido. */
+ * Passada a validação, o encerramento SEMPRE vai até o fim; o resultado é:
+ *   SW_OK                  tudo liberado, lock solto. `ctx` é inválido.
+ *   SW_E_IO, SW_E_DISK_FULL, SW_E_OUT_OF_MEMORY, SW_E_INTERNAL
+ *                          uma etapa do encerramento (disco, memória ou erro
+ *                          interno) falhou. Mesmo assim TODOS os recursos
+ *                          foram liberados, o lock foi solto e `ctx` é
+ *                          inválido, como em SW_OK. A biblioteca não termina
+ *                          o processo. Se mais de uma etapa falhou, devolve
+ *                          o código da primeira na ordem do encerramento; as
+ *                          outras vão ao log_fn. Não repita a chamada.
+ *   SW_E_BUSY              há handles abertos, ou chamada vinda de callback.
+ *                          Nada muda; `ctx` continua válido.
+ *   SW_E_INVALID_ARGUMENT  `ctx` é NULL, desconhecido ou já desligado. Nada
+ *                          muda.
+ *   SW_E_SHUTTING_DOWN     outra thread já está desligando este ctx (uso
+ *                          incorreto). Nada muda por esta chamada.
+ * Nenhum outro código é devolvido. O encerramento pode alocar memória; sem
+ * memória, etapas opcionais (como o checkpoint final do cache) são puladas,
+ * o código é SW_E_OUT_OF_MEMORY e a liberação prossegue. Depois de qualquer
+ * resultado que não seja SW_E_BUSY, SW_E_INVALID_ARGUMENT ou
+ * SW_E_SHUTTING_DOWN, o alocador e o log_fn da configuração não são mais
+ * usados. Depois de uma falha, o próximo sw_init aplica o protocolo de
+ * recuperação da pasta, que pode descartar ou reconstruir parte da
+ * indexação, ou falhar com diagnóstico; nenhum dado é entregue sem
+ * verificação, e não há garantia de que o próximo sw_init tenha sucesso.
+ * Reusar um `ctx` desligado é indefinido; a biblioteca só o rejeita por
+ * melhor esforço. */
 SW_API sw_result SW_CALL sw_shutdown(sw_ctx* ctx);
 
 /* ------------------------------------------------------------------------
