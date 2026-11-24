@@ -47,7 +47,8 @@ Pela regra de economia, cartão novo vai para **sessão nova**.
 ## Estado em 2026-11-21
 - **Main:** `b59fb1c` (merge do #57, F1-72), sobre `880ab74`. O `ci` e o `lint` da `main` em `b59fb1c` passaram; o `extension` ficou **vermelho só no job Windows** (de novo, mesma causa do `0be4c4d`: configuração do `zstd` no CMake do GDExtension, imagem nova do runner; determinístico). PRs que só tocam `docs/` ou `tarefas/` não disparam CI.
 - **F1-69 (#37), F1-73 (#51), F1-74 (#53), F1-71 (#55) e F1-72 (#57) FEITOS.** `start()`/`recover()` e `stop()` não terminam o processo por falta de memória ou exceção; o índice em memória do cache é `std::map` (no MSVC com `_ITERATOR_DEBUG_LEVEL != 0`, qualquer `unordered_*` pode terminar o processo sem memória). A C2 está encerrada; falta a C1 completa (F1-67 e F1-76).
-- **Lint:** `clang-format` fixo em 18.1.8 (pacote do PyPI, #49). O `clang-tidy` continua pelo `apt`, sem versão fixa.
+- **2026-11-24:** `main` em `2f7e7d6` (merge do #59 sobre o #61, `7037b27`). **F1-67 em andamento em quatro partes:** parte B = PR #62 (Opus2 `local_b92625b1-bb1f-47df-8ad5-f69c0f408a91`; crítico; revisão independente `local_86fe0f17-5a25-46b6-855f-b5e18d99d4e8` publicou APROVO COM RESSALVAS sobre os heads `1e9ca77` e `0905caaa`; lacuna de teste do ramo cíclico de `table_erase_locked` e M32 probabilístico aguardam decisão do dono; aceite do dono pendente); parte A (`close()` da telemetria) sem sessão; C e D bloqueadas. Revisoras do #59: `local_8ef3d8af-e641-449a-982c-b3a9ed0d034c` (R1) e `local_613efe62-f8c7-43bb-9176-6c20b2322091` (R2), terminadas.
+- **Lint:** `clang-format` fixo em 18.1.8 (pacote do PyPI, #49). O `swarmstream.h` está excluído do passo `C++ format` (#61). O `clang-tidy` continua pelo `apt`, sem versão fixa.
 - **ADR-0018:** Aceita. Ordem **C2 → C1**.
 - **CI:** o `ci.yml` exige os resumos `[F1-71]` e `[F1-72]` (pontos de falha por cenário) nos 5 passos de resumo; Windows Debug: `[F1-71]` 21/31/31/31, `[F1-72]` 72/119/109/158. O `sw-core-start-oom` leva 79 s no Windows Debug do CI.
 - **F1-57 (teste instável do TSan)** falhou duas vezes na tarde de 2026-11-12 e uma em 2026-11-02; ver o registro do cartão.
@@ -61,10 +62,13 @@ Pela regra de economia, cartão novo vai para **sessão nova**.
 5. **Ressalvas do #57:** R1 a R4 (lacunas de teste) e **R5: `put()` por falta de memória termina o processo no MSVC Debug, sem cartão dono**; a recuperação copia os checksums do `index.bin` (pico de memória, não medido).
 6. **`extension` da `main` vermelho no job Windows** (determinístico; runs `44768643933` e `44896614283`): abrir cartão para corrigir o ASM do `zstd` ou fixar a imagem.
 7. **Autorização do próximo cartão de código:** **F1-67** e **F1-68** (sessão nova e palavra do dono para cada um); depois o F1-76.
-8. Prioridade do F1-57 e as pendências antigas de [decisoes.md](decisoes.md). Baixa gravidade, sem dono: `to.parent_path()` vazio no helper.
+8. Prioridade do F1-57 e as pendências antigas de [decisoes.md](decisoes.md).
+9. **Achados relatados pela Opus2 em 2026-11-24, não reproduzidos pela coordenação:** `sw-core-start-oom` (F1-72) instável no Windows local com MinGW Release ("THREAD VIVA": conta todas as threads do processo, inclusive as do pool do sistema; falhou em 2 de 4 rodadas na `main` limpa, e em mais 1 de 3); `sw-core-scheduler` falhou uma vez no Debug local (`test_deadline_scheduler.cpp:962`, espera de 5 s por tempo; 5 de 5 passes depois). Sem cartão dono; no CI passaram.
+10. **Polimento do comentário de `sw_shutdown`** (R2-2 a R2-6 do #59) e a nota desatualizada do ADR-0018 ("ainda não feito"): exigem ADR e R1 + R2; sem autorização.
+11. **Ressalvas do parecer do #62** (lacuna de teste do ramo cíclico da remoção por deslocamento, M32 probabilístico, `acquire`/`begin_close` devolvendo `core` sem pin em `Closing`, `stop()` concorrente, regra do `dst` no cancelamento para o F1-68): o dono decide se entram no #62 ou viram item antes da parte D. Baixa gravidade, sem dono: `to.parent_path()` vazio no helper.
 
 ## Próximos passos
-1. PR do comentário de `sw_shutdown` no `swarmstream.h`, conforme o texto aceito do ADR-0018, com revisão do R1 e do R2.
+1. ~~PR do comentário de `sw_shutdown` no `swarmstream.h`~~ **FEITO em 2026-11-24** (#59, mesclado em `2f7e7d6`, com R1 e R2; #61 tirou o header do clang-format). As ressalvas viraram condições da parte C do F1-67 ([registro](cartoes/F1-67.md)).
 2. F1-67 e F1-68 em sessões novas, cada um só com início autorizado pelo dono; o F1-67 deve tratar o `stop()` da thread dona (R4 do #55) e o `unordered_*` no MSVC Debug.
 
 ## Como conferir (armadilhas)
