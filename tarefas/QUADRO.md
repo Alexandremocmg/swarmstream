@@ -10,7 +10,7 @@ Gerado por `python tarefas/gerar_quadro.py` a partir dos cartões. **Não edite 
 - [F1-44](cartoes/F1-44.md): Refazer o baseline com 10 rodadas e recalcular os limites pela mesma regra
 
 ## EM_ANDAMENTO
-- [F1-67](cartoes/F1-67.md) (R1, sessão: quatro partes (ver "Divisão em quatro PRs"): parte B: sessão Opus2 `local_b92625b1-bb1f-47df-8ad5-f69c0f408a91`; parte A: (a atribuir, outra sessão Opus, em paralelo com a B); partes C e D: (a atribuir, depois de A, B e do PR do header)): API C real, etapa 1: contexto, ciclo de vida, handles, VFS e protocolo de fechamento (`sw_init`, `sw_shutdown`, `sw_open`, `sw_close`, `sw_file_size`, `sw_stat`, `sw_dir_*`)
+- [F1-67](cartoes/F1-67.md) (R1, sessão: quatro partes (ver "Divisão em quatro PRs"): parte B: sessão Opus2 `local_b92625b1-bb1f-47df-8ad5-f69c0f408a91` (FEITA, #62); parte A: sessão Opus 3 `local_9e723089-16f2-4cbf-bf23-5e3010d3b0f4`; partes C e D: (a atribuir; a C depois da A, a D depois da C)): API C real, etapa 1: contexto, ciclo de vida, handles, VFS e protocolo de fechamento (`sw_init`, `sw_shutdown`, `sw_open`, `sw_close`, `sw_file_size`, `sw_stat`, `sw_dir_*`)
 
 ## BLOQUEADA
 - [F1-58](cartoes/F1-58.md) (R2, sessão: (a atribuir) sessão nova só para este cartão): Remedir o manifesto v0 com libsodium real e atender (ou renegociar) tempo, tamanho e memória
