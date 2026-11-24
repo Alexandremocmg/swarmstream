@@ -118,8 +118,8 @@ public:
     void unpin() noexcept;
 
     // Usado pelo fechador DEPOIS de HandleRegistry::begin_close: espera os pins de OUTROS usuários
-    // chegarem a 0. O fechador não tem pin. Não chame com mutex de fatia na mão (nenhum código daqui
-    // o faz).
+    // chegarem a 0. O fechador não tem pin. Não chame com mutex de fatia na mão (nenhum código
+    // daqui o faz).
     void wait_unpinned() noexcept;
 
     [[nodiscard]] std::uint32_t pins() const noexcept
@@ -162,8 +162,8 @@ enum class HandleStatus : std::uint8_t {
 struct HandleLookup
 {
     HandleStatus status = HandleStatus::Unknown;
-    void* owner = nullptr;     // o dono (Context*) registrado na entrada; nulo se não Ok/Closing
-    PinCore* core = nullptr;   // nulo se não Ok/Closing
+    void* owner = nullptr;   // o dono (Context*) registrado na entrada; nulo se não Ok/Closing
+    PinCore* core = nullptr; // nulo se não Ok/Closing
 };
 
 class HandleRegistry
@@ -272,7 +272,8 @@ public:
         return out;
     }
 
-    // Tira tudo, da mais antiga para a mais nova, entregando cada uma a `release(QuarantinedShell)`.
+    // Tira tudo, da mais antiga para a mais nova, entregando cada uma a
+    // `release(QuarantinedShell)`.
     template <class F>
     void drain(F&& release) noexcept
     {

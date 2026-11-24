@@ -19,7 +19,8 @@ constexpr std::size_t kMinCap = 16;
 std::size_t next_pow2(std::size_t v) noexcept
 {
     std::size_t p = 1;
-    while (p < v) p <<= 1;
+    while (p < v)
+        p <<= 1;
     return p;
 }
 } // namespace
@@ -62,10 +63,7 @@ bool PinCore::pin_locked() noexcept
     return true;
 }
 
-void PinCore::set_closing_locked() noexcept
-{
-    word_.fetch_or(kClosing, std::memory_order_acq_rel);
-}
+void PinCore::set_closing_locked() noexcept { word_.fetch_or(kClosing, std::memory_order_acq_rel); }
 
 void PinCore::clear_closing_locked() noexcept
 {
@@ -160,7 +158,8 @@ bool HandleRegistry::grow_locked(Shard& s) noexcept
         const Entry& e = s.slots[i];
         if (e.addr == kEmpty || e.addr == kTomb) continue;
         std::size_t j = static_cast<std::size_t>(hash(e.addr)) & mask;
-        while (slots[j].addr != kEmpty) j = (j + 1) & mask;
+        while (slots[j].addr != kEmpty)
+            j = (j + 1) & mask;
         slots[j] = e;
     }
     delete[] s.slots;
@@ -186,7 +185,8 @@ HandleStatus HandleRegistry::insert(const void* addr, HandleKind kind, void* own
     }
     const std::size_t mask = s.cap - 1;
     std::size_t i = static_cast<std::size_t>(hash(a)) & mask;
-    while (s.slots[i].addr != kEmpty && s.slots[i].addr != kTomb) i = (i + 1) & mask;
+    while (s.slots[i].addr != kEmpty && s.slots[i].addr != kTomb)
+        i = (i + 1) & mask;
     if (s.slots[i].addr == kTomb) --s.tombs;
     // O PinCore começa sem pins e VIVO (precondição: novo, ou de um fechamento que terminou).
     core->word_.store(0, std::memory_order_release);

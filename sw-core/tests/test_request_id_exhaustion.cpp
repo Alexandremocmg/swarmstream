@@ -124,7 +124,8 @@ int case_concurrent()
     hook::set_last_issued_request_id(kMax - 1 - kLeft);
     constexpr int kThreads = 16;
     std::vector<std::vector<sw_request_id>> got(kThreads);
-    for (auto& v : got) v.reserve(kLeft);
+    for (auto& v : got)
+        v.reserve(kLeft);
     std::atomic<int> firsts{0};
     std::vector<std::thread> threads;
     for (int t = 0; t < kThreads; ++t) {
@@ -135,22 +136,26 @@ int case_concurrent()
                 if (id == 0) {
                     if (first) firsts.fetch_add(1);
                     // Depois do fim, nunca mais um id.
-                    for (int i = 0; i < 100; ++i) SW_CHECK(issue_request_id() == 0);
+                    for (int i = 0; i < 100; ++i)
+                        SW_CHECK(issue_request_id() == 0);
                     return;
                 }
                 got[t].push_back(id);
             }
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     std::vector<sw_request_id> all;
-    for (const auto& v : got) all.insert(all.end(), v.begin(), v.end());
+    for (const auto& v : got)
+        all.insert(all.end(), v.begin(), v.end());
     std::sort(all.begin(), all.end());
     SW_CHECK(all.size() == kLeft);
     SW_CHECK(std::adjacent_find(all.begin(), all.end()) == all.end());
     SW_CHECK(all.front() == kMax - kLeft && all.back() == kMax - 1);
     SW_CHECK(firsts.load() == 1);
-    std::printf("ok: concurrent: 16 threads, %zu ids finais, todos uma vez, nenhum 0\n", all.size());
+    std::printf("ok: concurrent: 16 threads, %zu ids finais, todos uma vez, nenhum 0\n",
+                all.size());
     return 0;
 }
 

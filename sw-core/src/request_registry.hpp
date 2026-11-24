@@ -29,12 +29,12 @@
 // aqui, `close_file` e `stop` devolvem Busy. Cada pedido aceito tem EXATAMENTE UM callback; erro em
 // `submit` => nenhum.
 //
-// CANCELAMENTO E FECHAMENTO. `cancel` e `close_file` levam o pedido pendente (ENFILEIRADO ou EM_VOO)
-// direto a CONCLUINDO com SW_E_CANCELLED e o tiram da tabela de ids: uma conclusão posterior da
-// "fonte" (`complete(id, ...)`) não o acha mais e é descartada (NotFound). Por isso o cancelamento
-// NÃO ESPERA A REDE: um pedido "preso" em EM_VOO não segura o fechamento. (A espera de "no máximo
-// uma escrita de disco em curso" do header é da etapa 2, quando houver escrita; aqui não há.)
-// `close_file`: a partir da chamada, todo pedido novo no arquivo (inclusive vindo de callback)
+// CANCELAMENTO E FECHAMENTO. `cancel` e `close_file` levam o pedido pendente (ENFILEIRADO ou
+// EM_VOO) direto a CONCLUINDO com SW_E_CANCELLED e o tiram da tabela de ids: uma conclusão
+// posterior da "fonte" (`complete(id, ...)`) não o acha mais e é descartada (NotFound). Por isso o
+// cancelamento NÃO ESPERA A REDE: um pedido "preso" em EM_VOO não segura o fechamento. (A espera de
+// "no máximo uma escrita de disco em curso" do header é da etapa 2, quando houver escrita; aqui não
+// há.) `close_file`: a partir da chamada, todo pedido novo no arquivo (inclusive vindo de callback)
 // devolve Cancelled NA HORA, sem callback; cancela os pendentes; e só volta depois que todos os
 // callbacks do arquivo (os cancelados e os que já estavam concluindo) retornaram. Depois do retorno
 // nenhum callback deste arquivo ocorre.
@@ -146,9 +146,9 @@ class RequestRegistryTestHook;
 
 struct RequestRegistryConfig
 {
-    std::uint32_t capacity = 4096;         // >= 1
-    std::uint32_t completion_threads = 1;  // 1 .. kMaxCompletionThreads
-    const void* owner = nullptr;           // o Context dono (para a barreira de dono)
+    std::uint32_t capacity = 4096;        // >= 1
+    std::uint32_t completion_threads = 1; // 1 .. kMaxCompletionThreads
+    const void* owner = nullptr;          // o Context dono (para a barreira de dono)
 };
 
 struct RequestRegistryCreate
@@ -164,8 +164,8 @@ public:
     static constexpr std::uint32_t kMaxCompletionThreads = 16;
 
     // Cria o registro (objeto, pool e tabela pelo alocador do contexto; threads pelo sistema). Em
-    // qualquer falha, tudo o que a chamada construiu é desfeito (threads paradas e juntadas, memória
-    // devolvida) e `registry` é nulo. `alloc` tem de sobreviver ao registro.
+    // qualquer falha, tudo o que a chamada construiu é desfeito (threads paradas e juntadas,
+    // memória devolvida) e `registry` é nulo. `alloc` tem de sobreviver ao registro.
     [[nodiscard]] static RequestRegistryCreate create(const ContextAllocator& alloc,
                                                       const RequestRegistryConfig& config) noexcept;
 
@@ -193,11 +193,12 @@ public:
                                          std::uint64_t bytes) noexcept;
 
     // sw_cancel: Ok se o pedido de `owner` estava pendente (o callback ainda vem, com
-    // SW_E_CANCELLED); NotFound se o id é 0, desconhecido, de outro dono ou já concluído. Não aloca.
+    // SW_E_CANCELLED); NotFound se o id é 0, desconhecido, de outro dono ou já concluído. Não
+    // aloca.
     [[nodiscard]] RequestStatus cancel(const void* owner, sw_request_id id) noexcept;
 
-    // Protocolo do sw_close para os pedidos de `file` (ver o topo). Busy de dentro de callback (nada
-    // muda). Ok depois que nenhum callback do arquivo está pendente nem em curso. Não aloca.
+    // Protocolo do sw_close para os pedidos de `file` (ver o topo). Busy de dentro de callback
+    // (nada muda). Ok depois que nenhum callback do arquivo está pendente nem em curso. Não aloca.
     [[nodiscard]] RequestStatus close_file(FileRequests& file) noexcept;
 
     // Pedidos não LIVRES (inclui os com callback em curso).

@@ -71,7 +71,8 @@ RequestRegistry::RequestRegistry(Key, const ContextAllocator& alloc, Request* po
     : alloc_(alloc), pool_(pool), table_(table), capacity_(capacity), table_size_(2 * capacity),
       owner_(owner)
 {
-    for (std::uint32_t i = 0; i + 1 < capacity; ++i) pool_[i].next = &pool_[i + 1];
+    for (std::uint32_t i = 0; i + 1 < capacity; ++i)
+        pool_[i].next = &pool_[i + 1];
     free_ = capacity > 0 ? &pool_[0] : nullptr;
 }
 
@@ -101,8 +102,8 @@ RequestRegistryCreate RequestRegistry::create(const ContextAllocator& alloc,
         out.alloc = st;
         return out;
     }
-    RequestRegistry* self = alloc.create<RequestRegistry>(&st, Key{}, alloc, pool, table, n,
-                                                          config.owner);
+    RequestRegistry* self =
+        alloc.create<RequestRegistry>(&st, Key{}, alloc, pool, table, n, config.owner);
     if (self == nullptr) {
         alloc.destroy_array(table, std::size_t{2} * n, kTableAlign);
         alloc.destroy_array(pool, n, kRequestPoolAlign);
@@ -111,9 +112,9 @@ RequestRegistryCreate RequestRegistry::create(const ContextAllocator& alloc,
         return out;
     }
 
-    // Threads de conclusão (estado e pilha do sistema, nível 2). `std::thread` construída por padrão
-    // não aloca; a atribuição por movimento também não. bad_alloc => OutOfMemory; qualquer outra
-    // (std::system_error: o sistema não criou a thread) => Internal.
+    // Threads de conclusão (estado e pilha do sistema, nível 2). `std::thread` construída por
+    // padrão não aloca; a atribuição por movimento também não. bad_alloc => OutOfMemory; qualquer
+    // outra (std::system_error: o sistema não criou a thread) => Internal.
     RequestStatus thread_status = RequestStatus::Ok;
     try {
         for (std::uint32_t i = 0; i < config.completion_threads; ++i) {
@@ -186,14 +187,16 @@ Request* RequestRegistry::find_locked(sw_request_id id) const noexcept
 void RequestRegistry::table_insert_locked(Request* r) noexcept
 {
     std::size_t i = slot_of(r->id);
-    while (table_[i] != nullptr) i = (i + 1) % table_size_;
+    while (table_[i] != nullptr)
+        i = (i + 1) % table_size_;
     table_[i] = r;
 }
 
 void RequestRegistry::table_erase_locked(sw_request_id id) noexcept
 {
     std::size_t i = slot_of(id);
-    while (table_[i] != nullptr && table_[i]->id != id) i = (i + 1) % table_size_;
+    while (table_[i] != nullptr && table_[i]->id != id)
+        i = (i + 1) % table_size_;
     if (table_[i] == nullptr) return;
     // Remoção por deslocamento para trás (sondagem linear sem lápides).
     table_[i] = nullptr;

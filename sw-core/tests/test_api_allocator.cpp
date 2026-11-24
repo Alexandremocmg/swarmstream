@@ -230,7 +230,8 @@ void test_sixteen_threads()
             }
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     SW_CHECK(ea.live() == 0);
     SW_CHECK(ea.alloc_calls() == static_cast<std::uint64_t>(kThreads) * kIters);
     SW_CHECK(ea.free_calls() == ea.alloc_calls());

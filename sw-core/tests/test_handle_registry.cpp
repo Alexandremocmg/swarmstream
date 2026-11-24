@@ -15,12 +15,12 @@
 //
 // O operator new deste executável é o de oom_support.hpp (contador e falha injetada).
 
+#include "api_allocator.hpp"
 #include "check.hpp"
 #include "handle_registry.hpp"
 #include "handle_registry_testing.hpp"
 #include "oom_support.hpp"
 #include "test_allocators.hpp"
-#include "api_allocator.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -133,7 +133,8 @@ void test_basic_states()
     SW_CHECK(reg.remove(s.at(0), HandleKind::File) == HandleStatus::Unknown);
     SW_CHECK(reg.size() == 0);
     SW_CHECK(reg.table_bytes() == 0); // (6) a tabela voltou quando a fatia esvaziou
-    std::puts("ok: VIVO/FECHANDO/ausente, tipo errado, interior, NULL, dois fechadores (a, b, d, e)");
+    std::puts(
+        "ok: VIVO/FECHANDO/ausente, tipo errado, interior, NULL, dois fechadores (a, b, d, e)");
 }
 
 void test_cancel_close_restores_live()
@@ -154,7 +155,8 @@ void test_cancel_close_restores_live()
     SW_CHECK(reg.begin_close(s.at(0), HandleKind::Dir).status == HandleStatus::Ok);
     core.wait_unpinned();
     SW_CHECK(reg.remove(s.at(0), HandleKind::Dir) == HandleStatus::Ok);
-    std::puts("ok: desfazer o fechamento (FECHANDO -> VIVO), como no sw_shutdown com handle aberto");
+    std::puts(
+        "ok: desfazer o fechamento (FECHANDO -> VIVO), como no sw_shutdown com handle aberto");
 }
 
 // (c) sw_close com um pin segurado por outra thread: só volta depois do unpin, e outras buscas na
@@ -186,7 +188,8 @@ void test_close_waits_other_pin_without_holding_shard()
         closer_done.store(true);
     });
     wait_or_fail(closer_started, 10s, "o fechador marcar FECHANDO");
-    // Enquanto o fechador espera, a mesma fatia responde: busca/pin de B, inserção e remoção de outro.
+    // Enquanto o fechador espera, a mesma fatia responde: busca/pin de B, inserção e remoção de
+    // outro.
     PinCore core_extra;
     for (int i = 0; i < 1000; ++i) {
         HandleLookup l = reg.acquire(s.at(b), HandleKind::File);
@@ -207,7 +210,8 @@ void test_close_waits_other_pin_without_holding_shard()
     core_b.wait_unpinned();
     SW_CHECK(reg.remove(s.at(b), HandleKind::File) == HandleStatus::Ok);
     SW_CHECK(reg.size() == 0 && reg.table_bytes() == 0);
-    std::puts("ok: (c) fechador espera o pin de outra thread sem segurar a fatia (mesma fatia anda)");
+    std::puts(
+        "ok: (c) fechador espera o pin de outra thread sem segurar a fatia (mesma fatia anda)");
 }
 
 // Vários pins soltos um a um: o fechador só volta no último (o despertar não se perde).
@@ -219,7 +223,8 @@ void test_many_pins_released_one_by_one()
     int owner = 4;
     SW_CHECK(reg.insert(s.at(0), HandleKind::File, &owner, &core) == HandleStatus::Ok);
     constexpr int kPins = 8;
-    for (int i = 0; i < kPins; ++i) SW_CHECK(reg.acquire(s.at(0), HandleKind::File).status == HandleStatus::Ok);
+    for (int i = 0; i < kPins; ++i)
+        SW_CHECK(reg.acquire(s.at(0), HandleKind::File).status == HandleStatus::Ok);
     SW_CHECK(core.pins() == kPins);
     std::atomic<bool> done{false};
     std::thread closer([&] {
@@ -234,7 +239,8 @@ void test_many_pins_released_one_by_one()
         SW_CHECK(!done.load());
         releasers.emplace_back([&core] { core.unpin(); });
     }
-    for (auto& t : releasers) t.join();
+    for (auto& t : releasers)
+        t.join();
     wait_or_fail(done, 10s, "o fechador voltar depois do último unpin");
     closer.join();
     SW_CHECK(core.pins() == 0);
@@ -244,10 +250,10 @@ void test_many_pins_released_one_by_one()
 
 // O fechador LIBERA o PinCore assim que wait_unpinned volta (como o sw_close faz com o corpo do
 // arquivo), com vários pins soltos pelo caminho lento ao mesmo tempo. Se um unpin tocasse no objeto
-// depois de o fechador poder vê-lo em 0 (por exemplo, decrementar fora do mutex e só depois travá-lo
-// para acordar), isto seria uso depois da liberação: o ASan e o TSan do CI o veem (por amostragem;
-// sem sanitizer, só se a memória reescrita quebrar o mutex). A memória liberada é reescrita com 0xAB
-// para aumentar a chance de o defeito aparecer também sem sanitizer.
+// depois de o fechador poder vê-lo em 0 (por exemplo, decrementar fora do mutex e só depois
+// travá-lo para acordar), isto seria uso depois da liberação: o ASan e o TSan do CI o veem (por
+// amostragem; sem sanitizer, só se a memória reescrita quebrar o mutex). A memória liberada é
+// reescrita com 0xAB para aumentar a chance de o defeito aparecer também sem sanitizer.
 void test_closer_frees_core_right_after_wait()
 {
     HandleRegistry reg;
@@ -259,12 +265,14 @@ void test_closer_frees_core_right_after_wait()
         auto* storage = static_cast<unsigned char*>(::operator new(sizeof(PinCore)));
         auto* core = ::new (storage) PinCore();
         SW_CHECK(reg.insert(s.at(0), HandleKind::File, &owner, core) == HandleStatus::Ok);
-        for (int i = 0; i < kPins; ++i) SW_CHECK(reg.acquire(s.at(0), HandleKind::File).status == HandleStatus::Ok);
+        for (int i = 0; i < kPins; ++i)
+            SW_CHECK(reg.acquire(s.at(0), HandleKind::File).status == HandleStatus::Ok);
         std::atomic<int> go{0};
         std::vector<std::thread> unpinners;
         for (int i = 0; i < kPins; ++i) {
             unpinners.emplace_back([core, &go] {
-                while (go.load() == 0) std::this_thread::yield();
+                while (go.load() == 0)
+                    std::this_thread::yield();
                 core->unpin(); // caminho lento: o fechador já ligou FECHANDO
             });
         }
@@ -276,10 +284,11 @@ void test_closer_frees_core_right_after_wait()
         core->~PinCore();
         std::memset(storage, 0xAB, sizeof(PinCore));
         ::operator delete(storage);
-        for (auto& t : unpinners) t.join();
+        for (auto& t : unpinners)
+            t.join();
     }
-    std::printf("ok: fechador libera o PinCore logo depois da espera (%d rodadas x %d pins)\n", kRounds,
-                kPins);
+    std::printf("ok: fechador libera o PinCore logo depois da espera (%d rodadas x %d pins)\n",
+                kRounds, kPins);
 }
 
 // (7) Busca, pin, unpin, begin_close, cancel_close e remove NÃO alocam (contador de operator new);
@@ -323,8 +332,9 @@ void test_lookup_and_pin_do_not_allocate()
     SW_CHECK(reg.remove(s.at(63), HandleKind::File) == HandleStatus::Ok);
     SW_CHECK(oom::g_total.load() == before);
     SW_CHECK(reg.table_bytes() == 0);
-    std::printf("ok: (7) busca/pin/fechar sem alocar (%llu buscas; controle positivo na insercao)\n",
-                static_cast<unsigned long long>(200ull * 64 * 2));
+    std::printf(
+        "ok: (7) busca/pin/fechar sem alocar (%llu buscas; controle positivo na insercao)\n",
+        static_cast<unsigned long long>(200ull * 64 * 2));
 }
 
 // (6) A tabela devolve a memória quando esvazia, inclusive depois de crescer; vivos do operator new
@@ -354,8 +364,9 @@ void test_table_memory_returned_when_empty()
     SW_CHECK(oom::g_live.load() == live_with_cores);
     (void)live_before;
     (void)live_with_shells;
-    std::printf("ok: (6) 20000 entradas (tabela de %zu bytes) e, vazia, a tabela voltou ao sistema\n",
-                grown);
+    std::printf(
+        "ok: (6) 20000 entradas (tabela de %zu bytes) e, vazia, a tabela voltou ao sistema\n",
+        grown);
 }
 
 // Falta de memória na inserção: varredura em cada ponto (primeira tabela da fatia e cada
@@ -438,7 +449,8 @@ void test_shell_quarantine_order()
     SW_CHECK(!q.contains(&x[0]) && !q.contains(&x[1]) && q.contains(&x[2]) && q.contains(&x[5]));
     int order[4];
     int n = 0;
-    q.drain([&](QuarantinedShell sh) { order[n++] = static_cast<int>(static_cast<int*>(sh.ptr) - x); });
+    q.drain(
+        [&](QuarantinedShell sh) { order[n++] = static_cast<int>(static_cast<int*>(sh.ptr) - x); });
     SW_CHECK(n == 4 && order[0] == 2 && order[1] == 3 && order[2] == 4 && order[3] == 5);
     SW_CHECK(q.size() == 0);
     std::puts("ok: quarentena de tamanho fixo (sai a mais antiga; esvazia em ordem)");
@@ -483,7 +495,8 @@ void test_quarantine_window_and_documented_limit()
         sw_file* f = open_shell(reg, ctx, core);
         // (3) dentro da janela, o alocador nunca reemitiu um endereço em quarentena.
         SW_CHECK(!ctx.quarantine.contains(f));
-        for (sw_file* old : closed) SW_CHECK(old != f);
+        for (sw_file* old : closed)
+            SW_CHECK(old != f);
         close_shell(reg, ctx, f);
         closed.push_back(f);
     }
@@ -499,8 +512,8 @@ void test_quarantine_window_and_documented_limit()
     SW_CHECK(reg.acquire(closed[0], HandleKind::File).status == HandleStatus::Unknown);
 
     // (2) LIMITE DOCUMENTADO: o próximo handle reusa o endereço do mais antigo, e o ponteiro antigo
-    // passa a valer como o handle NOVO. A API não distingue. Isto prova ausência de erro de memória,
-    // não detecção.
+    // passa a valer como o handle NOVO. A API não distingue. Isto prova ausência de erro de
+    // memória, não detecção.
     PinCore core_new;
     sw_file* reopened = open_shell(reg, ctx, core_new);
     SW_CHECK(reopened == closed[0]);
@@ -510,10 +523,12 @@ void test_quarantine_window_and_documented_limit()
     close_shell(reg, ctx, reopened);
 
     // Fim: a quarentena é esvaziada (no sw_shutdown) e tudo volta ao alocador.
-    ctx.quarantine.drain([&](QuarantinedShell sh) { ctx.alloc.destroy(static_cast<sw_file*>(sh.ptr)); });
+    ctx.quarantine.drain(
+        [&](QuarantinedShell sh) { ctx.alloc.destroy(static_cast<sw_file*>(sh.ptr)); });
     SW_CHECK(ra.live() == 0);
     SW_CHECK(reg.size() == 0 && reg.table_bytes() == 0);
-    std::puts("ok: (1)(2)(3) janela de 256 rejeita; fora dela o endereco reemitido vale como o novo");
+    std::puts(
+        "ok: (1)(2)(3) janela de 256 rejeita; fora dela o endereco reemitido vale como o novo");
 }
 
 void test_process_ctx_quarantine()
@@ -586,11 +601,13 @@ void test_sixteen_threads()
             }
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     SW_CHECK(reg.size() == 0);
     SW_CHECK(reg.table_bytes() == 0);
     SW_CHECK(pins_ok.load() > 0);
-    for (const PinCore& c : cores) SW_CHECK(c.pins() == 0);
+    for (const PinCore& c : cores)
+        SW_CHECK(c.pins() == 0);
     std::printf("ok: (5) 16 threads no registro global (%llu pins, %llu vistos FECHANDO)\n",
                 static_cast<unsigned long long>(pins_ok.load()),
                 static_cast<unsigned long long>(seen_closing.load()));
@@ -647,8 +664,9 @@ void test_shell_sizes()
     static_assert(sizeof(sw_file) <= swarmstream::detail::kMaxShellBytes);
     static_assert(sizeof(sw_dir) <= swarmstream::detail::kMaxShellBytes);
     static_assert(sizeof(sw_ctx) <= swarmstream::detail::kMaxShellBytes);
-    std::printf("ok: (8) cascas: sw_ctx=%zu sw_file=%zu sw_dir=%zu bytes (limite 64, static_assert)\n",
-                sizeof(sw_ctx), sizeof(sw_file), sizeof(sw_dir));
+    std::printf(
+        "ok: (8) cascas: sw_ctx=%zu sw_file=%zu sw_dir=%zu bytes (limite 64, static_assert)\n",
+        sizeof(sw_ctx), sizeof(sw_file), sizeof(sw_dir));
 }
 
 } // namespace

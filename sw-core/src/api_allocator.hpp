@@ -48,8 +48,9 @@
 namespace swarmstream::detail {
 
 template <class T>
-inline constexpr std::size_t kObjectAlign =
-    alignof(T) > alignof(std::max_align_t) ? alignof(T) : alignof(std::max_align_t);
+inline constexpr std::size_t kObjectAlign = alignof(T) > alignof(std::max_align_t)
+                                                ? alignof(T)
+                                                : alignof(std::max_align_t);
 
 template <class T>
 inline constexpr std::size_t kCacheLineAlign = alignof(T) > 64 ? alignof(T) : std::size_t{64};
@@ -59,8 +60,8 @@ inline constexpr std::size_t kBytesAlign = alignof(std::max_align_t);
 
 enum class AllocStatus : std::uint8_t {
     Ok = 0,
-    OutOfMemory,     // alloc_fn devolveu NULL (ou o sistema não tinha memória), ou tamanho estoura
-    Misaligned,      // alloc_fn devolveu um ponteiro que não é múltiplo do alinhamento pedido
+    OutOfMemory, // alloc_fn devolveu NULL (ou o sistema não tinha memória), ou tamanho estoura
+    Misaligned,  // alloc_fn devolveu um ponteiro que não é múltiplo do alinhamento pedido
     InvalidArgument, // tamanho 0 ou alinhamento que não é potência de 2 (erro de uso interno)
 };
 
@@ -92,8 +93,8 @@ public:
 
     [[nodiscard]] bool uses_caller_allocator() const noexcept { return alloc_fn_ != nullptr; }
 
-    // Bloco cru de `size` bytes alinhado a `alignment`. nullptr em falha (motivo em `*status` se não
-    // for nulo). Não constrói nada.
+    // Bloco cru de `size` bytes alinhado a `alignment`. nullptr em falha (motivo em `*status` se
+    // não for nulo). Não constrói nada.
     [[nodiscard]] void* allocate(std::size_t size, std::size_t alignment,
                                  AllocStatus* status = nullptr) const noexcept;
 
@@ -159,7 +160,8 @@ public:
         void* p = allocate(n * sizeof(T), alignment, status);
         if (p == nullptr) return nullptr;
         T* first = static_cast<T*>(p);
-        for (std::size_t i = 0; i < n; ++i) ::new (static_cast<void*>(first + i)) T();
+        for (std::size_t i = 0; i < n; ++i)
+            ::new (static_cast<void*>(first + i)) T();
         return first;
     }
 
@@ -168,7 +170,8 @@ public:
     {
         static_assert(std::is_nothrow_destructible_v<T>);
         if (p == nullptr) return;
-        for (std::size_t i = n; i > 0; --i) p[i - 1].~T();
+        for (std::size_t i = n; i > 0; --i)
+            p[i - 1].~T();
         deallocate(p, n * sizeof(T), alignment);
     }
 

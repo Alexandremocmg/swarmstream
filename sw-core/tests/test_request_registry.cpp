@@ -267,7 +267,8 @@ void test_queue_full_without_allocating()
     FileRequests file;
     sw_request_id ids[4] = {};
     const std::uint64_t before = oom::g_total.load();
-    for (auto& id : ids) SW_CHECK(reg->submit(args_for(file, log), &id).status == RequestStatus::Ok);
+    for (auto& id : ids)
+        SW_CHECK(reg->submit(args_for(file, log), &id).status == RequestStatus::Ok);
     sw_request_id extra = 99;
     SW_CHECK(reg->submit(args_for(file, log), &extra).status == RequestStatus::QueueFull);
     SW_CHECK(extra == 0);
@@ -297,7 +298,8 @@ void test_cancel_not_found_cases()
     FileRequests file;
     SW_CHECK(reg->cancel(&owner, 0) == RequestStatus::NotFound);
     SW_CHECK(reg->cancel(&owner, UINT64_MAX) == RequestStatus::NotFound);
-    SW_CHECK(reg->cancel(&owner, swarmstream::detail::issue_request_id()) == RequestStatus::NotFound);
+    SW_CHECK(reg->cancel(&owner, swarmstream::detail::issue_request_id()) ==
+             RequestStatus::NotFound);
     sw_request_id id = 0;
     SW_CHECK(reg->submit(args_for(file, log), &id).status == RequestStatus::Ok);
     SW_CHECK(reg->cancel(&other, id) == RequestStatus::NotFound); // barreira do dono
@@ -389,10 +391,12 @@ void test_ids_unique_sixteen_threads()
             }
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     std::vector<sw_request_id> all;
     all.reserve(kThreads * kPer);
-    for (const auto& v : got) all.insert(all.end(), v.begin(), v.end());
+    for (const auto& v : got)
+        all.insert(all.end(), v.begin(), v.end());
     std::sort(all.begin(), all.end());
     SW_CHECK(all.front() != 0);
     SW_CHECK(std::adjacent_find(all.begin(), all.end()) == all.end());
@@ -427,11 +431,13 @@ struct SlowCb
         self->got = result;
         self->in_cb = in_callback();
         self->entered.store(true);
-        while (!self->release.load()) std::this_thread::sleep_for(1ms);
+        while (!self->release.load())
+            std::this_thread::sleep_for(1ms);
         if (self->reg != nullptr) {
             // (f) chamada vinda de callback durante o fechamento do mesmo arquivo.
             self->submit_from_cb =
-                self->reg->submit(args_for(*self->file, *self->log), &self->submit_from_cb_id).status;
+                self->reg->submit(args_for(*self->file, *self->log), &self->submit_from_cb_id)
+                    .status;
             self->close_from_cb = self->reg->close_file(*self->file);
             self->stop_from_cb = self->reg->stop();
         }
@@ -447,9 +453,11 @@ void test_close_file_protocol()
     CallbackLog log;
     FileRequests file;
     FileRequests other_file;
-    // 3 enfileirados, 1 "preso" EM_VOO (a fonte nunca o conclui), 1 já concluindo com callback lento.
+    // 3 enfileirados, 1 "preso" EM_VOO (a fonte nunca o conclui), 1 já concluindo com callback
+    // lento.
     sw_request_id q[3] = {};
-    for (auto& id : q) SW_CHECK(reg->submit(args_for(file, log), &id).status == RequestStatus::Ok);
+    for (auto& id : q)
+        SW_CHECK(reg->submit(args_for(file, log), &id).status == RequestStatus::Ok);
     sw_request_id stuck = 0;
     SW_CHECK(reg->submit(args_for(file, log), &stuck).status == RequestStatus::Ok);
     SW_CHECK(reg->mark_in_flight(stuck) == RequestStatus::Ok);
@@ -488,7 +496,8 @@ void test_close_file_protocol()
     closer.join();
     SW_CHECK(close_status == RequestStatus::Ok);
     // Cada pendente recebeu SW_E_CANCELLED; o que já concluía recebeu o resultado.
-    for (sw_request_id id : q) SW_CHECK(log.times(id) == 1 && log.find(id).result == SW_E_CANCELLED);
+    for (sw_request_id id : q)
+        SW_CHECK(log.times(id) == 1 && log.find(id).result == SW_E_CANCELLED);
     SW_CHECK(log.times(stuck) == 1 && log.find(stuck).result == SW_E_CANCELLED);
     SW_CHECK(slow.calls.load() == 1 && slow.got == SW_OK && slow.in_cb);
     // (f) de dentro de callback, durante o fechamento: submit no arquivo => Cancelled (sem
@@ -578,9 +587,10 @@ void test_file_leases()
     std::puts("ok: leases por arquivo soltos no fechamento; nós devolvidos ao alocador");
 }
 
-// O header: "*out_id é escrito antes disso" (antes de o callback poder rodar). Uma fonte que conclui
-// QUALQUER pedido enfileirado assim que ele aparece; o callback confere que a variável de saída do
-// chamador (o user) já tem o id. Sob TSan, escrever *out_id depois de soltar o mutex seria corrida.
+// O header: "*out_id é escrito antes disso" (antes de o callback poder rodar). Uma fonte que
+// conclui QUALQUER pedido enfileirado assim que ele aparece; o callback confere que a variável de
+// saída do chamador (o user) já tem o id. Sob TSan, escrever *out_id depois de soltar o mutex seria
+// corrida.
 struct OutIdProbe
 {
     sw_request_id out = 0;
@@ -606,8 +616,8 @@ void test_out_id_written_before_completion()
     std::atomic<bool> stop_source{false};
     std::thread source([&] {
         while (!stop_source.load()) {
-            (void)swarmstream::detail::testing::RequestRegistryTestHook::complete_first_queued(*reg.r,
-                                                                                           SW_OK);
+            (void)swarmstream::detail::testing::RequestRegistryTestHook::complete_first_queued(
+                *reg.r, SW_OK);
         }
     });
     constexpr int kN = 2000;
@@ -627,8 +637,9 @@ void test_out_id_written_before_completion()
     stop_source.store(true);
     source.join();
     SW_CHECK(reg->close_file(file) == RequestStatus::Ok);
-    std::printf("ok: *out_id escrito antes do callback (%d pedidos com uma fonte que conclui na hora)\n",
-                kN);
+    std::printf(
+        "ok: *out_id escrito antes do callback (%d pedidos com uma fonte que conclui na hora)\n",
+        kN);
 }
 
 // stop com pedidos pendentes que ninguém concluiu: cada um recebe SW_E_CANCELLED exatamente uma vez
@@ -684,7 +695,8 @@ void test_create_alloc_fn_failure_each_point()
     }
     SW_CHECK(points == 3); // objeto, pool, tabela
     std::printf("[F1-67B] cenario='registro_pedidos_alloc_fn' pontos_de_falha=%zu\n", points);
-    std::puts("ok: falha do alloc_fn em cada um dos 3 pontos da criação => OutOfMemory, vivos == 0");
+    std::puts(
+        "ok: falha do alloc_fn em cada um dos 3 pontos da criação => OutOfMemory, vivos == 0");
 }
 
 // Varredura de operator new na criação com o alocador do SISTEMA (inclui o estado das threads de

@@ -114,8 +114,9 @@ private:
         SW_CHECK(ptr != nullptr); // nunca free_fn(NULL)
         Header h{};
         std::memcpy(&h, static_cast<unsigned char*>(ptr) - sizeof(Header), sizeof(Header));
-        SW_CHECK(h.magic == kMagic); // ponteiro desta instância, ainda vivo (sem liberar duas vezes)
-        SW_CHECK(h.size == size);    // o size do free_fn é o mesmo do alloc_fn
+        SW_CHECK(h.magic ==
+                 kMagic);         // ponteiro desta instância, ainda vivo (sem liberar duas vezes)
+        SW_CHECK(h.size == size); // o size do free_fn é o mesmo do alloc_fn
         last_freed_.store(ptr);
         last_freed_size_.store(size);
         h.magic = kFreed;
@@ -146,7 +147,8 @@ public:
     explicit ReissueAllocator(std::size_t block_size) noexcept : block_size_(block_size) {}
     ~ReissueAllocator()
     {
-        for (std::size_t i = 0; i < all_count_; ++i) std::free(all_[i]);
+        for (std::size_t i = 0; i < all_count_; ++i)
+            std::free(all_[i]);
     }
     ReissueAllocator(const ReissueAllocator&) = delete;
     ReissueAllocator& operator=(const ReissueAllocator&) = delete;
