@@ -123,8 +123,12 @@ void test_basic_states()
     SW_CHECK(core.closing());
     HandleLookup c = reg.acquire(s.at(0), HandleKind::File);
     SW_CHECK(c.status == HandleStatus::Closing && core.pins() == 0);
+    // Sem pin o corpo pode sumir a qualquer instante: em Closing não vem owner nem core.
+    SW_CHECK(c.owner == nullptr && c.core == nullptr);
     // (e) segundo fechador: perde (Closing), nada corrompe.
-    SW_CHECK(reg.begin_close(s.at(0), HandleKind::File).status == HandleStatus::Closing);
+    const HandleLookup loser = reg.begin_close(s.at(0), HandleKind::File);
+    SW_CHECK(loser.status == HandleStatus::Closing);
+    SW_CHECK(loser.owner == nullptr && loser.core == nullptr);
     core.wait_unpinned(); // (d) sem pins de outros: volta na hora (o fechador não tem pin)
     SW_CHECK(reg.remove(s.at(0), HandleKind::File) == HandleStatus::Ok);
     // (b) depois de remover: ausente (distinguível de (a)).
@@ -246,6 +250,55 @@ void test_many_pins_released_one_by_one()
     SW_CHECK(core.pins() == 0);
     SW_CHECK(reg.remove(s.at(0), HandleKind::File) == HandleStatus::Ok);
     std::puts("ok: oito pins soltos de threads diferentes; o fechador só volta no último");
+}
+
+// A janela do unpin lento, DETERMINÍSTICA (mutante M32): o gancho para a thread do unpin logo
+// depois do decremento que zera a contagem. Nesse ponto o mutex do objeto TEM de estar com ela:
+// senão o fechador veria 0, voltaria de wait_unpinned e liberaria o objeto que o unpin ainda vai
+// tocar (travar e notificar). O teste confere com try_lock, de outra thread, sem depender de tempo;
+// depois solta o unpin e o fechador volta.
+std::atomic<bool> g_unpin_in_window{false};
+std::atomic<bool> g_unpin_go{false};
+
+void pause_in_unpin_window() noexcept
+{
+    g_unpin_in_window.store(true);
+    wait_or_fail(g_unpin_go, 30s, "o teste soltar o unpin parado na janela");
+}
+
+void test_slow_unpin_holds_mutex_after_decrement()
+{
+    using swarmstream::detail::testing::PinCoreTestHook;
+    HandleRegistry reg;
+    Shells s(1);
+    PinCore core;
+    int owner = 13;
+    SW_CHECK(reg.insert(s.at(0), HandleKind::File, &owner, &core) == HandleStatus::Ok);
+    SW_CHECK(reg.acquire(s.at(0), HandleKind::File).status == HandleStatus::Ok);
+    SW_CHECK(reg.begin_close(s.at(0), HandleKind::File).status == HandleStatus::Ok);
+    SW_CHECK(PinCoreTestHook::mutex_is_free(core)); // controle positivo do try_lock
+    g_unpin_in_window.store(false);
+    g_unpin_go.store(false);
+    PinCoreTestHook::set_after_slow_decrement(&pause_in_unpin_window);
+    std::thread unpinner([&core] { core.unpin(); }); // caminho lento: FECHANDO está ligado
+    wait_or_fail(g_unpin_in_window, 30s, "o unpin lento chegar à janela");
+    SW_CHECK(core.pins() == 0);                      // já decrementou...
+    SW_CHECK(!PinCoreTestHook::mutex_is_free(core)); // ...e ainda segura o mutex do objeto
+    std::atomic<bool> closer_done{false};
+    std::thread closer([&] {
+        core.wait_unpinned();
+        closer_done.store(true);
+    });
+    std::this_thread::sleep_for(20ms);
+    SW_CHECK(!closer_done.load()); // não volta enquanto o unpin está na janela
+    g_unpin_go.store(true);
+    wait_or_fail(closer_done, 30s, "o fechador voltar depois do unpin parado na janela");
+    closer.join();
+    unpinner.join();
+    PinCoreTestHook::set_after_slow_decrement(nullptr);
+    SW_CHECK(PinCoreTestHook::mutex_is_free(core));
+    SW_CHECK(reg.remove(s.at(0), HandleKind::File) == HandleStatus::Ok);
+    std::puts("ok: unpin lento segura o mutex do objeto depois do decremento (janela do M32)");
 }
 
 // O fechador LIBERA o PinCore assim que wait_unpinned volta (como o sw_close faz com o corpo do
@@ -682,6 +735,7 @@ int main()
     test_pin_overflow();
     test_close_waits_other_pin_without_holding_shard();
     test_many_pins_released_one_by_one();
+    test_slow_unpin_holds_mutex_after_decrement();
     test_closer_frees_core_right_after_wait();
     test_lookup_and_pin_do_not_allocate();
     test_table_memory_returned_when_empty();

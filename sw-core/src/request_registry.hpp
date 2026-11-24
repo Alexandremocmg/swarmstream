@@ -173,7 +173,8 @@ public:
     // arquivos fecharam antes); se houver, o stop() os cancela e cada um recebe SW_E_CANCELLED
     // (exatamente um callback) antes de as threads pararem. Se o stop falhar (join), as threads não
     // podem ser destruídas: devolve Internal SEM liberar nada (o chamador registra e vaza, em vez
-    // de terminar o processo). De dentro de callback: Busy, nada muda.
+    // de terminar o processo). De dentro de callback: Busy, nada muda. PRECONDIÇÃO: uma chamada por
+    // vez (ver stop()), e nenhum outro método do registro em curso nem depois.
     [[nodiscard]] static RequestStatus destroy(RequestRegistry* registry) noexcept;
 
     RequestRegistry(const RequestRegistry&) = delete;
@@ -209,7 +210,10 @@ public:
     // S2-S3 do sw_shutdown: recusa pedidos novos (ShuttingDown), cancela os que ainda estiverem
     // pendentes (SW_E_CANCELLED, um callback cada), espera todos os callbacks voltarem e junta as
     // threads de conclusão. Busy de dentro de callback (nada muda); Internal se um join falhar (as
-    // threads que não juntaram ficam; destroy recusa liberar). Idempotente.
+    // threads que não juntaram ficam; destroy recusa liberar). Idempotente em chamadas SEGUIDAS.
+    // PRECONDIÇÃO: UMA CHAMADA POR VEZ de stop()/destroy(): o join e `thread_count_` ficam fora do
+    // mutex, e duas chamadas concorrentes juntariam a mesma std::thread (comportamento
+    // indefinido). O sw_shutdown garante isso com a troca VIVO -> DESLIGANDO (parte C).
     [[nodiscard]] RequestStatus stop() noexcept;
 
     // Só create() constrói (a chave é privada) e só destroy() destrói: o destrutor de um registro

@@ -503,6 +503,27 @@ sw_request_id RequestRegistryTestHook::complete_first_queued(RequestRegistry& r,
     return id;
 }
 
+bool RequestRegistryTestHook::findable(const RequestRegistry& r, sw_request_id id) noexcept
+{
+    std::lock_guard<std::mutex> g(r.m_);
+    const Request* q = r.find_locked(id);
+    return q != nullptr && q->id == id;
+}
+
+bool RequestRegistryTestHook::erase_wraps(const RequestRegistry& r, sw_request_id id) noexcept
+{
+    std::lock_guard<std::mutex> g(r.m_);
+    // Varre a tabela inteira (não usa a busca, que é o que está em teste).
+    std::uint32_t i = 0;
+    while (i < r.table_size_ && (r.table_[i] == nullptr || r.table_[i]->id != id))
+        ++i;
+    if (i == r.table_size_ || i == 0 || r.table_[0] == nullptr) return false;
+    for (; i < r.table_size_; ++i) {
+        if (r.table_[i] == nullptr) return false;
+    }
+    return true;
+}
+
 } // namespace testing
 
 } // namespace swarmstream::detail

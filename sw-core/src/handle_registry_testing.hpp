@@ -19,6 +19,16 @@ public:
         const std::uint32_t closing = core.word_.load() & PinCore::kClosing;
         core.word_.store(closing | pins);
     }
+    // `fn` é chamada pelo unpin LENTO logo depois do decremento da contagem (nullptr desliga).
+    // Global do processo: um teste por vez, trocada sem unpin em curso.
+    static void set_after_slow_decrement(void (*fn)() noexcept) noexcept;
+    // O mutex do objeto está livre? (try_lock; chame de uma thread que NÃO o segura.)
+    [[nodiscard]] static bool mutex_is_free(PinCore& core) noexcept
+    {
+        if (!core.m_.try_lock()) return false;
+        core.m_.unlock();
+        return true;
+    }
     [[nodiscard]] static constexpr std::uint32_t max_pins() noexcept
     {
         return PinCore::kClosing - 1;

@@ -6,6 +6,8 @@
 
 #include "handle_registry.hpp"
 
+#include "handle_registry_testing.hpp"
+
 #include <new>
 #include <type_traits>
 
@@ -15,6 +17,10 @@ namespace {
 constexpr std::uintptr_t kEmpty = 0;
 constexpr std::uintptr_t kTomb = 1;
 constexpr std::size_t kMinCap = 16;
+
+// Gancho de teste: chamado pelo unpin lento logo depois do decremento (nulo = desligado; só custa
+// uma leitura, e só com o handle FECHANDO).
+std::atomic<void (*)() noexcept> g_after_slow_decrement{nullptr};
 
 std::size_t next_pow2(std::size_t v) noexcept
 {
@@ -85,8 +91,15 @@ void PinCore::unpin() noexcept
     // fechador só confere a contagem sob esse mesmo mutex: não há despertar perdido, e o fechador
     // não libera o objeto antes de esta thread soltar o mutex.
     std::lock_guard<std::mutex> g(m_);
-    const std::uint32_t now = word_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    const std::uint32_t now = drop_one_slow();
     if ((now & ~kClosing) == 0) cv_.notify_all();
+}
+
+std::uint32_t PinCore::drop_one_slow() noexcept
+{
+    const std::uint32_t now = word_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    if (auto* fn = g_after_slow_decrement.load(std::memory_order_acquire)) fn();
+    return now;
 }
 
 void PinCore::wait_unpinned() noexcept
@@ -209,16 +222,17 @@ HandleLookup HandleRegistry::acquire(const void* addr, HandleKind kind) noexcept
         out.status = HandleStatus::WrongKind;
         return out;
     }
-    out.owner = e.owner;
-    out.core = e.core;
     if (e.closing != 0) {
+        // Sem pin, owner e core ficam nulos: o fechador pode liberar o corpo a qualquer instante.
         out.status = HandleStatus::Closing;
         return out;
     }
     if (!e.core->pin_locked()) {
-        out = HandleLookup{HandleStatus::PinOverflow, nullptr, nullptr};
+        out.status = HandleStatus::PinOverflow;
         return out;
     }
+    out.owner = e.owner;
+    out.core = e.core;
     out.status = HandleStatus::Ok;
     return out;
 }
@@ -237,14 +251,15 @@ HandleLookup HandleRegistry::begin_close(const void* addr, HandleKind kind) noex
         out.status = HandleStatus::WrongKind;
         return out;
     }
-    out.owner = e.owner;
-    out.core = e.core;
     if (e.closing != 0) {
-        out.status = HandleStatus::Closing; // outro fechador venceu
+        // Outro fechador venceu: owner e core ficam nulos (o corpo é dele).
+        out.status = HandleStatus::Closing;
         return out;
     }
     e.closing = 1;
     e.core->set_closing_locked(); // a partir daqui nenhum pin novo; a contagem só diminui
+    out.owner = e.owner;
+    out.core = e.core;
     out.status = HandleStatus::Ok;
     return out;
 }
@@ -342,6 +357,13 @@ std::size_t ProcessCtxQuarantine::size() const noexcept
 {
     std::lock_guard<std::mutex> g(m_);
     return q_.size();
+}
+
+// ------------------------------------------------------------------------- ganchos de teste
+
+void testing::PinCoreTestHook::set_after_slow_decrement(void (*fn)() noexcept) noexcept
+{
+    g_after_slow_decrement.store(fn, std::memory_order_release);
 }
 
 } // namespace swarmstream::detail

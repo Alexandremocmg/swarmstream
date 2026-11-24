@@ -136,6 +136,9 @@ private:
     friend class testing::PinCoreTestHook;
     static constexpr std::uint32_t kClosing = std::uint32_t{1} << 31;
 
+    // O decremento do unpin lento (sob m_), com o ponto de interposição dos testes logo depois.
+    [[nodiscard]] std::uint32_t drop_one_slow() noexcept;
+
     // Só sob o mutex da fatia (HandleRegistry).
     [[nodiscard]] bool pin_locked() noexcept;
     void set_closing_locked() noexcept;
@@ -162,8 +165,8 @@ enum class HandleStatus : std::uint8_t {
 struct HandleLookup
 {
     HandleStatus status = HandleStatus::Unknown;
-    void* owner = nullptr;   // o dono (Context*) registrado na entrada; nulo se não Ok/Closing
-    PinCore* core = nullptr; // nulo se não Ok/Closing
+    void* owner = nullptr;   // o dono (Context*) registrado na entrada; nulo se não Ok
+    PinCore* core = nullptr; // nulo se não Ok
 };
 
 class HandleRegistry
@@ -189,13 +192,16 @@ public:
                                       PinCore* core) noexcept;
 
     // Busca e toma um pin. Ok: `owner` e `core` valem e o chamador TEM de chamar core->unpin().
-    // Closing: o handle está sendo fechado (sem pin; `owner` e `core` informados). Unknown /
-    // WrongKind: nada. NÃO lê `addr` e NÃO aloca.
+    // Closing: o handle está sendo fechado; sem pin, então `owner` e `core` vêm NULOS (o fechador
+    // pode liberar o corpo a qualquer instante: não há o que desreferenciar). Unknown / WrongKind /
+    // PinOverflow: idem. NÃO lê `addr` e NÃO aloca.
     [[nodiscard]] HandleLookup acquire(const void* addr, HandleKind kind) noexcept;
 
     // Troca VIVO por FECHANDO (a troca é a posse do fechamento): Ok com `owner`/`core`; quem perde
-    // a corrida, ou chama de novo, recebe Closing. Depois de Ok nenhum pin novo é dado; o chamador
-    // espera `core->wait_unpinned()` SEM mutex de fatia (este método já o soltou). Não aloca.
+    // a corrida, ou chama de novo, recebe Closing com `owner` e `core` NULOS (o corpo é de quem
+    // venceu, que pode liberá-lo a qualquer instante). Depois de Ok nenhum pin novo é dado; o
+    // chamador espera `core->wait_unpinned()` SEM mutex de fatia (este método já o soltou). Não
+    // aloca.
     [[nodiscard]] HandleLookup begin_close(const void* addr, HandleKind kind) noexcept;
 
     // Desfaz um begin_close (FECHANDO -> VIVO), para o sw_shutdown que encontra um handle aberto

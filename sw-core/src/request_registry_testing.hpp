@@ -24,6 +24,11 @@ public:
     // o primeiro ENFILEIRADO do pool com `result` e devolve o id dele (0 se não havia). Serve para
     // provar que o *out_id é escrito antes de o pedido poder concluir.
     static sw_request_id complete_first_queued(RequestRegistry& r, sw_result result) noexcept;
+    // O id está na tabela e a busca do registro o acha (a mesma de cancel/complete).
+    [[nodiscard]] static bool findable(const RequestRegistry& r, sw_request_id id) noexcept;
+    // Remover `id` agora faz a sondagem da remoção DAR A VOLTA no fim da tabela: da posição dele
+    // até a última, tudo ocupado, e a posição 0 também (é o ramo cíclico i > j).
+    [[nodiscard]] static bool erase_wraps(const RequestRegistry& r, sw_request_id id) noexcept;
 };
 
 } // namespace swarmstream::detail::testing

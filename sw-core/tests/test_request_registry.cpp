@@ -14,7 +14,8 @@
 // close_file de callback => Busy, nenhum callback depois do retorno; stop (ShuttingDown, Busy de
 // callback, idempotente); leases por arquivo; criação: alinhamento do pool, falha do alloc_fn em
 // cada ponto, varredura de operator new sem pontos excluídos (resumo [F1-67B]), thread que o
-// sistema não cria => Internal. O job TSan roda este teste.
+// sistema não cria => Internal; rotatividade aleatória (semente fixa) com capacidade pequena, que
+// passa pelo ramo cíclico da remoção da tabela de ids. O job TSan roda este teste.
 //
 // O esgotamento dos ids (§1.5 teste 4) é do executável test_request_id_exhaustion.cpp (um processo
 // por caso, porque mexe no contador global).
@@ -36,6 +37,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -785,6 +787,88 @@ void print_stl_facts()
 #endif
 }
 
+// Rotatividade de submit/complete/cancel em ordem aleatória (semente fixa) com capacidade pequena:
+// a tabela de ids (2 x capacidade, sondagem linear, remoção por deslocamento) fica com cadeias que
+// DÃO A VOLTA no fim. Depois de CADA operação todo pedido pendente continua achável; se a remoção
+// movesse um pedido para antes da posição ideal, cancel/complete dariam NotFound num pedido
+// pendente e o callback dele nunca viria. Controle positivo: houve remoções que deram a volta.
+void test_table_churn_small_capacity()
+{
+    using swarmstream::detail::testing::RequestRegistryTestHook;
+    const ContextAllocator ca;
+    constexpr int kOps = 4000;
+    std::uint64_t wraps_total = 0;
+    for (const std::uint32_t capacity : {4u, 5u, 7u, 8u, 16u}) {
+        int owner = 0;
+        CallbackLog log;
+        FileRequests file;
+        struct Expected
+        {
+            sw_request_id id;
+            sw_result result;
+            std::uint64_t bytes;
+        };
+        std::vector<Expected> expected; // os concluídos, com o que o callback tem de trazer
+        std::vector<sw_request_id> live;
+        std::uint64_t wraps = 0;
+        std::mt19937_64 rng(0xF167'B000ull + capacity); // semente fixa
+        {
+            Reg reg(ca, capacity, 1, &owner);
+            auto finish = [&](std::size_t at, bool by_cancel) {
+                const sw_request_id id = live[at];
+                live[at] = live.back();
+                live.pop_back();
+                if (RequestRegistryTestHook::erase_wraps(*reg.r, id)) ++wraps;
+                if (by_cancel) {
+                    SW_CHECK(reg->cancel(&owner, id) == RequestStatus::Ok);
+                    expected.push_back(Expected{id, SW_E_CANCELLED, 0});
+                } else {
+                    SW_CHECK(reg->complete(id, SW_OK, id + 7) == RequestStatus::Ok);
+                    expected.push_back(Expected{id, SW_OK, id + 7});
+                }
+                SW_CHECK(!RequestRegistryTestHook::findable(*reg.r, id));
+            };
+            for (int op = 0; op < kOps; ++op) {
+                const std::uint64_t dice = rng() % 100;
+                if (live.empty() || (dice < 55 && live.size() < capacity)) {
+                    // O pedido concluído só volta ao pool depois do callback.
+                    wait_until_or_fail([&] { return reg->pending() < capacity; }, 10s,
+                                       "vaga no pool durante a rotatividade");
+                    sw_request_id id = 0;
+                    SW_CHECK(reg->submit(args_for(file, log), &id).status == RequestStatus::Ok);
+                    SW_CHECK(id != 0);
+                    live.push_back(id);
+                } else {
+                    finish(static_cast<std::size_t>(rng() % live.size()), (rng() & 1) != 0);
+                }
+                for (const sw_request_id id : live)
+                    SW_CHECK(RequestRegistryTestHook::findable(*reg.r, id));
+            }
+            while (!live.empty())
+                finish(live.size() - 1, false);
+            wait_until_or_fail([&] { return reg->pending() == 0; }, 10s,
+                               "todos os callbacks da rotatividade");
+        }
+        // Cada pedido aceito teve exatamente um callback, com o resultado certo.
+        SW_CHECK(log.count.load() == expected.size());
+        std::sort(expected.begin(), expected.end(),
+                  [](const Expected& a, const Expected& b) { return a.id < b.id; });
+        std::vector<CallbackLog::Item> got = log.items;
+        std::sort(
+            got.begin(), got.end(),
+            [](const CallbackLog::Item& a, const CallbackLog::Item& b) { return a.id < b.id; });
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            SW_CHECK(got[i].id == expected[i].id && got[i].result == expected[i].result &&
+                     got[i].bytes == expected[i].bytes);
+        }
+        SW_CHECK(wraps > 0); // controle positivo: o ramo cíclico rodou nesta capacidade
+        wraps_total += wraps;
+    }
+    std::printf("ok: rotatividade com capacidade 4..16 (5 x %d operacoes; %llu remocoes deram a "
+                "volta na tabela)\n",
+                kOps, static_cast<unsigned long long>(wraps_total));
+}
+
 } // namespace
 
 int main()
@@ -806,6 +890,7 @@ int main()
     test_create_alloc_fn_failure_each_point();
     test_create_operator_new_sweep();
     test_thread_start_failure_is_internal();
+    test_table_churn_small_capacity();
     std::puts("TODOS OS TESTES DO REGISTRO DE PEDIDOS (F1-67 B) PASSARAM");
     return 0;
 }
